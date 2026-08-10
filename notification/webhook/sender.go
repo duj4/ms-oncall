@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -19,7 +20,10 @@ type Sender struct {
 	Client *http.Client
 }
 
-const idempotencyKeyHeader = "Idempotency-Key"
+const (
+	idempotencyKeyHeader      = "Idempotency-Key"
+	maxResponseBodyDrainBytes = 32 << 10
+)
 
 const (
 	alertStateUnacknowledged = "Unacknowledged"
@@ -113,6 +117,11 @@ func safeRequestError(err error) error {
 	default:
 		return retry.TemporaryError(errors.New("webhook request failed"))
 	}
+}
+
+func drainAndCloseResponseBody(body io.ReadCloser) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, maxResponseBodyDrainBytes))
+	_ = body.Close()
 }
 
 func alertStateWireValue(state notification.AlertState) (string, error) {
@@ -224,9 +233,14 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Set(idempotencyKeyHeader, deliveryID)
 
-	resp, err := s.Client.Do(req)
+	client := *s.Client
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	resp, err := client.Do(req)
 	if resp != nil && resp.Body != nil {
-		defer resp.Body.Close()
+		defer drainAndCloseResponseBody(resp.Body)
 	}
 	if err != nil {
 		return nil, safeRequestError(err)

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,12 +31,49 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type trackingBody struct {
 	io.Reader
-	closed bool
+	closed     bool
+	reachedEOF bool
+}
+
+func (b *trackingBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		b.reachedEOF = true
+	}
+	return n, err
 }
 
 func (b *trackingBody) Close() error {
 	b.closed = true
 	return nil
+}
+
+type infiniteTrackingBody struct {
+	bytesRead int
+	closed    bool
+}
+
+func (b *infiniteTrackingBody) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	b.bytesRead += len(p)
+	return len(p), nil
+}
+
+func (b *infiniteTrackingBody) Close() error {
+	b.closed = true
+	return nil
+}
+
+type countingTransport struct {
+	base  http.RoundTripper
+	calls int32
+}
+
+func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	atomic.AddInt32(&t.calls, 1)
+	return t.base.RoundTrip(req)
 }
 
 func testContext() context.Context {
@@ -78,6 +117,7 @@ func TestSenderUsesInjectedHTTPClient(t *testing.T) {
 	assert.Equal(t, notification.StateSent, result.State)
 	assert.True(t, called, "injected HTTP client was not called")
 	assert.True(t, body.closed, "response body was not closed")
+	assert.True(t, body.reachedEOF, "small response body was not drained to EOF")
 }
 
 func TestSenderHTTPStatusAndResponseBody(t *testing.T) {
@@ -110,6 +150,7 @@ func TestSenderHTTPStatusAndResponseBody(t *testing.T) {
 
 			result, err := NewSender(ctx, client).SendMessage(ctx, testMessage(webURL))
 			assert.True(t, body.closed, "response body was not closed")
+			assert.True(t, body.reachedEOF, "small response body was not drained to EOF")
 			if !test.wantErr {
 				require.NoError(t, err)
 				require.NotNil(t, result)
@@ -126,6 +167,93 @@ func TestSenderHTTPStatusAndResponseBody(t *testing.T) {
 			assert.NotContains(t, err.Error(), responseContent)
 		})
 	}
+}
+
+func TestSenderRejectsRedirectsWithoutMutatingClient(t *testing.T) {
+	const responseContent = "sensitive-redirect-response-content"
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{name: "301", status: http.StatusMovedPermanently},
+		{name: "302", status: http.StatusFound},
+		{name: "303", status: http.StatusSeeOther},
+		{name: "307 method preserving", status: http.StatusTemporaryRedirect},
+		{name: "308 method preserving", status: http.StatusPermanentRedirect},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var targetRequests int32
+			target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				atomic.AddInt32(&targetRequests, 1)
+			}))
+			defer target.Close()
+
+			var sourceRequests int32
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				atomic.AddInt32(&sourceRequests, 1)
+				assert.Equal(t, http.MethodPost, req.Method)
+				w.Header().Set("Location", target.URL+"/opaque-target-token?route=secret-target-query")
+				w.WriteHeader(test.status)
+				_, _ = io.WriteString(w, responseContent)
+			}))
+			defer source.Close()
+
+			transport := &countingTransport{base: http.DefaultTransport}
+			var originalPolicyCalls int32
+			originalPolicy := func(*http.Request, []*http.Request) error {
+				atomic.AddInt32(&originalPolicyCalls, 1)
+				return nil
+			}
+			client := &http.Client{
+				Transport:     transport,
+				CheckRedirect: originalPolicy,
+				Timeout:       2 * time.Second,
+			}
+
+			result, err := NewSender(testContext(), client).SendMessage(testContext(), testMessage(source.URL+"/opaque-source-token?route=secret-source-query"))
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), strconv.Itoa(test.status))
+			assert.Equal(t, int32(1), atomic.LoadInt32(&sourceRequests))
+			assert.Equal(t, int32(0), atomic.LoadInt32(&targetRequests), "redirect target must not receive a request")
+			assert.Equal(t, int32(1), atomic.LoadInt32(&transport.calls))
+			assert.Same(t, transport, client.Transport)
+			assert.Equal(t, 2*time.Second, client.Timeout)
+			assert.Equal(t, int32(0), atomic.LoadInt32(&originalPolicyCalls), "injected redirect policy must not run during delivery")
+			require.NoError(t, client.CheckRedirect(nil, nil), "sender must not mutate the injected client")
+			assert.Equal(t, int32(1), atomic.LoadInt32(&originalPolicyCalls))
+
+			for _, secret := range []string{
+				source.URL,
+				target.URL,
+				"opaque-source-token",
+				"opaque-target-token",
+				"secret-source-query",
+				"secret-target-query",
+				responseContent,
+			} {
+				assert.NotContains(t, err.Error(), secret)
+			}
+		})
+	}
+}
+
+func TestSenderResponseBodyDrainIsBounded(t *testing.T) {
+	body := new(infiniteTrackingBody)
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return testResponse(req, http.StatusOK, body), nil
+		}),
+	}
+
+	result, err := NewSender(testContext(), client).SendMessage(testContext(), testMessage("test://gateway.invalid/hook"))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, notification.StateSent, result.State)
+	assert.True(t, body.closed)
+	assert.Equal(t, maxResponseBodyDrainBytes, body.bytesRead)
 }
 
 func TestSenderSanitizesConnectionError(t *testing.T) {

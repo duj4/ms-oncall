@@ -128,7 +128,8 @@ func TestSendMessagePropagatesWebhookDeliveryIdentity(t *testing.T) {
 }
 
 type alertStatusTestDB struct {
-	logType alertlog.Type
+	logType               alertlog.Type
+	originalStatusMissing bool
 }
 
 type alertStatusTestDriver struct {
@@ -222,6 +223,9 @@ func (db *alertStatusTestDB) rows(query string) (driver.Rows, error) {
 			nil, nil, int64(0), int64(0), nil, nil, now, nil, nil, nil, "", nil, nil,
 			nil, nil,
 		}
+		if db.originalStatusMissing {
+			return &alertStatusTestRows{columns: make([]string, len(values))}, nil
+		}
 	default:
 		return nil, errors.New("unexpected query in alert status test database")
 	}
@@ -230,6 +234,53 @@ func (db *alertStatusTestDB) rows(query string) (driver.Rows, error) {
 		columns: make([]string, len(values)),
 		values:  [][]driver.Value{values},
 	}, nil
+}
+
+func TestSendMessageDestinationErrorsRedactWebhookURL(t *testing.T) {
+	const webURL = "https://gateway.invalid/v1/goalert/contact-method/opaque-secret-token?route=secret-query"
+
+	var appConfig config.Config
+	appConfig.Webhook.Enable = true
+	ctx := appConfig.Context(context.Background())
+	registry := nfydest.NewRegistry()
+	db := sql.OpenDB(alertStatusTestConnector{source: &alertStatusTestDB{
+		logType:               alertlog.TypeAcknowledged,
+		originalStatusMissing: true,
+	}})
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	alertLogStore, err := alertlog.NewStore(ctx, db, registry)
+	require.NoError(t, err)
+	alertStore, err := alert.NewStore(ctx, db, alertLogStore, nil)
+	require.NoError(t, err)
+	notificationStore, err := notification.NewStore(ctx, db)
+	require.NoError(t, err)
+
+	msg := &message.Message{
+		ID:         "11111111-2222-4333-8444-555555555555",
+		Type:       notification.MessageTypeAlertStatus,
+		Dest:       webhook.NewWebhookDest(webURL),
+		AlertID:    42,
+		AlertLogID: 101,
+	}
+	eng := &Engine{cfg: &Config{
+		AlertLogStore:     alertLogStore,
+		AlertStore:        alertStore,
+		NotificationStore: notificationStore,
+	}}
+	result, err := eng.sendMessage(ctx, msg)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "webhook")
+
+	var logOutput bytes.Buffer
+	logger := log.NewLogger()
+	logger.SetOutput(&logOutput)
+	log.Log(logger.BackgroundContext(), trackStatusUpdateError(msg, errors.New("synthetic tracking failure")))
+
+	combined := err.Error() + logOutput.String()
+	for _, secret := range []string{webURL, "gateway.invalid", "opaque-secret-token", "secret-query"} {
+		assert.NotContains(t, combined, secret)
+	}
 }
 
 func TestSendMessagePropagatesAlertStateToWebhookRequest(t *testing.T) {
