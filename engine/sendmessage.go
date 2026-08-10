@@ -102,7 +102,7 @@ func (p *Engine) sendMessage(ctx context.Context, msg *message.Message) (*notifi
 			return nil, fmt.Errorf("lookup original message: %w", err)
 		}
 		if stat == nil {
-			return nil, fmt.Errorf("could not find original notification for alert %d to %s", msg.AlertID, msg.Dest.String())
+			return nil, missingOriginalNotificationError(msg)
 		}
 
 		var status notification.AlertState
@@ -212,9 +212,24 @@ func (p *Engine) sendMessage(ctx context.Context, msg *message.Message) (*notifi
 		_, err = p.b.trackStatus.ExecContext(ctx, msg.DestID.NCID, msg.DestID.CMID, msg.AlertID)
 		if err != nil {
 			// non-fatal, but log because it means status updates will not work for that alert/dest.
-			log.Log(ctx, fmt.Errorf("track status updates for alert #%d for %s: %w", msg.AlertID, msg.Dest.String(), err))
+			log.Log(ctx, trackStatusUpdateError(msg, err))
 		}
 	}
 
 	return res, nil
+}
+
+func safeDestinationReference(msg *message.Message) string {
+	if id := msg.DestID.String(); id != "" {
+		return id
+	}
+	return msg.Dest.Type
+}
+
+func missingOriginalNotificationError(msg *message.Message) error {
+	return fmt.Errorf("could not find original notification for alert %d to %s", msg.AlertID, safeDestinationReference(msg))
+}
+
+func trackStatusUpdateError(msg *message.Message, err error) error {
+	return fmt.Errorf("track status updates for alert #%d for %s: %w", msg.AlertID, safeDestinationReference(msg), err)
 }
