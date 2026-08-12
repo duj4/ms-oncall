@@ -17,7 +17,8 @@ import (
 )
 
 type Sender struct {
-	Client *http.Client
+	Client        *http.Client
+	gatewaySigner GatewayRequestSigner
 }
 
 const (
@@ -103,6 +104,16 @@ type POSTDataTest struct {
 func NewSender(ctx context.Context, client *http.Client) *Sender {
 	return &Sender{
 		Client: client,
+	}
+}
+
+// NewSenderWithGatewaySigner constructs a sender with an optional,
+// Gateway-target-scoped request signer. Production wiring is deliberately
+// separate from the default constructor.
+func NewSenderWithGatewaySigner(ctx context.Context, client *http.Client, signer GatewayRequestSigner) *Sender {
+	return &Sender{
+		Client:        client,
+		gatewaySigner: signer,
 	}
 }
 
@@ -232,6 +243,18 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Set(idempotencyKeyHeader, deliveryID)
+	if s.gatewaySigner != nil {
+		signed, err := s.gatewaySigner.SignRequest(ctx, req, data)
+		if err != nil {
+			return nil, err
+		}
+		if signed {
+			// A signed request must never be replayed internally by net/http
+			// with the same attempt nonce and signature. Every retry returns to
+			// SendMessage, builds a new request and signs with fresh values.
+			req.GetBody = nil
+		}
+	}
 
 	client := *s.Client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
