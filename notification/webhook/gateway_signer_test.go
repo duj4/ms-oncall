@@ -291,22 +291,69 @@ func TestGatewaySignerValidatesConfiguration(t *testing.T) {
 	matcher, err := NewGatewayTargetMatcher(testOnlyGatewayOrigin)
 	require.NoError(t, err)
 	source := &testGatewayCredentialSource{credential: testGatewayCredential(t)}
+	invalidVariantCredentialIDs := []string{
+		"01234567-89ab-4def-0123-456789abcdef",
+		"01234567-89ab-4def-c123-456789abcdef",
+		"01234567-89ab-4def-e123-456789abcdef",
+	}
 
 	for _, audience := range []string{"", "00000000-0000-0000-0000-000000000000", "123E4567-E89B-12D3-A456-426614174000", "123e4567e89b12d3a456426614174000"} {
 		signer, err := NewGatewaySigner(matcher, audience, source)
 		require.Error(t, err)
 		assert.Nil(t, signer)
 	}
-	for _, credentialID := range []string{"", "01234567-89ab-3def-8123-456789abcdef", "01234567-89AB-4DEF-8123-456789ABCDEF", "0123456789ab4def8123456789abcdef"} {
+	for _, credentialID := range append([]string{"", "01234567-89ab-3def-8123-456789abcdef", "01234567-89AB-4DEF-8123-456789ABCDEF", "0123456789ab4def8123456789abcdef"}, invalidVariantCredentialIDs...) {
 		credential, err := NewGatewayCredential(credentialID, testOnlySecretMaterial)
 		require.Error(t, err)
+		assert.Equal(t, errGatewaySigningInvalid.Error(), err.Error())
 		assert.Equal(t, GatewayCredential{}, credential)
+	}
+	credential, err := NewGatewayCredential(testOnlyCredentialID, testOnlySecretMaterial)
+	require.NoError(t, err)
+	assert.NotEqual(t, GatewayCredential{}, credential)
+
+	secret, err := NewGatewayAuthenticationSecret(testOnlySecretMaterial)
+	require.NoError(t, err)
+	for _, credentialID := range invalidVariantCredentialIDs {
+		signer := testGatewaySigner(t, &testGatewayCredentialSource{credential: GatewayCredential{
+			id:     GatewayCredentialID{value: credentialID},
+			secret: secret,
+		}}, bytes.NewReader(make([]byte, 16)), time.Now)
+		var calls int32
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			atomic.AddInt32(&calls, 1)
+			return nil, errors.New("unexpected request")
+		})}
+
+		result, err := NewSenderWithGatewaySigner(testContext(), client, signer).SendMessage(testContext(), testMessage(testOnlyGatewayURL))
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Equal(t, errGatewaySigningInvalid.Error(), err.Error())
+		assert.Equal(t, int32(0), atomic.LoadInt32(&calls))
 	}
 	for _, size := range []int{0, 31, 33} {
 		credential, err := NewGatewayCredential(testOnlyCredentialID, make([]byte, size))
 		require.Error(t, err)
+		assert.Equal(t, errGatewaySigningInvalid.Error(), err.Error())
 		assert.Equal(t, GatewayCredential{}, credential)
 	}
+}
+
+func TestGatewayCredentialVariantValidationDoesNotChangeOtherUUIDSemantics(t *testing.T) {
+	const nonRFC4122UUID = "01234567-89ab-4def-0123-456789abcdef"
+
+	audience, err := NewGatewayAudienceID(nonRFC4122UUID)
+	require.NoError(t, err)
+	assert.NotEqual(t, GatewayAudienceID{}, audience)
+
+	source := &testGatewayCredentialSource{credential: testGatewayCredential(t)}
+	signer := testGatewaySigner(t, source, bytes.NewReader(make([]byte, 16)), time.Now)
+	req := testGatewayRequest(t, testOnlyGatewayURL, []byte(testOnlyBody))
+	req.Header.Set(idempotencyKeyHeader, nonRFC4122UUID)
+	signed, err := signer.SignRequest(context.Background(), req, []byte(testOnlyBody))
+	require.NoError(t, err)
+	assert.True(t, signed)
+	assert.Equal(t, nonRFC4122UUID, req.Header.Get(idempotencyKeyHeader))
 }
 
 func TestGatewaySignerZeroValueFailsClosed(t *testing.T) {

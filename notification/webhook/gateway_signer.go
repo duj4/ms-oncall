@@ -161,7 +161,7 @@ func parseCanonicalUUID(value string, requireV4 bool) (uuid.UUID, bool) {
 	if err != nil || parsed.String() != value {
 		return uuid.Nil, false
 	}
-	if requireV4 && parsed.Version() != 4 {
+	if requireV4 && (parsed.Version() != 4 || parsed.Variant() != uuid.RFC4122) {
 		return uuid.Nil, false
 	}
 	return parsed, true
