@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -485,4 +486,83 @@ func TestSenderSanitizesRequestConstructionError(t *testing.T) {
 	assert.Equal(t, "webhook request could not be created", err.Error())
 	assert.NotContains(t, err.Error(), "opaque-secret-token")
 	assert.NotContains(t, err.Error(), "secret-query")
+}
+
+func TestSenderSignsOnlyExactGatewayTarget(t *testing.T) {
+	t.Run("gateway request", func(t *testing.T) {
+		source := &testGatewayCredentialSource{credential: testGatewayCredential(t)}
+		signer := testGatewaySigner(t, source, bytes.NewReader(testOnlySecretMaterial[16:]), func() time.Time {
+			return time.Unix(1700000000, 0)
+		})
+		var calls int32
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			atomic.AddInt32(&calls, 1)
+			assert.Nil(t, req.GetBody, "signed Gateway requests must not be replayable inside the transport")
+			body, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			assert.Equal(t, testOnlyBody, string(body), "the signed bytes must be the sent bytes")
+			assert.Equal(t, testDeliveryID, req.Header.Get(idempotencyKeyHeader))
+			assert.Equal(t, testOnlyAuthorization, req.Header.Get(gatewayAuthorizationHeader))
+			assert.Equal(t, testOnlyTimestamp, req.Header.Get(gatewayTimestampHeader))
+			assert.Equal(t, testOnlyNonce, req.Header.Get(gatewayNonceHeader))
+			return testResponse(req, http.StatusAccepted, io.NopCloser(strings.NewReader(""))), nil
+		})}
+
+		result, err := NewSenderWithGatewaySigner(testContext(), client, signer).SendMessage(testContext(), testMessage(testOnlyGatewayURL))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, notification.StateSent, result.State)
+		assert.Equal(t, int32(1), atomic.LoadInt32(&calls))
+	})
+
+	t.Run("ordinary webhook", func(t *testing.T) {
+		source := &testGatewayCredentialSource{credential: testGatewayCredential(t)}
+		signer := testGatewaySigner(t, source, bytes.NewReader(make([]byte, 16)), time.Now)
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			assert.NotNil(t, req.GetBody, "ordinary webhook replay behavior must remain unchanged")
+			assert.Empty(t, req.Header.Values(gatewayAuthorizationHeader))
+			assert.Empty(t, req.Header.Values(gatewayTimestampHeader))
+			assert.Empty(t, req.Header.Values(gatewayNonceHeader))
+			return testResponse(req, http.StatusNoContent, io.NopCloser(strings.NewReader(""))), nil
+		})}
+
+		result, err := NewSenderWithGatewaySigner(testContext(), client, signer).SendMessage(testContext(), testMessage("https://hooks.test.invalid/notify"))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, notification.StateSent, result.State)
+		assert.Equal(t, int32(0), atomic.LoadInt32(&source.calls))
+	})
+}
+
+func TestSenderSigningFailurePreventsHTTPAttempt(t *testing.T) {
+	marker := "test-only-source-error-marker"
+	tests := []struct {
+		name   string
+		source GatewayCredentialSource
+		random io.Reader
+		temp   bool
+	}{
+		{name: "credential source unavailable", source: &testGatewayCredentialSource{err: errors.New(marker)}, random: bytes.NewReader(make([]byte, 16)), temp: true},
+		{name: "malformed credential", source: &testGatewayCredentialSource{}, random: bytes.NewReader(make([]byte, 16))},
+		{name: "random source short read", source: &testGatewayCredentialSource{credential: testGatewayCredential(t)}, random: bytes.NewReader(make([]byte, 15)), temp: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			signer := testGatewaySigner(t, test.source, test.random, time.Now)
+			var calls int32
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&calls, 1)
+				return nil, errors.New("unexpected request")
+			})}
+
+			result, err := NewSenderWithGatewaySigner(testContext(), client, signer).SendMessage(testContext(), testMessage(testOnlyGatewayURL))
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Equal(t, int32(0), atomic.LoadInt32(&calls))
+			assert.Equal(t, test.temp, retry.IsTemporaryError(err))
+			assert.NotContains(t, err.Error(), marker)
+			assert.NotContains(t, err.Error(), testOnlyGatewayURL)
+		})
+	}
 }
