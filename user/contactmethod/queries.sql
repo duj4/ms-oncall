@@ -12,6 +12,15 @@ SET
 WHERE
     id = $1;
 
+-- name: ContactMethodCompareAndSwapGatewayDest :execresult
+UPDATE
+    user_contact_methods
+SET
+    dest = @replacement_dest
+WHERE
+    id = @id
+    AND dest = @expected_dest;
+
 -- name: DeleteContactMethod :exec
 DELETE FROM user_contact_methods
 WHERE id = ANY ($1::uuid[]);
@@ -83,4 +92,3 @@ SET
     metadata = jsonb_set(jsonb_set(metadata, '{CarrierV1}', @carrier_v1::jsonb), '{CarrierV1,UpdatedAt}',('"' || NOW()::timestamptz AT TIME ZONE 'UTC' || '"')::jsonb)
 WHERE
     dest = $1;
-

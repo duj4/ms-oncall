@@ -1716,6 +1716,26 @@ func (q *Queries) ContactMethodAdd(ctx context.Context, arg ContactMethodAddPara
 	return err
 }
 
+const contactMethodCompareAndSwapGatewayDest = `-- name: ContactMethodCompareAndSwapGatewayDest :execresult
+UPDATE
+    user_contact_methods
+SET
+    dest = $1
+WHERE
+    id = $2
+    AND dest = $3
+`
+
+type ContactMethodCompareAndSwapGatewayDestParams struct {
+	ReplacementDest NullDestV1
+	ID              uuid.UUID
+	ExpectedDest    NullDestV1
+}
+
+func (q *Queries) ContactMethodCompareAndSwapGatewayDest(ctx context.Context, arg ContactMethodCompareAndSwapGatewayDestParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, contactMethodCompareAndSwapGatewayDest, arg.ReplacementDest, arg.ID, arg.ExpectedDest)
+}
+
 const contactMethodEnableDisable = `-- name: ContactMethodEnableDisable :one
 UPDATE
     user_contact_methods
