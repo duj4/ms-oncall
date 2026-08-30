@@ -3,10 +3,12 @@ package migrate
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,72 +18,77 @@ import (
 
 const postgresIntegrationEnableEnv = "MS_ONCALL_CORE_MIGRATION_TEST_POSTGRES_ENABLE"
 
-func TestPostgresFreshInstallCanonicalProvenance(t *testing.T) {
+func TestPostgresInterruptedFreshInstallDeterministicProvenance(t *testing.T) {
 	baseURL := postgresIntegrationURL(t)
-	testURL := newPostgresTestDatabase(t, baseURL)
 	history, err := loadEmbeddedHistory()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	count, err := Up(ctx, testURL, "")
-	if err != nil {
-		t.Fatal(err)
+	interruptionPoints := []struct {
+		name   string
+		prefix int
+	}{
+		{name: "zero historical migrations", prefix: 0},
+		{name: "middle historical prefix", prefix: history.provenanceFoundationIndex / 2},
+		{name: "immediately before Foundation", prefix: history.provenanceFoundationIndex},
 	}
-	if count != len(history.entries) {
-		t.Fatalf("applied migration count = %d, want %d", count, len(history.entries))
-	}
-	if err := VerifyAll(ctx, testURL); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyIsLatest(ctx, testURL); err != nil {
-		t.Fatal(err)
-	}
+	var uninterrupted []provenanceSemanticRecord
+	for _, point := range interruptionPoints {
+		t.Run(point.name, func(t *testing.T) {
+			testURL := newPostgresTestDatabase(t, baseURL)
+			if point.prefix > 0 {
+				count, err := Up(ctx, testURL, history.entries[point.prefix-1].Name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if count != point.prefix {
+					t.Fatalf("initial prefix applied %d migrations, want %d", count, point.prefix)
+				}
+			}
+			assertProvenanceTableAbsent(t, ctx, testURL)
 
-	conn, err := pgx.Connect(ctx, testURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(ctx)
-	resolved, err := loadAppliedHistory(ctx, conn, history)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := resolvedAppliedCount(resolved); got != len(history.entries) {
-		t.Fatalf("resolved applied count = %d, want %d", got, len(history.entries))
-	}
-	var canonicalCount, legacyCount int
-	if err := conn.QueryRow(ctx, `
-		select
-			count(*) filter (where record_origin = 'CANONICAL_EXECUTION'),
-			count(*) filter (where record_origin = 'LEGACY_GORP_BOOTSTRAP')
-		from ms_oncall_migration_provenance
-	`).Scan(&canonicalCount, &legacyCount); err != nil {
-		t.Fatal(err)
-	}
-	if canonicalCount != len(history.entries) || legacyCount != 0 {
-		t.Fatalf("fresh provenance origins = canonical:%d legacy:%d, want canonical:%d legacy:0", canonicalCount, legacyCount, len(history.entries))
-	}
+			count, err := Up(ctx, testURL, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count != len(history.entries)-point.prefix {
+				t.Fatalf("resumed Up applied %d migrations, want %d", count, len(history.entries)-point.prefix)
+			}
+			got := assertDeterministicProvenanceState(t, ctx, testURL, history)
+			if err := VerifyAll(ctx, testURL); err != nil {
+				t.Fatal(err)
+			}
+			if err := VerifyIsLatest(ctx, testURL); err != nil {
+				t.Fatal(err)
+			}
+			if uninterrupted == nil {
+				uninterrupted = append([]provenanceSemanticRecord(nil), got...)
+			} else if !slices.Equal(got, uninterrupted) {
+				t.Fatal("immutable provenance semantics depend on fresh-install interruption point")
+			}
 
-	count, err = Up(ctx, testURL, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("second Up applied %d migrations, want 0", count)
+			count, err = Up(ctx, testURL, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count != 0 {
+				t.Fatalf("second complete Up applied %d migrations, want 0", count)
+			}
+		})
 	}
 }
 
-func TestPostgresLegacyBootstrapAndFoundationRollback(t *testing.T) {
+func TestPostgresExistingPreFoundationDatabaseBootstrapsDeterministically(t *testing.T) {
 	baseURL := postgresIntegrationURL(t)
 	testURL := newPostgresTestDatabase(t, baseURL)
 	history, err := loadEmbeddedHistory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyCount := history.provenanceStoreIndex
+	preLedgerCount := history.provenanceFoundationIndex
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -93,10 +100,10 @@ func TestPostgresLegacyBootstrapAndFoundationRollback(t *testing.T) {
 		conn.Close(ctx)
 		t.Fatal(err)
 	}
-	legacyAppliedAt := make(map[string]time.Time, legacyCount)
-	for index, entry := range history.entries[:legacyCount] {
+	preLedgerAppliedAt := make(map[string]time.Time, preLedgerCount)
+	for index, entry := range history.entries[:preLedgerCount] {
 		appliedAt := time.Date(2020, time.January, 1, 0, 0, index, 0, time.UTC)
-		legacyAppliedAt[entry.ID] = appliedAt
+		preLedgerAppliedAt[entry.ID] = appliedAt
 		if _, err := conn.Exec(ctx, `insert into gorp_migrations (id, applied_at) values ($1, $2)`, entry.ID, appliedAt); err != nil {
 			conn.Close(ctx)
 			t.Fatal(err)
@@ -111,27 +118,45 @@ func TestPostgresLegacyBootstrapAndFoundationRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if count != 1 {
-		t.Fatalf("legacy continuation applied %d migrations, want 1", count)
+		t.Fatalf("existing-database continuation applied %d migrations, want 1", count)
 	}
-	assertLegacyBootstrapState(t, ctx, testURL, history, legacyAppliedAt)
+	assertDeterministicProvenanceState(t, ctx, testURL, history)
+	assertAppliedTimes(t, ctx, testURL, preLedgerAppliedAt)
 
 	count, err = Up(ctx, testURL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
-		t.Fatalf("second legacy continuation applied %d migrations, want 0", count)
+		t.Fatalf("second existing-database continuation applied %d migrations, want 0", count)
+	}
+}
+
+func TestPostgresFoundationRollbackReapplyPreservesProvenance(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	testURL := newPostgresTestDatabase(t, baseURL)
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	target := history.entries[legacyCount-1].Name
-	count, err = Down(ctx, testURL, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := Up(ctx, testURL, ""); err != nil {
+		t.Fatal(err)
+	}
+	before := assertDeterministicProvenanceState(t, ctx, testURL, history)
+	historicalAppliedAt := readAppliedTimes(t, ctx, testURL, history.entries[:history.provenanceFoundationIndex])
+
+	target := history.entries[history.provenanceFoundationIndex-1].Name
+	count, err := Down(ctx, testURL, target)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
 		t.Fatalf("foundation rollback count = %d, want 1", count)
 	}
-	conn, err = pgx.Connect(ctx, testURL)
+	conn, err := pgx.Connect(ctx, testURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,9 +174,9 @@ func TestPostgresLegacyBootstrapAndFoundationRollback(t *testing.T) {
 		conn.Close(ctx)
 		t.Fatal(err)
 	}
-	if appliedCount != legacyCount {
+	if appliedCount != history.provenanceFoundationIndex {
 		conn.Close(ctx)
-		t.Fatalf("gorp_migrations count after rollback = %d, want %d", appliedCount, legacyCount)
+		t.Fatalf("gorp_migrations count after rollback = %d, want %d", appliedCount, history.provenanceFoundationIndex)
 	}
 	if err := conn.Close(ctx); err != nil {
 		t.Fatal(err)
@@ -164,7 +189,342 @@ func TestPostgresLegacyBootstrapAndFoundationRollback(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("foundation reapplication count = %d, want 1", count)
 	}
-	assertLegacyBootstrapState(t, ctx, testURL, history, legacyAppliedAt)
+	after := assertDeterministicProvenanceState(t, ctx, testURL, history)
+	if !slices.Equal(after, before) {
+		t.Fatal("Foundation rollback/reapply changed immutable provenance semantics")
+	}
+	assertAppliedTimes(t, ctx, testURL, historicalAppliedAt)
+}
+
+func TestPostgresFoundationInterruptionRollsBackAtomically(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	testURL := newPostgresTestDatabase(t, baseURL)
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := parseMigrations(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	count, err := Up(ctx, testURL, history.entries[history.provenanceFoundationIndex-1].Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != history.provenanceFoundationIndex {
+		t.Fatalf("pre-Foundation Up applied %d migrations, want %d", count, history.provenanceFoundationIndex)
+	}
+
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Begin(ctx); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	foundation := migrations[history.provenanceFoundationIndex]
+	for _, stmt := range foundation.Up.statements {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			conn.Close(ctx)
+			t.Fatal(err)
+		}
+	}
+	if _, err := conn.Exec(ctx, insertMigrationRecord, foundation.ID); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	applied, err := readAppliedMigrationRecords(ctx, conn)
+	if err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	_, appliedByID, err := validateAppliedPrefix(history, applied)
+	if err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	partialCount := history.provenanceFoundationIndex / 2
+	for index := 0; index < partialCount; index++ {
+		origin, err := expectedRecordOrigin(history, index)
+		if err != nil {
+			conn.Close(ctx)
+			t.Fatal(err)
+		}
+		entry := history.entries[index]
+		if err := insertAppliedProvenance(ctx, conn, entry, appliedByID[entry.ID].AppliedAt, origin); err != nil {
+			conn.Close(ctx)
+			t.Fatal(err)
+		}
+	}
+	// Closing the connection with the transaction open models a process/connection
+	// interruption after Foundation DDL and a partial ledger bootstrap but before commit.
+	if err := conn.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	assertProvenanceTableAbsent(t, ctx, testURL)
+	conn, err = pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var appliedCount int
+	if err := conn.QueryRow(ctx, `select count(*) from gorp_migrations`).Scan(&appliedCount); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if appliedCount != history.provenanceFoundationIndex {
+		t.Fatalf("applied count after interrupted Foundation = %d, want %d", appliedCount, history.provenanceFoundationIndex)
+	}
+
+	count, err = Up(ctx, testURL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("Foundation recovery applied %d migrations, want 1", count)
+	}
+	assertDeterministicProvenanceState(t, ctx, testURL, history)
+}
+
+func TestPostgresUnsupportedPartialLedgerFailsClosed(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	testURL := newPostgresTestDatabase(t, baseURL)
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := parseMigrations(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := Up(ctx, testURL, history.entries[history.provenanceFoundationIndex-1].Name); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundation := migrations[history.provenanceFoundationIndex]
+	for _, stmt := range foundation.Up.statements {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			conn.Close(ctx)
+			t.Fatal(err)
+		}
+	}
+	var appliedAt sql.NullTime
+	first := history.entries[0]
+	if err := conn.QueryRow(ctx, `select applied_at from gorp_migrations where id = $1`, first.ID).Scan(&appliedAt); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if err := insertAppliedProvenance(ctx, conn, first, appliedAt, recordOriginPreLedgerBootstrap); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Up(ctx, testURL, "")
+	if err == nil || !strings.Contains(err.Error(), "provenance table exists before canonical migration") {
+		t.Fatalf("Up error = %v, want fail-closed partial-ledger error", err)
+	}
+}
+
+func TestPostgresProvenanceOriginAndLedgerCorruptionFailClosed(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	testURL := newPostgresTestDatabase(t, baseURL)
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := Up(ctx, testURL, ""); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+
+	tests := []struct {
+		name    string
+		mutate  func(context.Context, *pgx.Conn) error
+		wantErr string
+	}{
+		{
+			name: "pre-ledger origin changed to canonical execution",
+			mutate: func(ctx context.Context, conn *pgx.Conn) error {
+				_, err := conn.Exec(ctx, `update ms_oncall_migration_provenance set record_origin = $1 where migration_id = $2`, recordOriginCanonical, history.entries[0].ID)
+				return err
+			},
+			wantErr: "field record_origin",
+		},
+		{
+			name: "Foundation origin changed to pre-ledger bootstrap",
+			mutate: func(ctx context.Context, conn *pgx.Conn) error {
+				_, err := conn.Exec(ctx, `update ms_oncall_migration_provenance set record_origin = $1 where migration_id = $2`, recordOriginPreLedgerBootstrap, history.entries[history.provenanceFoundationIndex].ID)
+				return err
+			},
+			wantErr: "field record_origin",
+		},
+		{
+			name: "invalid origin enum",
+			mutate: func(ctx context.Context, conn *pgx.Conn) error {
+				if _, err := conn.Exec(ctx, `alter table ms_oncall_migration_provenance drop constraint ms_oncall_migration_provenance_record_origin_check`); err != nil {
+					return err
+				}
+				_, err := conn.Exec(ctx, `update ms_oncall_migration_provenance set record_origin = 'UNKNOWN' where migration_id = $1`, history.entries[0].ID)
+				return err
+			},
+			wantErr: "field record_origin",
+		},
+		{
+			name: "partial ledger",
+			mutate: func(ctx context.Context, conn *pgx.Conn) error {
+				_, err := conn.Exec(ctx, `truncate ms_oncall_migration_provenance`)
+				return err
+			},
+			wantErr: "provenance count",
+		},
+		{
+			name: "Foundation provenance missing",
+			mutate: func(ctx context.Context, conn *pgx.Conn) error {
+				_, err := conn.Exec(ctx, `delete from ms_oncall_migration_provenance where migration_id = $1`, history.entries[history.provenanceFoundationIndex].ID)
+				return err
+			},
+			wantErr: "provenance count",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tx, err := conn.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mutationErr := test.mutate(ctx, conn); mutationErr != nil {
+				if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+					t.Fatalf("mutate provenance: %v; roll back mutation: %v", mutationErr, rollbackErr)
+				}
+				t.Fatal(mutationErr)
+			}
+			_, err = loadAppliedHistory(ctx, conn, history)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+					t.Fatalf("unexpected validation result %v; roll back mutation: %v", err, rollbackErr)
+				}
+				t.Fatalf("loadAppliedHistory error = %v, want containing %q", err, test.wantErr)
+			}
+			if err := tx.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadAppliedHistory(ctx, conn, history); err != nil {
+				t.Fatalf("valid provenance did not recover after rollback: %v", err)
+			}
+		})
+	}
+
+	if _, err := conn.Exec(ctx, `drop table ms_oncall_migration_provenance`); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyAll(ctx, testURL); err == nil || !strings.Contains(err.Error(), "provenance table is missing") {
+		t.Fatalf("VerifyAll error = %v, want missing-ledger failure", err)
+	}
+}
+
+func TestPostgresFutureBundleOriginIntegrityFailsClosed(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	testURL := newPostgresTestDatabase(t, baseURL)
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := Up(ctx, testURL, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	futureHistory := &canonicalHistory{
+		entries:                   append([]canonicalMigration(nil), history.entries...),
+		byID:                      make(map[string]int, len(history.byID)+1),
+		byName:                    make(map[string]int, len(history.byName)+1),
+		provenanceFoundationIndex: history.provenanceFoundationIndex,
+		manifest:                  append([]byte(nil), history.manifest...),
+	}
+	for id, index := range history.byID {
+		futureHistory.byID[id] = index
+	}
+	for name, index := range history.byName {
+		futureHistory.byName[name] = index
+	}
+	predecessor := history.latest()
+	futureID := "20990101000000-ms-oncall-future-origin-integrity.sql"
+	futureName, err := migrationNameFromID(futureID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := canonicalMigration{
+		Position:           predecessor.Position + 1,
+		ID:                 futureID,
+		Name:               futureName,
+		Provenance:         provenanceMSOnCall,
+		OriginalID:         futureID,
+		SHA256:             strings.Repeat("a", 64),
+		SourceBinding:      "MS_ONCALL_BASE|test=future-origin-integrity",
+		BundleID:           "ms-oncall-test-future-origin-integrity",
+		PredecessorID:      predecessor.ID,
+		DependencyEvidence: fmt.Sprintf("BUNDLE_DEPENDENCY|bundle=%s|id=%s|sha256=%s|evidence=TEST_FUTURE_APPEND", predecessor.BundleID, predecessor.ID, predecessor.SHA256),
+		AdaptationEvidence: "NOT_APPLICABLE_TEST_FUTURE_ORIGIN_INTEGRITY",
+	}
+	futureHistory.byID[future.ID] = len(futureHistory.entries)
+	futureHistory.byName[future.Name] = len(futureHistory.entries)
+	futureHistory.entries = append(futureHistory.entries, future)
+
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, insertMigrationRecord, future.ID); err != nil {
+		t.Fatal(err)
+	}
+	var appliedAt sql.NullTime
+	if err := conn.QueryRow(ctx, `select applied_at from gorp_migrations where id = $1`, future.ID).Scan(&appliedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := insertAppliedProvenance(ctx, conn, future, appliedAt, recordOriginCanonical); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := loadAppliedHistory(ctx, conn, futureHistory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolvedAppliedCount(resolved); got != len(futureHistory.entries) {
+		t.Fatalf("resolved future-bundle applied count = %d, want %d", got, len(futureHistory.entries))
+	}
+
+	if _, err := conn.Exec(ctx, `update ms_oncall_migration_provenance set record_origin = $1 where migration_id = $2`, recordOriginPreLedgerBootstrap, future.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = loadAppliedHistory(ctx, conn, futureHistory)
+	if err == nil || !strings.Contains(err.Error(), "field record_origin") || !strings.Contains(err.Error(), "expected CANONICAL_EXECUTION") {
+		t.Fatalf("loadAppliedHistory future-bundle error = %v, want canonical-origin mismatch", err)
+	}
 }
 
 func TestPostgresDownRejectsDivergentHistory(t *testing.T) {
@@ -201,7 +561,22 @@ func TestPostgresDownRejectsDivergentHistory(t *testing.T) {
 	}
 }
 
-func assertLegacyBootstrapState(t *testing.T, ctx context.Context, testURL string, history *canonicalHistory, legacyAppliedAt map[string]time.Time) {
+type provenanceSemanticRecord struct {
+	CanonicalPosition   int64
+	MigrationID         string
+	MigrationName       string
+	ProvenanceClass     string
+	OriginalMigrationID string
+	ContentSHA256       string
+	SourceBinding       string
+	BundleID            string
+	PredecessorID       sql.NullString
+	DependencyEvidence  string
+	AdaptationEvidence  string
+	RecordOrigin        string
+}
+
+func assertDeterministicProvenanceState(t *testing.T, ctx context.Context, testURL string, history *canonicalHistory) []provenanceSemanticRecord {
 	t.Helper()
 	conn, err := pgx.Connect(ctx, testURL)
 	if err != nil {
@@ -215,25 +590,121 @@ func assertLegacyBootstrapState(t *testing.T, ctx context.Context, testURL strin
 	if got := resolvedAppliedCount(resolved); got != len(history.entries) {
 		t.Fatalf("resolved applied count = %d, want %d", got, len(history.entries))
 	}
-	var legacyCount, canonicalCount int
+	var preLedgerCount, canonicalCount int
 	if err := conn.QueryRow(ctx, `
 		select
-			count(*) filter (where record_origin = 'LEGACY_GORP_BOOTSTRAP'),
-			count(*) filter (where record_origin = 'CANONICAL_EXECUTION')
+			count(*) filter (where record_origin = $1),
+			count(*) filter (where record_origin = $2)
 		from ms_oncall_migration_provenance
-	`).Scan(&legacyCount, &canonicalCount); err != nil {
+	`, recordOriginPreLedgerBootstrap, recordOriginCanonical).Scan(&preLedgerCount, &canonicalCount); err != nil {
 		t.Fatal(err)
 	}
-	if legacyCount != history.provenanceStoreIndex || canonicalCount != 1 {
-		t.Fatalf("bootstrap provenance origins = legacy:%d canonical:%d, want legacy:%d canonical:1", legacyCount, canonicalCount, history.provenanceStoreIndex)
+	if preLedgerCount != history.provenanceFoundationIndex || canonicalCount != len(history.entries)-history.provenanceFoundationIndex {
+		t.Fatalf("provenance origins = pre-ledger:%d canonical:%d, want pre-ledger:%d canonical:%d", preLedgerCount, canonicalCount, history.provenanceFoundationIndex, len(history.entries)-history.provenanceFoundationIndex)
 	}
-	for id, want := range legacyAppliedAt {
+	var timestampMismatchCount int
+	if err := conn.QueryRow(ctx, `
+		select count(*)
+		from ms_oncall_migration_provenance p
+		join gorp_migrations g on g.id = p.migration_id
+		where p.applied_at is distinct from g.applied_at
+	`).Scan(&timestampMismatchCount); err != nil {
+		t.Fatal(err)
+	}
+	if timestampMismatchCount != 0 {
+		t.Fatalf("provenance has %d applied_at values different from gorp_migrations", timestampMismatchCount)
+	}
+
+	rows, err := conn.Query(ctx, `
+		select canonical_position, migration_id, migration_name, provenance_class,
+			original_migration_id, content_sha256, source_binding, bundle_id,
+			predecessor_migration_id, dependency_evidence, adaptation_evidence,
+			record_origin
+		from ms_oncall_migration_provenance
+		order by canonical_position
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var snapshot []provenanceSemanticRecord
+	for rows.Next() {
+		var record provenanceSemanticRecord
+		if err := rows.Scan(
+			&record.CanonicalPosition,
+			&record.MigrationID,
+			&record.MigrationName,
+			&record.ProvenanceClass,
+			&record.OriginalMigrationID,
+			&record.ContentSHA256,
+			&record.SourceBinding,
+			&record.BundleID,
+			&record.PredecessorID,
+			&record.DependencyEvidence,
+			&record.AdaptationEvidence,
+			&record.RecordOrigin,
+		); err != nil {
+			t.Fatal(err)
+		}
+		snapshot = append(snapshot, record)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot) != len(history.entries) {
+		t.Fatalf("provenance snapshot length = %d, want %d", len(snapshot), len(history.entries))
+	}
+	return snapshot
+}
+
+func assertProvenanceTableAbsent(t *testing.T, ctx context.Context, testURL string) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var exists bool
+	if err := conn.QueryRow(ctx, `select to_regclass(current_schema() || '.ms_oncall_migration_provenance') is not null`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("provenance table exists before the Foundation migration is durably applied")
+	}
+}
+
+func readAppliedTimes(t *testing.T, ctx context.Context, testURL string, entries []canonicalMigration) map[string]time.Time {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	times := make(map[string]time.Time, len(entries))
+	for _, entry := range entries {
+		var appliedAt time.Time
+		if err := conn.QueryRow(ctx, `select applied_at from gorp_migrations where id = $1`, entry.ID).Scan(&appliedAt); err != nil {
+			t.Fatal(err)
+		}
+		times[entry.ID] = appliedAt
+	}
+	return times
+}
+
+func assertAppliedTimes(t *testing.T, ctx context.Context, testURL string, want map[string]time.Time) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	for id, expected := range want {
 		var got time.Time
 		if err := conn.QueryRow(ctx, `select applied_at from gorp_migrations where id = $1`, id).Scan(&got); err != nil {
 			t.Fatal(err)
 		}
-		if !got.Equal(want) {
-			t.Fatalf("legacy gorp_migrations timestamp for %q changed from %s to %s", id, want, got)
+		if !got.Equal(expected) {
+			t.Fatalf("gorp_migrations timestamp for %q changed from %s to %s", id, expected, got)
 		}
 	}
 }

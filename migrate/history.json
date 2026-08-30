@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "provenance_store_migration_id": "20260830195814-ms-oncall-migration-provenance.sql",
+  "provenance_foundation_migration_id": "20260830195814-ms-oncall-migration-provenance.sql",
   "bundles": [
     {
       "id": "goalert-v0.34.1",
@@ -1411,7 +1411,7 @@
         {
           "id": "20260830195814-ms-oncall-migration-provenance.sql",
           "original_id": "20260830195814-ms-oncall-migration-provenance.sql",
-          "sha256": "008e8eac8b5697d63eb72523ec8caf13a8ed95284d8e083b22beeab545e38727"
+          "sha256": "c22fb8e6bd4fe90788d5c0f6b9dd8ecb4cce43658ffa79691311c3846df0db5e"
         }
       ]
     }

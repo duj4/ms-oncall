@@ -12,7 +12,8 @@ CREATE TABLE ms_oncall_migration_provenance (
     predecessor_migration_id text REFERENCES ms_oncall_migration_provenance (migration_id),
     dependency_evidence text NOT NULL CHECK (dependency_evidence <> ''),
     adaptation_evidence text NOT NULL CHECK (adaptation_evidence <> ''),
-    record_origin text NOT NULL CHECK (record_origin IN ('LEGACY_GORP_BOOTSTRAP', 'CANONICAL_EXECUTION')),
+    record_origin text NOT NULL CONSTRAINT ms_oncall_migration_provenance_record_origin_check
+        CHECK (record_origin IN ('PRE_LEDGER_BOOTSTRAP', 'CANONICAL_EXECUTION')),
     applied_at timestamp with time zone,
     recorded_at timestamp with time zone NOT NULL DEFAULT now(),
     UNIQUE (provenance_class, source_binding, original_migration_id),

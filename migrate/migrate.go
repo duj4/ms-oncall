@@ -200,7 +200,7 @@ func Up(ctx context.Context, url, targetName string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return performMigrations(ctx, conn, history, true, appliedCount, planUpMigrations(migrations, appliedCount, targetIndex))
+	return performMigrations(ctx, conn, history, true, planUpMigrations(migrations, appliedCount, targetIndex))
 }
 
 // Down will roll back all migrations up to, but NOT including, targetName.
@@ -241,7 +241,7 @@ func Down(ctx context.Context, url, targetName string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return performMigrations(ctx, conn, history, false, appliedCount, planDownMigrations(migrations, appliedCount, targetIndex))
+	return performMigrations(ctx, conn, history, false, planDownMigrations(migrations, appliedCount, targetIndex))
 }
 
 func planUpMigrations(migrations []migration, appliedCount, targetIndex int) []migration {
@@ -360,7 +360,7 @@ const (
 	insertMigrationRecord = "insert into gorp_migrations (id, applied_at) values ($1, now())"
 )
 
-func (step migrationStep) applyNoTx(ctx context.Context, conn *pgx.Conn, history *canonicalHistory, legacyBoundary int) error {
+func (step migrationStep) applyNoTx(ctx context.Context, conn *pgx.Conn, history *canonicalHistory) error {
 	for index, stmt := range step.statements {
 		if _, err := conn.Exec(ctx, stmt); err != nil {
 			return errors.Wrapf(err, "statement #%d\n%s", index+1, stmt)
@@ -371,7 +371,7 @@ func (step migrationStep) applyNoTx(ctx context.Context, conn *pgx.Conn, history
 		if _, err := conn.Exec(ctx, insertMigrationRecord, step.ID); err != nil {
 			return errors.Wrap(err, "update gorp_migrations")
 		}
-		if err := recordAppliedProvenance(ctx, conn, history, step.ID, legacyBoundary); err != nil {
+		if err := recordAppliedProvenance(ctx, conn, history, step.ID); err != nil {
 			return err
 		}
 		return nil
@@ -390,9 +390,9 @@ func (step migrationStep) applyNoTx(ctx context.Context, conn *pgx.Conn, history
 	return nil
 }
 
-func (step migrationStep) apply(ctx context.Context, conn *pgx.Conn, history *canonicalHistory, legacyBoundary int) error {
+func (step migrationStep) apply(ctx context.Context, conn *pgx.Conn, history *canonicalHistory) error {
 	if step.disableTx {
-		return step.applyNoTx(ctx, conn, history, legacyBoundary)
+		return step.applyNoTx(ctx, conn, history)
 	}
 
 	tx, err := conn.Begin(ctx)
@@ -402,13 +402,13 @@ func (step migrationStep) apply(ctx context.Context, conn *pgx.Conn, history *ca
 	defer sqlutil.RollbackContext(ctx, "migrate: apply", tx)
 
 	// The transaction applies to the connection, so applyNoTx executes in it.
-	if err := step.applyNoTx(ctx, conn, history, legacyBoundary); err != nil {
+	if err := step.applyNoTx(ctx, conn, history); err != nil {
 		return err
 	}
 	return errors.Wrap(tx.Commit(ctx), "commit")
 }
 
-func performMigrations(ctx context.Context, conn *pgx.Conn, history *canonicalHistory, applyUp bool, legacyBoundary int, migrations []migration) (int, error) {
+func performMigrations(ctx context.Context, conn *pgx.Conn, history *canonicalHistory, applyUp bool, migrations []migration) (int, error) {
 	typ := "DOWN"
 	if applyUp {
 		typ = "UP"
@@ -421,7 +421,7 @@ func performMigrations(ctx context.Context, conn *pgx.Conn, history *canonicalHi
 		}
 
 		start := time.Now()
-		if err := step.apply(ctx, conn, history, legacyBoundary); err != nil {
+		if err := step.apply(ctx, conn, history); err != nil {
 			return index, errors.Wrapf(err, "apply '%s'", migration.Name)
 		}
 		log.Logf(ctx, "Applied %s migration '%s' in %s", typ, migration.Name, time.Since(start).Truncate(time.Millisecond))

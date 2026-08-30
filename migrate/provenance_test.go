@@ -1,17 +1,19 @@
 package migrate
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestValidateAppliedHistoryAcceptsLegacyPrefixesAndDurableProvenance(t *testing.T) {
+func TestValidateAppliedHistoryAcceptsPreLedgerPrefixesAndDurableProvenance(t *testing.T) {
 	history := testAppliedCanonicalHistory(t)
 
-	for appliedCount := 0; appliedCount <= history.provenanceStoreIndex; appliedCount++ {
-		t.Run("legacy-prefix-"+time.Unix(int64(appliedCount), 0).UTC().Format("05"), func(t *testing.T) {
+	for appliedCount := 0; appliedCount <= history.provenanceFoundationIndex; appliedCount++ {
+		t.Run("pre-ledger-prefix-"+time.Unix(int64(appliedCount), 0).UTC().Format("05"), func(t *testing.T) {
 			applied := testAppliedRecords(history, appliedCount)
 			got, err := validateAppliedHistory(history, applied, false, nil)
 			if err != nil {
@@ -91,14 +93,14 @@ func TestValidateAppliedHistoryRejectsProvenanceTableContradictions(t *testing.T
 		wantErr       string
 	}{
 		{
-			name:          "store migration applied but table missing",
+			name:          "Foundation migration applied but table missing",
 			appliedCount:  len(history.entries),
 			hasProvenance: false,
 			wantErr:       "provenance table is missing",
 		},
 		{
-			name:          "table exists before store migration",
-			appliedCount:  history.provenanceStoreIndex,
+			name:          "table exists before Foundation migration",
+			appliedCount:  history.provenanceFoundationIndex,
 			hasProvenance: true,
 			wantErr:       "provenance table exists before",
 		},
@@ -192,15 +194,31 @@ func TestValidateAppliedHistoryRejectsDurableProvenanceDrift(t *testing.T) {
 				rows[0].RecordOrigin = "UNKNOWN"
 				return rows
 			},
-			wantErr: "field record_origin",
+			wantErr: "expected PRE_LEDGER_BOOTSTRAP",
 		},
 		{
-			name: "store migration not canonical execution",
+			name: "pre-ledger migration incorrectly claims canonical execution",
 			mutate: func(rows []appliedProvenanceRecord) []appliedProvenanceRecord {
-				rows[history.provenanceStoreIndex].RecordOrigin = recordOriginLegacyBootstrap
+				rows[0].RecordOrigin = recordOriginCanonical
 				return rows
 			},
-			wantErr: "field record_origin",
+			wantErr: "expected PRE_LEDGER_BOOTSTRAP",
+		},
+		{
+			name: "Foundation migration incorrectly claims pre-ledger bootstrap",
+			mutate: func(rows []appliedProvenanceRecord) []appliedProvenanceRecord {
+				rows[history.provenanceFoundationIndex].RecordOrigin = recordOriginPreLedgerBootstrap
+				return rows
+			},
+			wantErr: "expected CANONICAL_EXECUTION",
+		},
+		{
+			name: "post-Foundation migration incorrectly claims pre-ledger bootstrap",
+			mutate: func(rows []appliedProvenanceRecord) []appliedProvenanceRecord {
+				rows[history.provenanceFoundationIndex+1].RecordOrigin = recordOriginPreLedgerBootstrap
+				return rows
+			},
+			wantErr: "expected CANONICAL_EXECUTION",
 		},
 		{
 			name: "applied timestamp disagreement",
@@ -224,6 +242,36 @@ func TestValidateAppliedHistoryRejectsDurableProvenanceDrift(t *testing.T) {
 	}
 }
 
+func TestExpectedRecordOriginUsesManifestFoundationBoundary(t *testing.T) {
+	history := testAppliedCanonicalHistory(t)
+	want := []string{
+		recordOriginPreLedgerBootstrap,
+		recordOriginPreLedgerBootstrap,
+		recordOriginCanonical,
+		recordOriginCanonical,
+	}
+	for index, expected := range want {
+		got, err := expectedRecordOrigin(history, index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != expected {
+			t.Fatalf("origin at canonical index %d = %q, want %q", index, got, expected)
+		}
+	}
+
+	for _, invalidIndex := range []int{-1, len(history.entries)} {
+		invalid := *history
+		invalid.provenanceFoundationIndex = invalidIndex
+		if _, err := expectedRecordOrigin(&invalid, 0); err == nil || !strings.Contains(err.Error(), "no unambiguous provenance Foundation boundary") {
+			t.Fatalf("invalid Foundation boundary %d error = %v", invalidIndex, err)
+		}
+		if _, err := validateAppliedHistory(&invalid, nil, false, nil); err == nil || !strings.Contains(err.Error(), "no unambiguous provenance Foundation boundary") {
+			t.Fatalf("validateAppliedHistory invalid Foundation boundary %d error = %v", invalidIndex, err)
+		}
+	}
+}
+
 func TestDivergentHistoryIsRejectedBeforeRollbackPlanning(t *testing.T) {
 	history := testAppliedCanonicalHistory(t)
 	applied := testAppliedRecords(history, len(history.entries))
@@ -240,10 +288,42 @@ func testAppliedCanonicalHistory(t *testing.T) *canonicalHistory {
 		t,
 		"20240101000000-upstream-one.sql",
 		"20240102000000-upstream-two.sql",
-		"20240103000000-provenance-store.sql",
+		"20240103000000-provenance-foundation.sql",
 	)
 	fixture.splitSecondEntryIntoBundle(t)
-	fixture.manifest.ProvenanceStoreMigrationID = fixture.manifest.Bundles[1].Entries[0].ID
+	foundationID := fixture.manifest.Bundles[1].Entries[0].ID
+	fixture.manifest.ProvenanceFoundationMigrationID = foundationID
+	futureID := "20240104000000-ms-oncall-future.sql"
+	futureSQL := []byte("-- +migrate Up\nSELECT 4;\n-- +migrate Down\n")
+	fixture.files[futureID] = futureSQL
+	foundationEntry := fixture.manifest.Bundles[1].Entries[0]
+	fixture.manifest.Bundles = append(fixture.manifest.Bundles, historyBundleSpec{
+		ID:            "ms-oncall-test-future",
+		FirstPosition: 4,
+		Provenance:    provenanceMSOnCall,
+		Source: historySourceSpec{
+			Kind:                    sourceKindMSOnCallBase,
+			Repository:              "https://example.invalid/ms-oncall",
+			Checkpoint:              "test-future-checkpoint",
+			BaseCommit:              strings.Repeat("5", 40),
+			BaseTree:                strings.Repeat("6", 40),
+			AuthorizationRepository: "https://example.invalid/ms-oncall-project",
+			AuthorizationCommit:     strings.Repeat("7", 40),
+			AuthorizationTree:       strings.Repeat("8", 40),
+		},
+		DependsOn: &historyDependencySpec{
+			BundleID:    fixture.manifest.Bundles[1].ID,
+			MigrationID: foundationEntry.ID,
+			SHA256:      foundationEntry.SHA256,
+			Evidence:    "TEST_APPEND_AFTER_FOUNDATION",
+		},
+		AdaptationEvidence: "NOT_APPLICABLE_TEST_FUTURE",
+		Entries: []historyEntrySpec{{
+			ID:         futureID,
+			OriginalID: futureID,
+			SHA256:     fmt.Sprintf("%x", sha256.Sum256(futureSQL)),
+		}},
+	})
 	fixture.manifest.Bundles[0].Provenance = provenanceUpstream
 	fixture.manifest.Bundles[0].Source = historySourceSpec{
 		Kind:       sourceKindGoAlertRelease,
@@ -280,9 +360,9 @@ func testProvenanceRecords(history *canonicalHistory, applied []appliedMigration
 	records := make([]appliedProvenanceRecord, len(applied))
 	for index := range records {
 		entry := history.entries[index]
-		origin := recordOriginLegacyBootstrap
-		if index >= history.provenanceStoreIndex {
-			origin = recordOriginCanonical
+		origin, err := expectedRecordOrigin(history, index)
+		if err != nil {
+			panic(err)
 		}
 		records[index] = appliedProvenanceRecord{
 			CanonicalPosition:   entry.Position,

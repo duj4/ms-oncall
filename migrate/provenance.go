@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	recordOriginLegacyBootstrap = "LEGACY_GORP_BOOTSTRAP"
-	recordOriginCanonical       = "CANONICAL_EXECUTION"
+	recordOriginPreLedgerBootstrap = "PRE_LEDGER_BOOTSTRAP"
+	recordOriginCanonical          = "CANONICAL_EXECUTION"
 )
 
 type appliedMigrationRecord struct {
@@ -75,17 +75,23 @@ func loadAppliedHistory(ctx context.Context, conn *pgx.Conn, history *canonicalH
 }
 
 func validateAppliedHistory(history *canonicalHistory, applied []appliedMigrationRecord, hasProvenance bool, provenance []appliedProvenanceRecord) (int, error) {
+	if history == nil {
+		return 0, fmt.Errorf("canonical migration history has no unambiguous provenance Foundation boundary")
+	}
+	if _, err := expectedRecordOrigin(history, history.provenanceFoundationIndex); err != nil {
+		return 0, err
+	}
 	appliedCount, appliedByID, err := validateAppliedPrefix(history, applied)
 	if err != nil {
 		return 0, err
 	}
 
-	storeApplied := history.provenanceStoreIndex < appliedCount
+	foundationApplied := history.provenanceFoundationIndex < appliedCount
 	switch {
-	case storeApplied && !hasProvenance:
-		return 0, fmt.Errorf("migration provenance table is missing although canonical migration %q is applied", history.entries[history.provenanceStoreIndex].ID)
-	case !storeApplied && hasProvenance:
-		return 0, fmt.Errorf("migration provenance table exists before canonical migration %q is applied", history.entries[history.provenanceStoreIndex].ID)
+	case foundationApplied && !hasProvenance:
+		return 0, fmt.Errorf("migration provenance table is missing although canonical migration %q is applied", history.entries[history.provenanceFoundationIndex].ID)
+	case !foundationApplied && hasProvenance:
+		return 0, fmt.Errorf("migration provenance table exists before canonical migration %q is applied", history.entries[history.provenanceFoundationIndex].ID)
 	case !hasProvenance && len(provenance) != 0:
 		return 0, fmt.Errorf("migration provenance records supplied without provenance table")
 	case !hasProvenance:
@@ -117,7 +123,11 @@ func validateAppliedHistory(history *canonicalHistory, applied []appliedMigratio
 		if !ok {
 			return 0, fmt.Errorf("applied migration %q is missing durable provenance", expected.ID)
 		}
-		if err := validateAppliedProvenanceRecord(expected, record, appliedByID[expected.ID].AppliedAt, index >= history.provenanceStoreIndex); err != nil {
+		expectedOrigin, err := expectedRecordOrigin(history, index)
+		if err != nil {
+			return 0, err
+		}
+		if err := validateAppliedProvenanceRecord(expected, record, appliedByID[expected.ID].AppliedAt, expectedOrigin); err != nil {
 			return 0, err
 		}
 	}
@@ -155,7 +165,7 @@ func validateAppliedPrefix(history *canonicalHistory, applied []appliedMigration
 	return appliedCount, appliedByID, nil
 }
 
-func validateAppliedProvenanceRecord(expected canonicalMigration, record appliedProvenanceRecord, appliedAt sql.NullTime, requireCanonicalOrigin bool) error {
+func validateAppliedProvenanceRecord(expected canonicalMigration, record appliedProvenanceRecord, appliedAt sql.NullTime, expectedOrigin string) error {
 	mismatch := func(field string, actual, wanted any) error {
 		return fmt.Errorf("applied migration provenance mismatch for %q field %s: got %v, expected %v", expected.ID, field, actual, wanted)
 	}
@@ -190,11 +200,8 @@ func validateAppliedProvenanceRecord(expected canonicalMigration, record applied
 	if record.AdaptationEvidence != expected.AdaptationEvidence {
 		return mismatch("adaptation_evidence", record.AdaptationEvidence, expected.AdaptationEvidence)
 	}
-	if record.RecordOrigin != recordOriginLegacyBootstrap && record.RecordOrigin != recordOriginCanonical {
-		return mismatch("record_origin", record.RecordOrigin, "allowed immutable origin")
-	}
-	if requireCanonicalOrigin && record.RecordOrigin != recordOriginCanonical {
-		return mismatch("record_origin", record.RecordOrigin, recordOriginCanonical)
+	if record.RecordOrigin != expectedOrigin {
+		return mismatch("record_origin", record.RecordOrigin, expectedOrigin)
 	}
 	if record.AppliedAt.Valid != appliedAt.Valid || (record.AppliedAt.Valid && !record.AppliedAt.Time.Equal(appliedAt.Time)) {
 		return mismatch("applied_at", nullTimeValue(record.AppliedAt), nullTimeValue(appliedAt))
@@ -273,13 +280,13 @@ func readAppliedProvenanceRecords(ctx context.Context, conn *pgx.Conn) ([]applie
 	return records, nil
 }
 
-func recordAppliedProvenance(ctx context.Context, conn *pgx.Conn, history *canonicalHistory, migrationID string, legacyBoundary int) error {
+func recordAppliedProvenance(ctx context.Context, conn *pgx.Conn, history *canonicalHistory, migrationID string) error {
 	index, ok := history.indexByID(migrationID)
 	if !ok {
 		return fmt.Errorf("record provenance for unknown canonical migration %q", migrationID)
 	}
 
-	if index == history.provenanceStoreIndex {
+	if index == history.provenanceFoundationIndex {
 		applied, err := readAppliedMigrationRecords(ctx, conn)
 		if err != nil {
 			return err
@@ -289,12 +296,12 @@ func recordAppliedProvenance(ctx context.Context, conn *pgx.Conn, history *canon
 			return err
 		}
 		if appliedCount != index+1 {
-			return fmt.Errorf("provenance-store migration bootstrap observed %d applied migrations, expected %d", appliedCount, index+1)
+			return fmt.Errorf("provenance Foundation migration bootstrap observed %d applied migrations, expected %d", appliedCount, index+1)
 		}
 		for entryIndex := 0; entryIndex < appliedCount; entryIndex++ {
-			origin := recordOriginCanonical
-			if entryIndex < legacyBoundary {
-				origin = recordOriginLegacyBootstrap
+			origin, err := expectedRecordOrigin(history, entryIndex)
+			if err != nil {
+				return err
 			}
 			entry := history.entries[entryIndex]
 			if err := insertAppliedProvenance(ctx, conn, entry, appliedByID[entry.ID].AppliedAt, origin); err != nil {
@@ -304,14 +311,35 @@ func recordAppliedProvenance(ctx context.Context, conn *pgx.Conn, history *canon
 		return nil
 	}
 
-	if index < history.provenanceStoreIndex {
+	if index < history.provenanceFoundationIndex {
 		return nil
+	}
+	origin, err := expectedRecordOrigin(history, index)
+	if err != nil {
+		return err
 	}
 	var appliedAt sql.NullTime
 	if err := conn.QueryRow(ctx, `select applied_at from gorp_migrations where id = $1`, migrationID).Scan(&appliedAt); err != nil {
 		return fmt.Errorf("read applied timestamp for canonical migration %q: %w", migrationID, err)
 	}
-	return insertAppliedProvenance(ctx, conn, history.entries[index], appliedAt, recordOriginCanonical)
+	return insertAppliedProvenance(ctx, conn, history.entries[index], appliedAt, origin)
+}
+
+func expectedRecordOrigin(history *canonicalHistory, entryIndex int) (string, error) {
+	if history == nil || history.provenanceFoundationIndex < 0 || history.provenanceFoundationIndex >= len(history.entries) {
+		return "", fmt.Errorf("canonical migration history has no unambiguous provenance Foundation boundary")
+	}
+	if entryIndex < 0 || entryIndex >= len(history.entries) {
+		return "", fmt.Errorf("canonical migration index %d is outside provenance Foundation history", entryIndex)
+	}
+	// Origin records how immutable evidence entered the ledger, not an
+	// unknowable historical execution mechanism. The manifest's designated
+	// Foundation identity makes this boundary stable across restarts and future
+	// appended bundles.
+	if entryIndex < history.provenanceFoundationIndex {
+		return recordOriginPreLedgerBootstrap, nil
+	}
+	return recordOriginCanonical, nil
 }
 
 func insertAppliedProvenance(ctx context.Context, conn *pgx.Conn, entry canonicalMigration, appliedAt sql.NullTime, origin string) error {
@@ -361,7 +389,7 @@ func deleteAppliedProvenance(ctx context.Context, conn *pgx.Conn, history *canon
 		return err
 	}
 	if !exists {
-		if index <= history.provenanceStoreIndex {
+		if index <= history.provenanceFoundationIndex {
 			return nil
 		}
 		return fmt.Errorf("migration provenance table disappeared while rolling back %q", migrationID)

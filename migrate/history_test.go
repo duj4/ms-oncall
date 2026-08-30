@@ -18,10 +18,10 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if got, want := len(history.entries), 275; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
-	if got, want := history.provenanceStoreIndex, len(history.entries)-1; got != want {
-		t.Fatalf("provenance store index = %d, want %d", got, want)
+	if got, want := history.provenanceFoundationIndex, len(history.entries)-1; got != want {
+		t.Fatalf("provenance Foundation index = %d, want %d", got, want)
 	}
-	for _, entry := range history.entries[:history.provenanceStoreIndex] {
+	for _, entry := range history.entries[:history.provenanceFoundationIndex] {
 		if entry.Provenance != provenanceUpstream {
 			t.Fatalf("historical migration %q provenance = %q, want %q", entry.ID, entry.Provenance, provenanceUpstream)
 		}
@@ -127,6 +127,33 @@ func TestCanonicalHistoryRejectsCorruption(t *testing.T) {
 			wantErr: "no adaptation evidence",
 		},
 		{
+			name: "missing provenance Foundation designation",
+			mutate: func(f *historyFixture) {
+				f.manifest.ProvenanceFoundationMigrationID = ""
+			},
+			wantErr: "no provenance Foundation migration ID",
+		},
+		{
+			name: "unknown provenance Foundation designation",
+			mutate: func(f *historyFixture) {
+				f.manifest.ProvenanceFoundationMigrationID = "20249999999999-unknown.sql"
+			},
+			wantErr: "provenance Foundation migration",
+		},
+		{
+			name: "provenance Foundation is not MS OnCall",
+			mutate: func(f *historyFixture) {
+				f.manifest.Bundles[0].Provenance = provenanceUpstream
+				f.manifest.Bundles[0].Source = historySourceSpec{
+					Kind:       sourceKindGoAlertRelease,
+					Repository: "https://example.invalid/goalert",
+					Release:    "v0.test",
+					Commit:     strings.Repeat("a", 40),
+				}
+			},
+			wantErr: "is not MS OnCall provenance",
+		},
+		{
 			name: "duplicate provenance identity",
 			mutate: func(f *historyFixture) {
 				f.addEntry(t, "20240202000000-two.sql", []byte("-- +migrate Up\nSELECT 2;\n-- +migrate Down\n"))
@@ -187,6 +214,21 @@ func TestCanonicalHistoryRejectsUnknownManifestField(t *testing.T) {
 	}
 }
 
+func TestCanonicalHistoryRejectsConflictingFoundationDesignation(t *testing.T) {
+	fixture := newHistoryFixture(t, "20240101000000-one.sql")
+	data, err := json.Marshal(fixture.manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictingPrefix := []byte(`{"provenance_foundation_migration_id":"20249999999999-conflict.sql",`)
+	data = append(conflictingPrefix, data[1:]...)
+
+	_, err = loadCanonicalHistory(fixture.fsysWithManifest(data))
+	if err == nil || !strings.Contains(err.Error(), `duplicate JSON field "provenance_foundation_migration_id"`) {
+		t.Fatalf("loadCanonicalHistory error = %v, want duplicate Foundation designation", err)
+	}
+}
+
 type historyFixture struct {
 	manifest historyManifest
 	files    map[string][]byte
@@ -213,7 +255,7 @@ func newHistoryFixture(t *testing.T, ids ...string) *historyFixture {
 				},
 				AdaptationEvidence: "NOT_APPLICABLE_TEST",
 			}},
-			ProvenanceStoreMigrationID: ids[0],
+			ProvenanceFoundationMigrationID: ids[0],
 		},
 		files: make(map[string][]byte),
 	}

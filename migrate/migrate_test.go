@@ -65,6 +65,21 @@ func TestParseMigrationsUsesCanonicalSequence(t *testing.T) {
 	}
 }
 
+func TestProvenanceFoundationMigrationUsesTransaction(t *testing.T) {
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := parseMigrations(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundation := migrations[history.provenanceFoundationIndex]
+	if foundation.Up.disableTx || foundation.Down.disableTx {
+		t.Fatalf("provenance Foundation migration %q must use transactions for Up and Down", foundation.ID)
+	}
+}
+
 func TestDumpMigrationsIncludesValidatedCanonicalHistory(t *testing.T) {
 	history, err := loadEmbeddedHistory()
 	if err != nil {

@@ -27,9 +27,9 @@ const (
 var migrationFS embed.FS
 
 type historyManifest struct {
-	FormatVersion              int                 `json:"format_version"`
-	ProvenanceStoreMigrationID string              `json:"provenance_store_migration_id"`
-	Bundles                    []historyBundleSpec `json:"bundles"`
+	FormatVersion                   int                 `json:"format_version"`
+	ProvenanceFoundationMigrationID string              `json:"provenance_foundation_migration_id"`
+	Bundles                         []historyBundleSpec `json:"bundles"`
 }
 
 type historyBundleSpec struct {
@@ -83,11 +83,11 @@ type canonicalMigration struct {
 }
 
 type canonicalHistory struct {
-	entries              []canonicalMigration
-	byID                 map[string]int
-	byName               map[string]int
-	provenanceStoreIndex int
-	manifest             []byte
+	entries                   []canonicalMigration
+	byID                      map[string]int
+	byName                    map[string]int
+	provenanceFoundationIndex int
+	manifest                  []byte
 }
 
 func (h *canonicalHistory) indexByName(name string) (int, bool) {
@@ -130,6 +130,9 @@ func loadCanonicalHistory(fsys fs.FS) (*canonicalHistory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read canonical migration history: %w", err)
 	}
+	if err := rejectDuplicateJSONFields(manifestData); err != nil {
+		return nil, fmt.Errorf("decode canonical migration history: %w", err)
+	}
 
 	var manifest historyManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifestData))
@@ -146,15 +149,15 @@ func loadCanonicalHistory(fsys fs.FS) (*canonicalHistory, error) {
 	if len(manifest.Bundles) == 0 {
 		return nil, fmt.Errorf("canonical migration history has no bundles")
 	}
-	if manifest.ProvenanceStoreMigrationID == "" {
-		return nil, fmt.Errorf("canonical migration history has no provenance-store migration ID")
+	if manifest.ProvenanceFoundationMigrationID == "" {
+		return nil, fmt.Errorf("canonical migration history has no provenance Foundation migration ID")
 	}
 
 	history := &canonicalHistory{
-		byID:                 make(map[string]int),
-		byName:               make(map[string]int),
-		provenanceStoreIndex: -1,
-		manifest:             append([]byte(nil), manifestData...),
+		byID:                      make(map[string]int),
+		byName:                    make(map[string]int),
+		provenanceFoundationIndex: -1,
+		manifest:                  append([]byte(nil), manifestData...),
 	}
 	bundleIDs := make(map[string]struct{})
 	positions := make(map[int64]string)
@@ -262,14 +265,14 @@ func loadCanonicalHistory(fsys fs.FS) (*canonicalHistory, error) {
 		}
 	}
 
-	storeIndex, ok := history.byID[manifest.ProvenanceStoreMigrationID]
+	foundationIndex, ok := history.byID[manifest.ProvenanceFoundationMigrationID]
 	if !ok {
-		return nil, fmt.Errorf("provenance-store migration %q is not in canonical history", manifest.ProvenanceStoreMigrationID)
+		return nil, fmt.Errorf("provenance Foundation migration %q is not in canonical history", manifest.ProvenanceFoundationMigrationID)
 	}
-	if history.entries[storeIndex].Provenance != provenanceMSOnCall {
-		return nil, fmt.Errorf("provenance-store migration %q is not MS OnCall provenance", manifest.ProvenanceStoreMigrationID)
+	if history.entries[foundationIndex].Provenance != provenanceMSOnCall {
+		return nil, fmt.Errorf("provenance Foundation migration %q is not MS OnCall provenance", manifest.ProvenanceFoundationMigrationID)
 	}
-	history.provenanceStoreIndex = storeIndex
+	history.provenanceFoundationIndex = foundationIndex
 
 	dirEntries, err := fs.ReadDir(fsys, "migrations")
 	if err != nil {
@@ -300,6 +303,70 @@ func requireJSONEOF(decoder *json.Decoder) error {
 		return fmt.Errorf("multiple JSON values")
 	}
 	return err
+}
+
+func rejectDuplicateJSONFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := consumeUniqueJSONValue(decoder); err != nil {
+		return err
+	}
+	return requireJSONEOF(decoder)
+}
+
+func consumeUniqueJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delim {
+	case '{':
+		fields := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("object field name has invalid type %T", keyToken)
+			}
+			if _, exists := fields[key]; exists {
+				return fmt.Errorf("duplicate JSON field %q", key)
+			}
+			fields[key] = struct{}{}
+			if err := consumeUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim('}') {
+			return fmt.Errorf("unexpected JSON object terminator %v", end)
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim(']') {
+			return fmt.Errorf("unexpected JSON array terminator %v", end)
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delim)
+	}
+	return nil
 }
 
 func validateSource(source historySourceSpec) (string, error) {
