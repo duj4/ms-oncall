@@ -30,6 +30,9 @@ const DefaultSkipToMigration = "switchover-mk2"
 var rules = migratetest.RuleSet{
 	// All migration timestamps will differ as they applied/re-applied
 	{TableName: "gorp_migrations", ColumnName: "applied_at"},
+	// Provenance audit timestamps truthfully follow each bootstrap/application; all immutable ledger fields must still match.
+	{MigrationName: "ms-oncall-migration-provenance", TableName: "ms_oncall_migration_provenance", ColumnName: "applied_at"},
+	{MigrationName: "ms-oncall-migration-provenance", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
 
 	// id will be regenerated each time the table is created
 	{MigrationName: "ev3-assign-schedule-rotations", TableName: "assignments", ColumnName: "src_schedule_rule_id"},
