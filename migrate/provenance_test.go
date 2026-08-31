@@ -119,6 +119,17 @@ func TestValidateAppliedHistoryRejectsProvenanceTableContradictions(t *testing.T
 func TestValidateAppliedHistoryRejectsDurableProvenanceDrift(t *testing.T) {
 	history := testAppliedCanonicalHistory(t)
 	applied := testAppliedRecords(history, len(history.entries))
+	upstreamSourceBinding := mustTestSourceBinding(t, testGoAlertReleaseSource())
+	msOnCallSourceBinding := mustTestSourceBinding(t, historySourceSpec{
+		Kind:                    sourceKindMSOnCallBase,
+		Repository:              "https://example.invalid/ms-oncall",
+		Checkpoint:              "durable-pairing-test",
+		BaseCommit:              strings.Repeat("1", 40),
+		BaseTree:                strings.Repeat("2", 40),
+		AuthorizationRepository: "https://example.invalid/ms-oncall-project",
+		AuthorizationCommit:     strings.Repeat("3", 40),
+		AuthorizationTree:       strings.Repeat("4", 40),
+	})
 
 	tests := []struct {
 		name    string
@@ -179,6 +190,22 @@ func TestValidateAppliedHistoryRejectsDurableProvenanceDrift(t *testing.T) {
 				return rows
 			},
 			wantErr: "field source_binding",
+		},
+		{
+			name: "upstream durable row with MS OnCall source kind",
+			mutate: func(rows []appliedProvenanceRecord) []appliedProvenanceRecord {
+				rows[0].SourceBinding = msOnCallSourceBinding
+				return rows
+			},
+			wantErr: "incompatible provenance/source kind pairing",
+		},
+		{
+			name: "MS OnCall durable row with upstream source kind",
+			mutate: func(rows []appliedProvenanceRecord) []appliedProvenanceRecord {
+				rows[history.provenanceFoundationIndex].SourceBinding = upstreamSourceBinding
+				return rows
+			},
+			wantErr: "incompatible provenance/source kind pairing",
 		},
 		{
 			name: "predecessor disagreement",
@@ -384,4 +411,13 @@ func testProvenanceRecords(history *canonicalHistory, applied []appliedMigration
 		}
 	}
 	return records
+}
+
+func mustTestSourceBinding(t *testing.T, source historySourceSpec) string {
+	t.Helper()
+	binding, err := validateSource(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return binding
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -14,9 +15,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const postgresIntegrationEnableEnv = "MS_ONCALL_CORE_MIGRATION_TEST_POSTGRES_ENABLE"
+
+const (
+	postgresTestDatabaseCleanupTimeout      = 30 * time.Second
+	postgresTestDatabaseCleanupPollInterval = 25 * time.Millisecond
+)
 
 func TestPostgresInterruptedFreshInstallDeterministicProvenance(t *testing.T) {
 	baseURL := postgresIntegrationURL(t)
@@ -359,6 +366,8 @@ func TestPostgresProvenanceOriginAndLedgerCorruptionFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close(ctx)
+	upstreamSourceBinding := history.entries[0].SourceBinding
+	msOnCallSourceBinding := history.entries[history.provenanceFoundationIndex].SourceBinding
 
 	tests := []struct {
 		name    string
@@ -391,6 +400,22 @@ func TestPostgresProvenanceOriginAndLedgerCorruptionFailClosed(t *testing.T) {
 				return err
 			},
 			wantErr: "field record_origin",
+		},
+		{
+			name: "upstream provenance paired with MS OnCall source",
+			mutate: func(ctx context.Context, conn *pgx.Conn) error {
+				_, err := conn.Exec(ctx, `update ms_oncall_migration_provenance set source_binding = $1 where migration_id = $2`, msOnCallSourceBinding, history.entries[0].ID)
+				return err
+			},
+			wantErr: "incompatible provenance/source kind pairing",
+		},
+		{
+			name: "MS OnCall provenance paired with upstream source",
+			mutate: func(ctx context.Context, conn *pgx.Conn) error {
+				_, err := conn.Exec(ctx, `update ms_oncall_migration_provenance set source_binding = $1 where migration_id = $2`, upstreamSourceBinding, history.entries[history.provenanceFoundationIndex].ID)
+				return err
+			},
+			wantErr: "incompatible provenance/source kind pairing",
 		},
 		{
 			name: "partial ledger",
@@ -478,6 +503,16 @@ func TestPostgresFutureBundleOriginIntegrityFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	futureSourceBinding := mustTestSourceBinding(t, historySourceSpec{
+		Kind:                    sourceKindMSOnCallBase,
+		Repository:              "https://example.invalid/ms-oncall",
+		Checkpoint:              "future-origin-integrity-test",
+		BaseCommit:              strings.Repeat("1", 40),
+		BaseTree:                strings.Repeat("2", 40),
+		AuthorizationRepository: "https://example.invalid/ms-oncall-project",
+		AuthorizationCommit:     strings.Repeat("3", 40),
+		AuthorizationTree:       strings.Repeat("4", 40),
+	})
 	future := canonicalMigration{
 		Position:           predecessor.Position + 1,
 		ID:                 futureID,
@@ -485,7 +520,7 @@ func TestPostgresFutureBundleOriginIntegrityFailsClosed(t *testing.T) {
 		Provenance:         provenanceMSOnCall,
 		OriginalID:         futureID,
 		SHA256:             strings.Repeat("a", 64),
-		SourceBinding:      "MS_ONCALL_BASE|test=future-origin-integrity",
+		SourceBinding:      futureSourceBinding,
 		BundleID:           "ms-oncall-test-future-origin-integrity",
 		PredecessorID:      predecessor.ID,
 		DependencyEvidence: fmt.Sprintf("BUNDLE_DEPENDENCY|bundle=%s|id=%s|sha256=%s|evidence=TEST_FUTURE_APPEND", predecessor.BundleID, predecessor.ID, predecessor.SHA256),
@@ -558,6 +593,60 @@ func TestPostgresDownRejectsDivergentHistory(t *testing.T) {
 	_, err = Down(ctx, testURL, history.entries[0].Name)
 	if err == nil || !strings.Contains(err.Error(), "history has a gap") {
 		t.Fatalf("Down error = %v, want canonical history gap", err)
+	}
+}
+
+func TestPostgresTestDatabaseCleanupWaitsForSessionsToDrain(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	dbName, testURL := newPostgresTestDatabaseDetails(t, baseURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	heldConn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer heldConn.Close(context.Background())
+
+	dropResult := make(chan error, 1)
+	go func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		dropResult <- dropPostgresTestDatabase(cleanupCtx, baseURL, dbName)
+	}()
+
+	select {
+	case err := <-dropResult:
+		if closeErr := heldConn.Close(ctx); closeErr != nil {
+			t.Fatalf("cleanup returned early with %v; close held session: %v", err, closeErr)
+		}
+		t.Fatalf("cleanup returned before the held database session drained: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if err := heldConn.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-dropResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("cleanup did not finish after the held database session drained: %v", ctx.Err())
+	}
+
+	admin, err := pgx.Connect(ctx, baseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(context.Background())
+	var exists bool
+	if err := admin.QueryRow(ctx, `select exists (select 1 from pg_database where datname = $1)`, dbName).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatalf("PostgreSQL integration database %q still exists after cleanup", dbName)
 	}
 }
 
@@ -726,6 +815,16 @@ func postgresIntegrationURL(t *testing.T) string {
 
 func newPostgresTestDatabase(t *testing.T, baseURL string) string {
 	t.Helper()
+	_, testURL := newPostgresTestDatabaseDetails(t, baseURL)
+	return testURL
+}
+
+func newPostgresTestDatabaseDetails(t *testing.T, baseURL string) (string, string) {
+	t.Helper()
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	admin, err := pgx.Connect(ctx, baseURL)
@@ -744,15 +843,9 @@ func newPostgresTestDatabase(t *testing.T, baseURL string) string {
 		t.Fatalf("create PostgreSQL integration database: %v", err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), postgresTestDatabaseCleanupTimeout)
 		defer cleanupCancel()
-		cleanupConn, err := pgx.Connect(cleanupCtx, baseURL)
-		if err != nil {
-			t.Errorf("connect for PostgreSQL integration cleanup: %v", err)
-			return
-		}
-		defer cleanupConn.Close(cleanupCtx)
-		if _, err := cleanupConn.Exec(cleanupCtx, "drop database if exists "+quotedName+" with (force)"); err != nil {
+		if err := dropPostgresTestDatabase(cleanupCtx, baseURL, dbName); err != nil {
 			t.Errorf("drop PostgreSQL integration database: %v", err)
 		}
 	})
@@ -760,10 +853,54 @@ func newPostgresTestDatabase(t *testing.T, baseURL string) string {
 		t.Fatal(err)
 	}
 
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
 	parsed.Path = "/" + dbName
-	return parsed.String()
+	return dbName, parsed.String()
+}
+
+func dropPostgresTestDatabase(ctx context.Context, baseURL, dbName string) (returnErr error) {
+	cleanupConn, err := pgx.Connect(ctx, baseURL)
+	if err != nil {
+		return fmt.Errorf("connect for PostgreSQL integration cleanup: %w", err)
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := cleanupConn.Close(closeCtx); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close PostgreSQL integration cleanup connection: %w", err))
+		}
+	}()
+
+	quotedName := pgx.Identifier{dbName}.Sanitize()
+	ticker := time.NewTicker(postgresTestDatabaseCleanupPollInterval)
+	defer ticker.Stop()
+	var activeSessions int
+	var lastDropErr error
+	for {
+		if err := cleanupConn.QueryRow(ctx, `select count(*) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()`, dbName).Scan(&activeSessions); err != nil {
+			return fmt.Errorf("inspect active sessions for PostgreSQL integration database %q: %w", dbName, err)
+		}
+		if activeSessions == 0 {
+			if _, err := cleanupConn.Exec(ctx, "drop database if exists "+quotedName); err == nil {
+				return nil
+			} else if !isPostgresDatabaseInUseError(err) {
+				return fmt.Errorf("drop PostgreSQL integration database %q: %w", dbName, err)
+			} else {
+				lastDropErr = err
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			if lastDropErr != nil {
+				return fmt.Errorf("timed out dropping PostgreSQL integration database %q with %d active session(s); last transient drop error: %v: %w", dbName, activeSessions, lastDropErr, ctx.Err())
+			}
+			return fmt.Errorf("timed out waiting for %d active session(s) on PostgreSQL integration database %q to drain: %w", activeSessions, dbName, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func isPostgresDatabaseInUseError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "55006"
 }

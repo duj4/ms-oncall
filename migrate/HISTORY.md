@@ -14,6 +14,13 @@ It never regenerates or accepts a checksum from the SQL file itself. Missing,
 extra, duplicate, reordered, or modified migrations fail validation before any
 database migration is attempted.
 
+Manifest object keys are a strict canonical contract. Every key must use the
+exact lowercase spelling documented by `history.json`; exact duplicates,
+case-folded aliases, and unknown fields at the manifest, bundle, source,
+dependency, and migration-entry levels are rejected before typed decoding or
+database planning. A later JSON value can therefore never override an earlier
+logical field through `encoding/json` case-insensitive field matching.
+
 Existing accepted entries, source bindings, positions, and checksums are
 append-only. A future adopted GoAlert release or MS OnCall forward fix is added
 as a new bundle after the current tail, with an exact predecessor binding. An
@@ -29,6 +36,21 @@ the migration content checksum. It deliberately does not claim the future Git
 commit that introduces itself. The resulting Core commit binds the reviewed
 manifest and SQL together after validation, without an impossible attempt to
 embed its own commit hash.
+
+Provenance ownership and source kind form a closed compatibility matrix:
+`UPSTREAM_GOALERT` uses only `GOALERT_RELEASE`, and `MS_ONCALL` uses only
+`MS_ONCALL_CHECKPOINT_BASE`. Both pairings retain complete source metadata;
+cross-pairings and unknown kinds fail before migration planning. Durable source
+bindings are parsed and checked against the same matrix before the ledger is
+accepted.
+
+An MS OnCall adaptation or forward fix of an upstream migration remains owned
+by `MS_ONCALL` and is sourced from its owner-authorized
+`MS_ONCALL_CHECKPOINT_BASE`; it is not mislabeled as upstream provenance. The
+bundle's exact `depends_on` predecessor identifies the adopted upstream
+dependency, and the required `adaptation_evidence` states the reviewed
+adaptation or forward-fix relationship. Missing dependency or adaptation
+evidence fails closed.
 
 ## Applied history
 

@@ -130,7 +130,7 @@ func loadCanonicalHistory(fsys fs.FS) (*canonicalHistory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read canonical migration history: %w", err)
 	}
-	if err := rejectDuplicateJSONFields(manifestData); err != nil {
+	if err := validateCanonicalHistoryJSON(manifestData, historyJSONManifest, "manifest"); err != nil {
 		return nil, fmt.Errorf("decode canonical migration history: %w", err)
 	}
 
@@ -190,6 +190,9 @@ func loadCanonicalHistory(fsys fs.FS) (*canonicalHistory, error) {
 
 		sourceBinding, err := validateSource(bundle.Source)
 		if err != nil {
+			return nil, fmt.Errorf("bundle %q source: %w", bundle.ID, err)
+		}
+		if err := validateProvenanceSourceKind(bundle.Provenance, bundle.Source.Kind); err != nil {
 			return nil, fmt.Errorf("bundle %q source: %w", bundle.ID, err)
 		}
 		if err := validateBundleDependency(bundleIndex, bundle, manifest.Bundles, history.entries); err != nil {
@@ -305,54 +308,58 @@ func requireJSONEOF(decoder *json.Decoder) error {
 	return err
 }
 
-func rejectDuplicateJSONFields(data []byte) error {
+type historyJSONKind uint8
+
+const (
+	historyJSONScalar historyJSONKind = iota
+	historyJSONManifest
+	historyJSONBundles
+	historyJSONBundle
+	historyJSONSource
+	historyJSONDependency
+	historyJSONEntries
+	historyJSONEntry
+)
+
+func validateCanonicalHistoryJSON(data []byte, kind historyJSONKind, path string) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := consumeUniqueJSONValue(decoder); err != nil {
+	if err := consumeCanonicalHistoryJSONValue(decoder, kind, path); err != nil {
 		return err
 	}
 	return requireJSONEOF(decoder)
 }
 
-func consumeUniqueJSONValue(decoder *json.Decoder) error {
+func consumeCanonicalHistoryJSONValue(decoder *json.Decoder, kind historyJSONKind, path string) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
 	}
-	delim, ok := token.(json.Delim)
-	if !ok {
+
+	if kind == historyJSONScalar {
+		if delim, ok := token.(json.Delim); ok {
+			return fmt.Errorf("field %s must be a scalar, got delimiter %q", path, delim)
+		}
+		return nil
+	}
+	if kind == historyJSONDependency && token == nil {
 		return nil
 	}
 
-	switch delim {
-	case '{':
-		fields := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return fmt.Errorf("object field name has invalid type %T", keyToken)
-			}
-			if _, exists := fields[key]; exists {
-				return fmt.Errorf("duplicate JSON field %q", key)
-			}
-			fields[key] = struct{}{}
-			if err := consumeUniqueJSONValue(decoder); err != nil {
-				return err
-			}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return fmt.Errorf("field %s has an invalid JSON type", path)
+	}
+
+	if kind == historyJSONBundles || kind == historyJSONEntries {
+		if delim != '[' {
+			return fmt.Errorf("field %s must be an array", path)
 		}
-		end, err := decoder.Token()
-		if err != nil {
-			return err
+		elementKind := historyJSONBundle
+		if kind == historyJSONEntries {
+			elementKind = historyJSONEntry
 		}
-		if end != json.Delim('}') {
-			return fmt.Errorf("unexpected JSON object terminator %v", end)
-		}
-	case '[':
-		for decoder.More() {
-			if err := consumeUniqueJSONValue(decoder); err != nil {
+		for index := 0; decoder.More(); index++ {
+			if err := consumeCanonicalHistoryJSONValue(decoder, elementKind, fmt.Sprintf("%s[%d]", path, index)); err != nil {
 				return err
 			}
 		}
@@ -361,10 +368,104 @@ func consumeUniqueJSONValue(decoder *json.Decoder) error {
 			return err
 		}
 		if end != json.Delim(']') {
-			return fmt.Errorf("unexpected JSON array terminator %v", end)
+			return fmt.Errorf("unexpected JSON array terminator %v at %s", end, path)
 		}
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q", delim)
+		return nil
+	}
+
+	if delim != '{' {
+		return fmt.Errorf("field %s must be an object", path)
+	}
+	fields := canonicalHistoryJSONFields(kind)
+	if fields == nil {
+		return fmt.Errorf("field %s has an unsupported JSON schema", path)
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("object field name at %s has invalid type %T", path, keyToken)
+		}
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("duplicate JSON field %q at %s", key, path)
+		}
+
+		childKind, exact := fields[key]
+		if !exact {
+			for canonical := range fields {
+				if !strings.EqualFold(key, canonical) {
+					continue
+				}
+				if _, exists := seen[canonical]; exists {
+					return fmt.Errorf("case-folded duplicate JSON field %q conflicts with canonical field %q at %s", key, canonical, path)
+				}
+				return fmt.Errorf("non-canonical JSON field %q at %s; use %q", key, path, canonical)
+			}
+			return fmt.Errorf("unknown field %q at %s", key, path)
+		}
+		seen[key] = struct{}{}
+		if err := consumeCanonicalHistoryJSONValue(decoder, childKind, path+"."+key); err != nil {
+			return err
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if end != json.Delim('}') {
+		return fmt.Errorf("unexpected JSON object terminator %v at %s", end, path)
+	}
+	return nil
+}
+
+func canonicalHistoryJSONFields(kind historyJSONKind) map[string]historyJSONKind {
+	switch kind {
+	case historyJSONManifest:
+		return map[string]historyJSONKind{
+			"format_version":                     historyJSONScalar,
+			"provenance_foundation_migration_id": historyJSONScalar,
+			"bundles":                            historyJSONBundles,
+		}
+	case historyJSONBundle:
+		return map[string]historyJSONKind{
+			"id":                  historyJSONScalar,
+			"first_position":      historyJSONScalar,
+			"provenance":          historyJSONScalar,
+			"source":              historyJSONSource,
+			"depends_on":          historyJSONDependency,
+			"adaptation_evidence": historyJSONScalar,
+			"entries":             historyJSONEntries,
+		}
+	case historyJSONSource:
+		return map[string]historyJSONKind{
+			"kind":                     historyJSONScalar,
+			"repository":               historyJSONScalar,
+			"release":                  historyJSONScalar,
+			"commit":                   historyJSONScalar,
+			"checkpoint":               historyJSONScalar,
+			"base_commit":              historyJSONScalar,
+			"base_tree":                historyJSONScalar,
+			"authorization_repository": historyJSONScalar,
+			"authorization_commit":     historyJSONScalar,
+			"authorization_tree":       historyJSONScalar,
+		}
+	case historyJSONDependency:
+		return map[string]historyJSONKind{
+			"bundle_id":    historyJSONScalar,
+			"migration_id": historyJSONScalar,
+			"sha256":       historyJSONScalar,
+			"evidence":     historyJSONScalar,
+		}
+	case historyJSONEntry:
+		return map[string]historyJSONKind{
+			"id":          historyJSONScalar,
+			"original_id": historyJSONScalar,
+			"sha256":      historyJSONScalar,
+		}
 	}
 	return nil
 }
@@ -407,6 +508,46 @@ func validateSource(source historySourceSpec) (string, error) {
 		return "", fmt.Errorf("encode source binding: %w", err)
 	}
 	return string(data), nil
+}
+
+func validateProvenanceSourceKind(provenance, sourceKind string) error {
+	var requiredKind string
+	switch provenance {
+	case provenanceUpstream:
+		requiredKind = sourceKindGoAlertRelease
+	case provenanceMSOnCall:
+		requiredKind = sourceKindMSOnCallBase
+	default:
+		return fmt.Errorf("invalid provenance %q", provenance)
+	}
+	if sourceKind != requiredKind {
+		return fmt.Errorf("incompatible provenance/source kind pairing: provenance %q requires source kind %q, got %q", provenance, requiredKind, sourceKind)
+	}
+	return nil
+}
+
+func parseCanonicalSourceBinding(binding string) (historySourceSpec, error) {
+	var source historySourceSpec
+	data := []byte(binding)
+	if err := validateCanonicalHistoryJSON(data, historyJSONSource, "source_binding"); err != nil {
+		return source, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&source); err != nil {
+		return source, err
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return source, err
+	}
+	canonical, err := validateSource(source)
+	if err != nil {
+		return source, err
+	}
+	if canonical != binding {
+		return source, fmt.Errorf("source binding is not in canonical JSON form")
+	}
+	return source, nil
 }
 
 func validateBundleDependency(bundleIndex int, bundle historyBundleSpec, bundles []historyBundleSpec, entries []canonicalMigration) error {

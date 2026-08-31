@@ -113,6 +113,27 @@ func TestCanonicalHistoryRejectsCorruption(t *testing.T) {
 			wantErr: "invalid provenance",
 		},
 		{
+			name: "upstream provenance with MS OnCall source",
+			mutate: func(f *historyFixture) {
+				f.manifest.Bundles[0].Provenance = provenanceUpstream
+			},
+			wantErr: "incompatible provenance/source kind pairing",
+		},
+		{
+			name: "MS OnCall provenance with upstream source",
+			mutate: func(f *historyFixture) {
+				f.manifest.Bundles[0].Source = testGoAlertReleaseSource()
+			},
+			wantErr: "incompatible provenance/source kind pairing",
+		},
+		{
+			name: "unknown source kind",
+			mutate: func(f *historyFixture) {
+				f.manifest.Bundles[0].Source.Kind = "UNKNOWN"
+			},
+			wantErr: "invalid source kind",
+		},
+		{
 			name: "invalid source metadata",
 			mutate: func(f *historyFixture) {
 				f.manifest.Bundles[0].Source.BaseTree = "not-a-git-tree"
@@ -229,6 +250,190 @@ func TestCanonicalHistoryRejectsConflictingFoundationDesignation(t *testing.T) {
 	}
 }
 
+func TestCanonicalHistoryRequiresExactCanonicalJSONFields(t *testing.T) {
+	const migrationID = "20240101000000-one.sql"
+	fixture := newHistoryFixture(t, migrationID)
+	data, err := json.Marshal(fixture.manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*testing.T, []byte) []byte
+		wantErr string
+	}{
+		{
+			name: "valid exact canonical spellings",
+			mutate: func(_ *testing.T, data []byte) []byte {
+				return data
+			},
+		},
+		{
+			name: "uppercase Foundation key before exact key",
+			mutate: func(t *testing.T, data []byte) []byte {
+				return replaceManifestField(t, data,
+					`"provenance_foundation_migration_id":"`+migrationID+`"`,
+					`"PROVENANCE_FOUNDATION_MIGRATION_ID":"20249999999999-shadow.sql","provenance_foundation_migration_id":"`+migrationID+`"`)
+			},
+			wantErr: "non-canonical JSON field",
+		},
+		{
+			name: "mixed-case Foundation key after exact key",
+			mutate: func(t *testing.T, data []byte) []byte {
+				return replaceManifestField(t, data,
+					`"provenance_foundation_migration_id":"`+migrationID+`"`,
+					`"provenance_foundation_migration_id":"`+migrationID+`","Provenance_Foundation_Migration_Id":"20249999999999-shadow.sql"`)
+			},
+			wantErr: "case-folded duplicate JSON field",
+		},
+		{
+			name: "nested bundle case-fold collision",
+			mutate: func(t *testing.T, data []byte) []byte {
+				return replaceManifestField(t, data,
+					`"id":"ms-oncall-test"`,
+					`"id":"ms-oncall-test","ID":"shadow-bundle"`)
+			},
+			wantErr: "case-folded duplicate JSON field",
+		},
+		{
+			name: "nested source case-fold collision",
+			mutate: func(t *testing.T, data []byte) []byte {
+				return replaceManifestField(t, data,
+					`"kind":"MS_ONCALL_CHECKPOINT_BASE"`,
+					`"kind":"MS_ONCALL_CHECKPOINT_BASE","Kind":"GOALERT_RELEASE"`)
+			},
+			wantErr: "case-folded duplicate JSON field",
+		},
+		{
+			name: "migration entry case-fold collision",
+			mutate: func(t *testing.T, data []byte) []byte {
+				return replaceManifestField(t, data,
+					`"original_id":"`+migrationID+`"`,
+					`"original_id":"`+migrationID+`","Original_ID":"20249999999999-shadow.sql"`)
+			},
+			wantErr: "case-folded duplicate JSON field",
+		},
+		{
+			name: "unknown nested bundle field",
+			mutate: func(t *testing.T, data []byte) []byte {
+				return replaceManifestField(t, data,
+					`"entries":[`,
+					`"unexpected":true,"entries":[`)
+			},
+			wantErr: "unknown field",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := test.mutate(t, append([]byte(nil), data...))
+			_, err := loadCanonicalHistory(fixture.fsysWithManifest(manifest))
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("loadCanonicalHistory error = %v, want containing %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestProvenanceSourceKindCompatibilityMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		provenance string
+		sourceKind string
+		wantErr    bool
+	}{
+		{name: "adopted upstream GoAlert", provenance: provenanceUpstream, sourceKind: sourceKindGoAlertRelease},
+		{name: "MS OnCall checkpoint", provenance: provenanceMSOnCall, sourceKind: sourceKindMSOnCallBase},
+		{name: "upstream provenance with MS OnCall source", provenance: provenanceUpstream, sourceKind: sourceKindMSOnCallBase, wantErr: true},
+		{name: "MS OnCall provenance with upstream source", provenance: provenanceMSOnCall, sourceKind: sourceKindGoAlertRelease, wantErr: true},
+		{name: "unknown provenance", provenance: "UNKNOWN", sourceKind: sourceKindGoAlertRelease, wantErr: true},
+		{name: "unknown source kind", provenance: provenanceMSOnCall, sourceKind: "UNKNOWN", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateProvenanceSourceKind(test.provenance, test.sourceKind)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateProvenanceSourceKind(%q, %q) error = %v, wantErr %v", test.provenance, test.sourceKind, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestCanonicalHistoryRepresentsMSOnCallUpstreamAdaptation(t *testing.T) {
+	fixture := newUpstreamAdaptationFixture(t)
+	history, err := loadCanonicalHistory(fixture.fsys(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapted := history.entries[1]
+	if adapted.Provenance != provenanceMSOnCall {
+		t.Fatalf("adaptation provenance = %q, want %q", adapted.Provenance, provenanceMSOnCall)
+	}
+	source, err := parseCanonicalSourceBinding(adapted.SourceBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Kind != sourceKindMSOnCallBase {
+		t.Fatalf("adaptation source kind = %q, want %q", source.Kind, sourceKindMSOnCallBase)
+	}
+	if adapted.AdaptationEvidence != "ADAPTS_EXACT_UPSTREAM_PREDECESSOR_FOR_TEST" {
+		t.Fatalf("adaptation evidence = %q", adapted.AdaptationEvidence)
+	}
+	if !strings.Contains(adapted.DependencyEvidence, history.entries[0].ID) || !strings.Contains(adapted.DependencyEvidence, history.entries[0].SHA256) {
+		t.Fatalf("adaptation dependency does not bind upstream predecessor: %s", adapted.DependencyEvidence)
+	}
+}
+
+func TestCanonicalHistoryRejectsIncompleteOrContradictoryAdaptation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*historyFixture)
+		wantErr string
+	}{
+		{
+			name: "missing adaptation evidence",
+			mutate: func(f *historyFixture) {
+				f.manifest.Bundles[1].AdaptationEvidence = ""
+			},
+			wantErr: "no adaptation evidence",
+		},
+		{
+			name: "missing upstream dependency",
+			mutate: func(f *historyFixture) {
+				f.manifest.Bundles[1].DependsOn = nil
+			},
+			wantErr: "has no dependency evidence",
+		},
+		{
+			name: "adaptation mislabeled as upstream source",
+			mutate: func(f *historyFixture) {
+				f.manifest.Bundles[1].Source = testGoAlertReleaseSource()
+			},
+			wantErr: "incompatible provenance/source kind pairing",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newUpstreamAdaptationFixture(t)
+			test.mutate(fixture)
+			_, err := loadCanonicalHistory(fixture.fsys(t))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("loadCanonicalHistory error = %v, want containing %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 type historyFixture struct {
 	manifest historyManifest
 	files    map[string][]byte
@@ -328,4 +533,37 @@ func (f *historyFixture) fsysWithManifest(manifest []byte) fs.FS {
 		mapFS["migrations/"+id] = &fstest.MapFile{Data: data}
 	}
 	return mapFS
+}
+
+func replaceManifestField(t *testing.T, data []byte, old, replacement string) []byte {
+	t.Helper()
+	result := strings.Replace(string(data), old, replacement, 1)
+	if result == string(data) {
+		t.Fatalf("manifest fixture does not contain %q", old)
+	}
+	return []byte(result)
+}
+
+func testGoAlertReleaseSource() historySourceSpec {
+	return historySourceSpec{
+		Kind:       sourceKindGoAlertRelease,
+		Repository: "https://example.invalid/goalert",
+		Release:    "v0.test",
+		Commit:     strings.Repeat("a", 40),
+	}
+}
+
+func newUpstreamAdaptationFixture(t *testing.T) *historyFixture {
+	t.Helper()
+	fixture := newHistoryFixture(t,
+		"20240101000000-upstream.sql",
+		"20240102000000-ms-oncall-adaptation.sql",
+	)
+	fixture.splitSecondEntryIntoBundle(t)
+	fixture.manifest.Bundles[0].Provenance = provenanceUpstream
+	fixture.manifest.Bundles[0].Source = testGoAlertReleaseSource()
+	fixture.manifest.Bundles[0].AdaptationEvidence = "NONE_BYTE_IDENTICAL_TO_ADOPTED_UPSTREAM_RELEASE_TEST"
+	fixture.manifest.Bundles[1].AdaptationEvidence = "ADAPTS_EXACT_UPSTREAM_PREDECESSOR_FOR_TEST"
+	fixture.manifest.ProvenanceFoundationMigrationID = fixture.manifest.Bundles[1].Entries[0].ID
+	return fixture
 }

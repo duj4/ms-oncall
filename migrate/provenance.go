@@ -169,6 +169,13 @@ func validateAppliedProvenanceRecord(expected canonicalMigration, record applied
 	mismatch := func(field string, actual, wanted any) error {
 		return fmt.Errorf("applied migration provenance mismatch for %q field %s: got %v, expected %v", expected.ID, field, actual, wanted)
 	}
+	source, err := parseCanonicalSourceBinding(record.SourceBinding)
+	if err != nil {
+		return fmt.Errorf("applied migration provenance mismatch for %q field source_binding: %w", expected.ID, err)
+	}
+	if err := validateProvenanceSourceKind(record.ProvenanceClass, source.Kind); err != nil {
+		return fmt.Errorf("applied migration provenance mismatch for %q field provenance_class/source_binding: %w", expected.ID, err)
+	}
 
 	if record.CanonicalPosition != expected.Position {
 		return mismatch("canonical_position", record.CanonicalPosition, expected.Position)
