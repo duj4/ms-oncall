@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,116 +18,77 @@ import (
 	"github.com/target/goalert/util/sqlutil"
 )
 
-//go:embed migrations
-var fs embed.FS
-
-func migrationIDs() []string {
-	files, err := fs.ReadDir("migrations")
-	if err != nil {
-		panic(err)
-	}
-
-	ids := make([]string, 0, len(files))
-	for _, f := range files {
-		if f.IsDir() {
-			continue
-		}
-		ids = append(ids, strings.TrimPrefix(f.Name(), "migrations/"))
-	}
-
-	return ids
-}
-
 // LatestID will return the ID of the latest migration.
 func LatestID() string {
-	ids := migrationIDs()
-	if len(ids) == 0 {
-		return ""
-	}
-	return ids[len(ids)-1]
+	history := mustEmbeddedHistory()
+	return history.latest().ID
 }
 
-// Names will return all AssetNames without the timestamps and extensions
+// Names will return all migration names without the timestamps and extensions.
 func Names() []string {
-	uniq := make(map[string]struct{})
-	var names []string
-
-	for _, id := range migrationIDs() {
-		name := migrationName(id)
-		if _, ok := uniq[name]; ok {
-			panic("duplicate migration name " + name)
-		}
-		uniq[name] = struct{}{}
-
-		names = append(names, name)
+	history := mustEmbeddedHistory()
+	names := make([]string, len(history.entries))
+	for i, entry := range history.entries {
+		names[i] = entry.Name
 	}
 	return names
-}
-
-func migrationName(file string) string {
-	file = strings.TrimPrefix(file, "migrations/")
-	// trim the timestamp, including the trailing hyphen
-	// Example : 20170808110638-user-email.sql would become user-email.sql
-	file = file[15:]
-	file = strings.TrimSuffix(file, ".sql")
-	return file
-}
-
-func migrationID(name string) (int, string) {
-	for i, id := range migrationIDs() {
-		if migrationName(id) == name {
-			return i, id
-		}
-	}
-	return -1, ""
 }
 
 // VerifyIsLatest will verify the latest migration is the same as the latest available migration.
 //
 // This ensures the DB isn't newer than the currently running code.
 func VerifyIsLatest(ctx context.Context, url string) error {
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		return err
+	}
 	conn, err := getConn(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(ctx)
+	if err := aquireLock(ctx, conn); err != nil {
+		return err
+	}
 
-	var dbLatest string
-	err = conn.QueryRow(ctx, `select id from gorp_migrations order by id desc limit 1`).Scan(&dbLatest)
+	resolved, err := loadAppliedHistory(ctx, conn, history)
 	if err != nil {
-		return fmt.Errorf("read latest migration from DB: %w", err)
+		return fmt.Errorf("verify canonical migration history: %w", err)
 	}
-
-	if dbLatest != LatestID() {
-		return errors.Errorf("latest migration in DB is '%s' but expected '%s'; local GoAlert version is likely older than the DB's latest migration (not allowed in SWO-mode)", dbLatest, LatestID())
+	appliedCount := resolvedAppliedCount(resolved)
+	if appliedCount != len(history.entries) {
+		dbLatest := ""
+		if appliedCount > 0 {
+			dbLatest = history.entries[appliedCount-1].ID
+		}
+		return errors.Errorf("latest migration in DB is '%s' but expected '%s'; local GoAlert version is likely older than the DB's latest migration (not allowed in SWO-mode)", dbLatest, history.latest().ID)
 	}
-
 	return nil
 }
 
 // VerifyAll will verify all migrations have already been applied.
 func VerifyAll(ctx context.Context, url string) error {
-	ids := migrationIDs()
-	targetIndex := len(ids) - 1
-	targetID := ids[targetIndex]
-	targetName := migrationName(targetID)
-
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		return err
+	}
 	conn, err := getConn(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(ctx)
-
-	var hasLatest bool
-	err = conn.QueryRow(ctx, `select true from gorp_migrations where id = $1`, targetID).Scan(&hasLatest)
-	if !errors.Is(err, pgx.ErrNoRows) && err != nil {
+	if err := aquireLock(ctx, conn); err != nil {
 		return err
 	}
-	if hasLatest {
+
+	resolved, err := loadAppliedHistory(ctx, conn, history)
+	if err != nil {
+		return fmt.Errorf("verify canonical migration history: %w", err)
+	}
+	if resolvedAppliedCount(resolved) == len(history.entries) {
 		return nil
 	}
-
-	return errors.Errorf("latest migration '%s' has not been applied", targetName)
+	return errors.Errorf("latest migration '%s' has not been applied", history.latest().Name)
 }
 
 // ApplyAll will atomically perform all UP migrations.
@@ -150,7 +110,7 @@ func getConn(ctx context.Context, url string) (*pgx.Conn, error) {
 		return nil, err
 	}
 
-	_, err = conn.Exec(ctx, `set lock_timeout = 15000`)
+	_, err = conn.Exec(ctx, "set lock_timeout = 15000")
 	if err != nil {
 		conn.Close(ctx)
 		return nil, errors.Wrap(err, "set lock timeout")
@@ -161,7 +121,7 @@ func getConn(ctx context.Context, url string) (*pgx.Conn, error) {
 
 func aquireLock(ctx context.Context, conn *pgx.Conn) error {
 	for {
-		_, err := conn.Exec(ctx, `select pg_advisory_lock($1)`, lock.GlobalMigrate)
+		_, err := conn.Exec(ctx, "select pg_advisory_lock($1)", lock.GlobalMigrate)
 		if err == nil {
 			return nil
 		}
@@ -173,9 +133,9 @@ func aquireLock(ctx context.Context, conn *pgx.Conn) error {
 			log.Log(ctx, errors.Wrap(err, "get migration lock (will retry)"))
 			_, err = conn.Exec(ctx, `
 				select pg_terminate_backend(l.pid)
-				from pg_locks l
-				join pg_stat_activity act on act.pid = l.pid and state = 'idle' and state_change < now() - '30 seconds'::interval
-				where locktype = 'advisory' and objid = $1 and granted
+					from pg_locks l
+					join pg_stat_activity act on act.pid = l.pid and state = 'idle' and state_change < now() - '30 seconds'::interval
+					where locktype = 'advisory' and objid = $1 and granted
 			`, lock.GlobalMigrate)
 			if err != nil {
 				conn.Close(ctx)
@@ -183,43 +143,35 @@ func aquireLock(ctx context.Context, conn *pgx.Conn) error {
 			}
 			continue
 		}
+		return errors.Wrap(err, "get migration lock")
 	}
 }
 
-func ensureTableQuery(ctx context.Context, conn *pgx.Conn, fn func() error) error {
-	err := fn()
-	if err == nil {
-		return nil
-	}
-	// 42P01 is undefined_table
-	// https://www.postgresql.org/docs/9.6/static/errcodes-appendix.html
-	if e := sqlutil.MapError(err); e != nil && e.Code == "42P01" {
-		// continue
-	} else {
-		return err
-	}
-
-	_, err = conn.Exec(ctx, `
+func ensureMigrationTable(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS gorp_migrations (
 			id text PRIMARY KEY,
 			applied_at timestamp with time zone
 		)
 	`)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "ensure gorp_migrations table")
 	}
-	return fn()
+	return nil
 }
 
 // Up will apply all migrations up to, and including, targetName.
 // If targetName is empty, all available migrations are applied.
 func Up(ctx context.Context, url, targetName string) (int, error) {
-	if targetName == "" {
-		names := Names()
-		targetName = names[len(names)-1]
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		return 0, err
 	}
-	targetIndex, targetID := migrationID(targetName)
-	if targetIndex == -1 {
+	if targetName == "" {
+		targetName = history.latest().Name
+	}
+	targetIndex, ok := history.indexByName(targetName)
+	if !ok {
 		return 0, errors.Errorf("unknown migration target name '%s'", targetName)
 	}
 
@@ -228,56 +180,39 @@ func Up(ctx context.Context, url, targetName string) (int, error) {
 		return 0, err
 	}
 	defer conn.Close(ctx)
+	if err := ensureMigrationTable(ctx, conn); err != nil {
+		return 0, err
+	}
+	if err := aquireLock(ctx, conn); err != nil {
+		return 0, err
+	}
 
-	var hasLatest bool
-	err = ensureTableQuery(ctx, conn, func() error {
-		return conn.QueryRow(ctx, `select true from gorp_migrations where id = $1`, targetID).Scan(&hasLatest)
-	})
-	if err == nil && hasLatest {
+	resolved, err := loadAppliedHistory(ctx, conn, history)
+	if err != nil {
+		return 0, fmt.Errorf("validate canonical migration history before Up: %w", err)
+	}
+	appliedCount := resolvedAppliedCount(resolved)
+	if targetIndex < appliedCount {
 		return 0, nil
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return 0, err
-	}
 
-	migrations, err := parseMigrations()
+	migrations, err := parseMigrations(history)
 	if err != nil {
 		return 0, err
 	}
-	err = aquireLock(ctx, conn)
-	if err != nil {
-		return 0, err
-	}
-
-	rows, err := conn.Query(ctx, `select id from gorp_migrations order by id`)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return 0, err
-	}
-	defer rows.Close()
-
-	ids := migrationIDs()
-	i := -1
-	for rows.Next() {
-		i++
-		var id string
-		err = rows.Scan(&id)
-		if err != nil {
-			return 0, errors.Wrap(err, "scan applied migrations")
-		}
-		if ids[i] != id {
-			return 0, errors.Errorf("migration mismatch db has '%s' but expected '%s'", id, ids[i])
-		}
-	}
-
-	return performMigrations(ctx, conn, true, migrations[i+1:targetIndex+1])
+	return performMigrations(ctx, conn, history, true, planUpMigrations(migrations, appliedCount, targetIndex))
 }
 
 // Down will roll back all migrations up to, but NOT including, targetName.
 //
-// If the DB contains unknown migrations, err is returned.
+// If the DB contains unknown, gapped, or divergent history, err is returned.
 func Down(ctx context.Context, url, targetName string) (int, error) {
-	targetIndex, targetID := migrationID(targetName)
-	if targetIndex == -1 {
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		return 0, err
+	}
+	targetIndex, ok := history.indexByName(targetName)
+	if !ok {
 		return 0, errors.Errorf("unknown migration target name '%s'", targetName)
 	}
 
@@ -286,77 +221,71 @@ func Down(ctx context.Context, url, targetName string) (int, error) {
 		return 0, err
 	}
 	defer conn.Close(ctx)
-
-	var latest string
-	err = ensureTableQuery(ctx, conn, func() error {
-		return conn.QueryRow(ctx, `select id from gorp_migrations order by id desc limit 1`).Scan(&latest)
-	})
-	if err != nil {
+	if err := ensureMigrationTable(ctx, conn); err != nil {
 		return 0, err
 	}
-	if latest == targetID {
+	if err := aquireLock(ctx, conn); err != nil {
+		return 0, err
+	}
+
+	resolved, err := loadAppliedHistory(ctx, conn, history)
+	if err != nil {
+		return 0, fmt.Errorf("validate canonical migration history before Down: %w", err)
+	}
+	appliedCount := resolvedAppliedCount(resolved)
+	if targetIndex >= appliedCount-1 {
 		return 0, nil
 	}
 
-	migrations, err := parseMigrations()
+	migrations, err := parseMigrations(history)
 	if err != nil {
 		return 0, err
 	}
-	byID := make(map[string]migration)
-	for _, m := range migrations {
-		byID[m.ID] = m
-	}
+	return performMigrations(ctx, conn, history, false, planDownMigrations(migrations, appliedCount, targetIndex))
+}
 
-	err = aquireLock(ctx, conn)
-	if err != nil {
-		return 0, err
-	}
+func planUpMigrations(migrations []migration, appliedCount, targetIndex int) []migration {
+	return migrations[appliedCount : targetIndex+1]
+}
 
-	rows, err := conn.Query(ctx, `select id from gorp_migrations where id > $1 order by id desc`, targetID)
-	if err != nil {
-		return 0, err
+func planDownMigrations(migrations []migration, appliedCount, targetIndex int) []migration {
+	rollback := make([]migration, 0, appliedCount-targetIndex-1)
+	for index := appliedCount - 1; index > targetIndex; index-- {
+		rollback = append(rollback, migrations[index])
 	}
-	defer rows.Close()
-	migrations = migrations[:0]
-	for rows.Next() {
-		var id string
-		err = rows.Scan(&id)
-		if err != nil {
-			return 0, err
-		}
-		m, ok := byID[id]
-		if !ok {
-			return 0, errors.Errorf("could not find db migration '%s' to roll back", id)
-		}
-		migrations = append(migrations, m)
-	}
-
-	return performMigrations(ctx, conn, false, migrations)
+	return rollback
 }
 
 func readMigration(id string) ([]byte, error) {
-	data, err := fs.ReadFile("migrations/" + id)
+	data, err := migrationFS.ReadFile("migrations/" + id)
 	if err != nil {
 		return nil, fmt.Errorf("read 'migrations/%s': %w", id, err)
 	}
 	return data, nil
 }
 
-// DumpMigrations will attempt to write all migration files to the specified directory
+// DumpMigrations writes the validated canonical migration files and history manifest.
 func DumpMigrations(dest string) error {
-	for _, id := range migrationIDs() {
-		fullPath := filepath.Join(dest, "migrations", id)
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		return err
+	}
+	for _, entry := range history.entries {
+		fullPath := filepath.Join(dest, "migrations", entry.ID)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			return err
 		}
-		data, err := readMigration(id)
+		data, err := readMigration(entry.ID)
 		if err != nil {
 			return err
 		}
-		err = os.WriteFile(fullPath, data, 0o644)
-		if err != nil {
+		if err := os.WriteFile(fullPath, data, 0o644); err != nil {
 			return errors.Wrapf(err, "write to %s", fullPath)
 		}
+	}
+	manifestPath := filepath.Join(dest, "migration-history.json")
+	if err := os.WriteFile(manifestPath, history.manifest, 0o644); err != nil {
+		return errors.Wrapf(err, "write to %s", manifestPath)
 	}
 	return nil
 }
@@ -368,6 +297,7 @@ type migration struct {
 	Up   migrationStep
 	Down migrationStep
 }
+
 type migrationStep struct {
 	statements []string
 	disableTx  bool
@@ -375,20 +305,19 @@ type migrationStep struct {
 	*migration
 }
 
-func parseMigrations() ([]migration, error) {
-	var migrations []migration
-	for _, id := range migrationIDs() {
-		var m migration
-		m.ID = id
-		m.Name = migrationName(id)
-		data, err := readMigration(id)
+func parseMigrations(history *canonicalHistory) ([]migration, error) {
+	migrations := make([]migration, len(history.entries))
+	for index, entry := range history.entries {
+		m := &migrations[index]
+		m.ID = entry.ID
+		m.Name = entry.Name
+		data, err := readMigration(entry.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		var up, down strings.Builder
 		var isUp, isDown bool
-
 		r := bufio.NewScanner(bytes.NewReader(data))
 		for r.Scan() {
 			line := r.Text()
@@ -412,89 +341,101 @@ func parseMigrations() ([]migration, error) {
 				down.WriteString(line)
 				down.WriteString("\n")
 			}
-			// ignore other lines
+		}
+		if err := r.Err(); err != nil {
+			return nil, fmt.Errorf("parse migration %q: %w", entry.ID, err)
 		}
 
 		m.Up.statements = sqlutil.SplitQuery(up.String())
 		m.Up.isUp = true
-		m.Up.migration = &m
-
+		m.Up.migration = m
 		m.Down.statements = sqlutil.SplitQuery(down.String())
-		m.Down.migration = &m
-
-		migrations = append(migrations, m)
+		m.Down.migration = m
 	}
 	return migrations, nil
 }
 
 const (
-	deleteMigrationRecord = `delete from gorp_migrations where id = $1`
-	insertMigrationRecord = `insert into gorp_migrations (id, applied_at) values ($1, now())`
+	deleteMigrationRecord = "delete from gorp_migrations where id = $1"
+	insertMigrationRecord = "insert into gorp_migrations (id, applied_at) values ($1, now())"
 )
 
-func (step migrationStep) doneStmt() string {
-	if step.isUp {
-		return insertMigrationRecord
-	}
-	return deleteMigrationRecord
-}
-
-func (step migrationStep) applyNoTx(ctx context.Context, c *pgx.Conn) error {
-	for i, stmt := range step.statements {
-		_, err := c.Exec(ctx, stmt)
-		if err != nil {
-			return errors.Wrapf(err, "statement #%d\n%s", i+1, stmt)
+func (step migrationStep) applyNoTx(ctx context.Context, conn *pgx.Conn, history *canonicalHistory) error {
+	for index, stmt := range step.statements {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			return errors.Wrapf(err, "statement #%d\n%s", index+1, stmt)
 		}
 	}
 
-	_, err := c.Exec(ctx, step.doneStmt(), step.ID)
+	if step.isUp {
+		if _, err := conn.Exec(ctx, insertMigrationRecord, step.ID); err != nil {
+			return errors.Wrap(err, "update gorp_migrations")
+		}
+		if err := recordAppliedProvenance(ctx, conn, history, step.ID); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if err := deleteAppliedProvenance(ctx, conn, history, step.ID); err != nil {
+		return err
+	}
+	tag, err := conn.Exec(ctx, deleteMigrationRecord, step.ID)
 	if err != nil {
 		return errors.Wrap(err, "update gorp_migrations")
 	}
-
+	if tag.RowsAffected() != 1 {
+		return errors.Errorf("delete gorp_migrations record for %q affected %d rows, expected 1", step.ID, tag.RowsAffected())
+	}
 	return nil
 }
 
-func (step migrationStep) apply(ctx context.Context, c *pgx.Conn) error {
+func (step migrationStep) apply(ctx context.Context, conn *pgx.Conn, history *canonicalHistory) error {
 	if step.disableTx {
-		return step.applyNoTx(ctx, c)
+		return step.applyNoTx(ctx, conn, history)
 	}
 
-	tx, err := c.Begin(ctx)
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return errors.Wrap(err, "begin tx")
 	}
 	defer sqlutil.RollbackContext(ctx, "migrate: apply", tx)
 
-	// tx applies to the connection, so NoTx
-	// will execute correctly.
-	err = step.applyNoTx(ctx, c)
-	if err != nil {
+	// The transaction applies to the connection, so applyNoTx executes in it.
+	if err := step.applyNoTx(ctx, conn, history); err != nil {
 		return err
 	}
-
 	return errors.Wrap(tx.Commit(ctx), "commit")
 }
 
-func performMigrations(ctx context.Context, c *pgx.Conn, applyUp bool, migrations []migration) (int, error) {
+func performMigrations(ctx context.Context, conn *pgx.Conn, history *canonicalHistory, applyUp bool, migrations []migration) (int, error) {
 	typ := "DOWN"
 	if applyUp {
 		typ = "UP"
 	}
 
-	for i, m := range migrations {
-		step := m.Down
+	for index, migration := range migrations {
+		step := migration.Down
 		if applyUp {
-			step = m.Up
+			step = migration.Up
 		}
 
-		s := time.Now()
-		err := step.apply(ctx, c)
-		if err != nil {
-			return i, errors.Wrapf(err, "apply '%s'", m.Name)
+		start := time.Now()
+		if err := step.apply(ctx, conn, history); err != nil {
+			return index, errors.Wrapf(err, "apply '%s'", migration.Name)
 		}
-		log.Logf(ctx, "Applied %s migration '%s' in %s", typ, m.Name, time.Since(s).Truncate(time.Millisecond))
+		log.Logf(ctx, "Applied %s migration '%s' in %s", typ, migration.Name, time.Since(start).Truncate(time.Millisecond))
 	}
-
 	return len(migrations), nil
+}
+
+func resolvedAppliedCount(resolved []resolvedCanonicalMigration) int {
+	count := 0
+	for _, entry := range resolved {
+		if !entry.Applied {
+			break
+		}
+		count++
+	}
+	return count
 }

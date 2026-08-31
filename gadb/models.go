@@ -1049,6 +1049,23 @@ type MessageStatusHistory struct {
 	Timestamp     time.Time
 }
 
+type MsOncallMigrationProvenance struct {
+	AdaptationEvidence     string
+	AppliedAt              sql.NullTime
+	BundleID               string
+	CanonicalPosition      int64
+	ContentSha256          string
+	DependencyEvidence     string
+	MigrationID            string
+	MigrationName          string
+	OriginalMigrationID    string
+	PredecessorMigrationID sql.NullString
+	ProvenanceClass        string
+	RecordOrigin           string
+	RecordedAt             time.Time
+	SourceBinding          string
+}
+
 type NotificationChannel struct {
 	CreatedAt time.Time
 	Dest      NullDestV1
