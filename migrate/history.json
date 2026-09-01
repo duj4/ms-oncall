@@ -1414,6 +1414,35 @@
           "sha256": "c22fb8e6bd4fe90788d5c0f6b9dd8ecb4cce43658ffa79691311c3846df0db5e"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-organization-default-persistence-foundation-v1",
+      "first_position": 276,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "Core Enterprise Identity & Organization Isolation Organization / NormalOrganization / Default Additive Persistence Foundation V1",
+        "base_commit": "53393ce48da36c2185c36b92ac5393f8658bf7e7",
+        "base_tree": "c7bbe26f003a286d9fe162a4313d4d9acff874ec",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "83ce1e292f6db1cbb6d89287a1614fd14cada482",
+        "authorization_tree": "1c7950b46e50fdf31eeb2cbaf04c98205237fe68"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-migration-provenance-history-foundation-v1",
+        "migration_id": "20260830195814-ms-oncall-migration-provenance.sql",
+        "sha256": "c22fb8e6bd4fe90788d5c0f6b9dd8ecb4cce43658ffa79691311c3846df0db5e",
+        "evidence": "APPEND_AFTER_ACCEPTED_MIGRATION_PROVENANCE_AND_COMBINED_HISTORY_FOUNDATION_V1"
+      },
+      "adaptation_evidence": "ADDITIVE_MS_ONCALL_ORGANIZATION_PERSISTENCE_FOUNDATION_NOT_AN_UPSTREAM_MIGRATION",
+      "entries": [
+        {
+          "id": "20260901100808-ms-oncall-organization-persistence.sql",
+          "original_id": "20260901100808-ms-oncall-organization-persistence.sql",
+          "sha256": "da5bafe83d84d7529cb8ec0dd2b3161cd9dee5036f82854de7d8895f6f975889"
+        }
+      ]
     }
   ]
 }

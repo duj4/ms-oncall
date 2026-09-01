@@ -98,3 +98,58 @@ per-entry provenance recording remain atomic with `gorp_migrations` updates.
 workflow after migration changes. Do not maintain it manually.
 
 This foundation contains no Organization persistence or authorization behavior.
+
+## Canonical position 276: Organization persistence foundation
+
+Bundle `ms-oncall-organization-default-persistence-foundation-v1` appends one
+MS OnCall migration at canonical position 276:
+`20260901100808-ms-oncall-organization-persistence.sql`, exact SHA-256
+`da5bafe83d84d7529cb8ec0dd2b3161cd9dee5036f82854de7d8895f6f975889`.
+It binds to Core base commit
+`53393ce48da36c2185c36b92ac5393f8658bf7e7`, base tree
+`c7bbe26f003a286d9fe162a4313d4d9acff874ec`, and Project authorization commit
+`83ce1e292f6db1cbb6d89287a1614fd14cada482`, authorization tree
+`1c7950b46e50fdf31eeb2cbaf04c98205237fe68`.
+
+The bundle depends exactly on accepted bundle
+`ms-oncall-migration-provenance-history-foundation-v1`, migration
+`20260830195814-ms-oncall-migration-provenance.sql`, checksum
+`c22fb8e6bd4fe90788d5c0f6b9dd8ecb4cce43658ffa79691311c3846df0db5e`.
+Its dependency evidence records that it appends after the accepted Migration
+Provenance & Combined History Foundation V1. Its adaptation evidence identifies
+the migration as an additive MS OnCall Organization persistence foundation,
+not an upstream GoAlert migration. The permanent
+`provenance_foundation_migration_id` remains unchanged, so position 276 records
+origin `CANONICAL_EXECUTION`.
+
+The migration adds a stable Organization UUID, `NORMAL` / `DEFAULT`
+classification, mutable display identity, immutable canonical identity,
+`ACTIVE` / `SUSPENDED` / `RETIRED` lifecycle, and non-null creation/update audit
+timestamps. A relational one-to-one `normal_organizations` subtype can reference
+only a `NORMAL` base and carries an immutable globally unique corporate mapping
+key plus a canonical IANA time-zone name. Future operational-owner foreign keys
+can target this subtype; this checkpoint adds no such foreign key to a production
+operational table.
+
+The distinguished Default Organization is inserted without conflict suppression
+using deterministic UUID `296e2656-7221-53fe-bd0a-832d24ccfd03`, canonical
+identity `ms-oncall.default`, display identity `Default Organization`, and
+lifecycle `ACTIVE`. Database constraints and triggers prevent a second Default,
+Default deletion, Default subtype creation, immutable identity/classification
+changes, corporate mapping-key changes, and invalid lifecycle transitions.
+Supported time-zone writes use Core's existing canonical zone mapping. Store
+writes create base/subtype atomically and expose no generic Default creation or
+hard-delete method.
+
+Focused validation covers fresh installation, Foundation-only upgrade,
+Foundation and new-tail rollback/reapply, unsupported partial schema state,
+deterministic Default bootstrap, relational/immutable constraints, concurrent
+mapping-key creation, store lookups and updates, lifecycle transitions, IANA
+time-zone canonicalization, canonical provenance origin, and migration smoke
+snapshot equivalence. The generated schema is produced twice by `make
+db-schema` and must remain byte-identical on the second run.
+
+The highest valid capability claim is: **Organization identity persistence
+foundation exists.** This position does not implement UserOrganizationAssignment,
+ordinary User selection, Organization authorization/isolation, operational
+`organization_id`, GraphQL/API/UI behavior, or Organization-aware Engine work.

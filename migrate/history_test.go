@@ -15,10 +15,10 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(history.entries), 275; got != want {
+	if got, want := len(history.entries), 276; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
-	if got, want := history.provenanceFoundationIndex, len(history.entries)-1; got != want {
+	if got, want := history.provenanceFoundationIndex, 274; got != want {
 		t.Fatalf("provenance Foundation index = %d, want %d", got, want)
 	}
 	for _, entry := range history.entries[:history.provenanceFoundationIndex] {
@@ -29,18 +29,49 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 			t.Fatalf("historical migration %q is not bound to adopted GoAlert v0.34.1 commit", entry.ID)
 		}
 	}
+	foundation := history.entries[history.provenanceFoundationIndex]
+	if foundation.ID != "20260830195814-ms-oncall-migration-provenance.sql" {
+		t.Fatalf("provenance Foundation migration = %q", foundation.ID)
+	}
+	if foundation.Provenance != provenanceMSOnCall {
+		t.Fatalf("Foundation migration provenance = %q, want %q", foundation.Provenance, provenanceMSOnCall)
+	}
+	if !strings.Contains(foundation.SourceBinding, "e4f097077c15f6e6ae0fa2e5fc3d61938e295970") ||
+		!strings.Contains(foundation.SourceBinding, "7cc13bed88ba5483ab1f60e4a9628ff8261569c6") ||
+		!strings.Contains(foundation.SourceBinding, "0a9ba1131988608ffdc7a4faa9cdf72ea6ccc74b") ||
+		!strings.Contains(foundation.SourceBinding, "e3c20a00455d0c6bd247e8c547bd658eaf5b6c41") {
+		t.Fatalf("MS OnCall foundation source binding does not contain the exact parent commit and tree: %s", foundation.SourceBinding)
+	}
+
 	latest := history.latest()
-	if latest.ID != "20260830195814-ms-oncall-migration-provenance.sql" {
-		t.Fatalf("latest migration = %q", latest.ID)
+	if latest.Position != 276 || latest.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
+		t.Fatalf("latest canonical migration = position %d, ID %q", latest.Position, latest.ID)
 	}
-	if latest.Provenance != provenanceMSOnCall {
-		t.Fatalf("latest migration provenance = %q, want %q", latest.Provenance, provenanceMSOnCall)
+	if latest.Provenance != provenanceMSOnCall || latest.BundleID != "ms-oncall-organization-default-persistence-foundation-v1" {
+		t.Fatalf("latest migration provenance/bundle = %q/%q", latest.Provenance, latest.BundleID)
 	}
-	if !strings.Contains(latest.SourceBinding, "e4f097077c15f6e6ae0fa2e5fc3d61938e295970") ||
-		!strings.Contains(latest.SourceBinding, "7cc13bed88ba5483ab1f60e4a9628ff8261569c6") ||
-		!strings.Contains(latest.SourceBinding, "0a9ba1131988608ffdc7a4faa9cdf72ea6ccc74b") ||
-		!strings.Contains(latest.SourceBinding, "e3c20a00455d0c6bd247e8c547bd658eaf5b6c41") {
-		t.Fatalf("MS OnCall foundation source binding does not contain the exact parent commit and tree: %s", latest.SourceBinding)
+	if latest.OriginalID != latest.ID || latest.SHA256 != "da5bafe83d84d7529cb8ec0dd2b3161cd9dee5036f82854de7d8895f6f975889" {
+		t.Fatalf("latest migration original identity/checksum = %q/%q", latest.OriginalID, latest.SHA256)
+	}
+	if latest.PredecessorID != foundation.ID ||
+		!strings.Contains(latest.DependencyEvidence, "bundle=ms-oncall-migration-provenance-history-foundation-v1") ||
+		!strings.Contains(latest.DependencyEvidence, "id=20260830195814-ms-oncall-migration-provenance.sql") ||
+		!strings.Contains(latest.DependencyEvidence, "sha256=c22fb8e6bd4fe90788d5c0f6b9dd8ecb4cce43658ffa79691311c3846df0db5e") ||
+		!strings.Contains(latest.DependencyEvidence, "APPEND_AFTER_ACCEPTED_MIGRATION_PROVENANCE_AND_COMBINED_HISTORY_FOUNDATION_V1") {
+		t.Fatalf("Organization persistence dependency evidence is incomplete: %s", latest.DependencyEvidence)
+	}
+	if latest.AdaptationEvidence != "ADDITIVE_MS_ONCALL_ORGANIZATION_PERSISTENCE_FOUNDATION_NOT_AN_UPSTREAM_MIGRATION" {
+		t.Fatalf("Organization persistence adaptation evidence = %q", latest.AdaptationEvidence)
+	}
+	for _, value := range []string{
+		"53393ce48da36c2185c36b92ac5393f8658bf7e7",
+		"c7bbe26f003a286d9fe162a4313d4d9acff874ec",
+		"83ce1e292f6db1cbb6d89287a1614fd14cada482",
+		"1c7950b46e50fdf31eeb2cbaf04c98205237fe68",
+	} {
+		if !strings.Contains(latest.SourceBinding, value) {
+			t.Fatalf("Organization persistence source binding is missing %q: %s", value, latest.SourceBinding)
+		}
 	}
 }
 
@@ -191,12 +222,36 @@ func TestCanonicalHistoryRejectsCorruption(t *testing.T) {
 			wantErr: "duplicate canonical migration position",
 		},
 		{
-			name: "invalid bundle dependency",
+			name: "mismatched dependency bundle",
+			mutate: func(f *historyFixture) {
+				f.splitSecondEntryIntoBundle(t)
+				f.manifest.Bundles[1].DependsOn.BundleID = "ms-oncall-wrong-predecessor"
+			},
+			wantErr: "depends on bundle",
+		},
+		{
+			name: "mismatched dependency migration",
 			mutate: func(f *historyFixture) {
 				f.splitSecondEntryIntoBundle(t)
 				f.manifest.Bundles[1].DependsOn.MigrationID = "20200101000000-wrong.sql"
 			},
 			wantErr: "does not bind exact predecessor",
+		},
+		{
+			name: "mismatched dependency checksum",
+			mutate: func(f *historyFixture) {
+				f.splitSecondEntryIntoBundle(t)
+				f.manifest.Bundles[1].DependsOn.SHA256 = strings.Repeat("f", 64)
+			},
+			wantErr: "does not bind exact predecessor",
+		},
+		{
+			name: "missing dependency evidence",
+			mutate: func(f *historyFixture) {
+				f.splitSecondEntryIntoBundle(t)
+				f.manifest.Bundles[1].DependsOn.Evidence = ""
+			},
+			wantErr: "empty dependency evidence",
 		},
 		{
 			name: "missing bundle dependency",

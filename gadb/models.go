@@ -758,6 +758,91 @@ func (ns NullEnumUserRole) Value() (driver.Value, error) {
 	return string(ns.EnumUserRole), nil
 }
 
+type MsOncallOrganizationClassification string
+
+const (
+	MsOncallOrganizationClassificationDEFAULT MsOncallOrganizationClassification = "DEFAULT"
+	MsOncallOrganizationClassificationNORMAL  MsOncallOrganizationClassification = "NORMAL"
+)
+
+func (e *MsOncallOrganizationClassification) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MsOncallOrganizationClassification(s)
+	case string:
+		*e = MsOncallOrganizationClassification(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MsOncallOrganizationClassification: %T", src)
+	}
+	return nil
+}
+
+type NullMsOncallOrganizationClassification struct {
+	MsOncallOrganizationClassification MsOncallOrganizationClassification
+	Valid                              bool // Valid is true if MsOncallOrganizationClassification is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMsOncallOrganizationClassification) Scan(value interface{}) error {
+	if value == nil {
+		ns.MsOncallOrganizationClassification, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MsOncallOrganizationClassification.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMsOncallOrganizationClassification) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MsOncallOrganizationClassification), nil
+}
+
+type MsOncallOrganizationLifecycle string
+
+const (
+	MsOncallOrganizationLifecycleACTIVE    MsOncallOrganizationLifecycle = "ACTIVE"
+	MsOncallOrganizationLifecycleRETIRED   MsOncallOrganizationLifecycle = "RETIRED"
+	MsOncallOrganizationLifecycleSUSPENDED MsOncallOrganizationLifecycle = "SUSPENDED"
+)
+
+func (e *MsOncallOrganizationLifecycle) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MsOncallOrganizationLifecycle(s)
+	case string:
+		*e = MsOncallOrganizationLifecycle(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MsOncallOrganizationLifecycle: %T", src)
+	}
+	return nil
+}
+
+type NullMsOncallOrganizationLifecycle struct {
+	MsOncallOrganizationLifecycle MsOncallOrganizationLifecycle
+	Valid                         bool // Valid is true if MsOncallOrganizationLifecycle is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMsOncallOrganizationLifecycle) Scan(value interface{}) error {
+	if value == nil {
+		ns.MsOncallOrganizationLifecycle, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MsOncallOrganizationLifecycle.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMsOncallOrganizationLifecycle) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MsOncallOrganizationLifecycle), nil
+}
+
 type RiverJobState string
 
 const (
@@ -1066,6 +1151,13 @@ type MsOncallMigrationProvenance struct {
 	SourceBinding          string
 }
 
+type NormalOrganization struct {
+	CorporateMappingKey        string
+	IanaTimeZone               string
+	OrganizationClassification MsOncallOrganizationClassification
+	OrganizationID             uuid.UUID
+}
+
 type NotificationChannel struct {
 	CreatedAt time.Time
 	Dest      NullDestV1
@@ -1091,6 +1183,16 @@ type NotificationPolicyCycle struct {
 	RepeatCount int32
 	StartedAt   time.Time
 	UserID      uuid.UUID
+}
+
+type Organization struct {
+	CanonicalName  string
+	Classification MsOncallOrganizationClassification
+	CreatedAt      time.Time
+	DisplayName    string
+	ID             uuid.UUID
+	Lifecycle      MsOncallOrganizationLifecycle
+	UpdatedAt      time.Time
 }
 
 type OutgoingMessage struct {
