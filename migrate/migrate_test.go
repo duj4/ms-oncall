@@ -80,7 +80,7 @@ func TestProvenanceFoundationMigrationUsesTransaction(t *testing.T) {
 	}
 }
 
-func TestOrganizationPersistenceMigrationUsesTransaction(t *testing.T) {
+func TestMSOnCallPersistenceMigrationsUseTransactions(t *testing.T) {
 	history, err := loadEmbeddedHistory()
 	if err != nil {
 		t.Fatal(err)
@@ -89,15 +89,17 @@ func TestOrganizationPersistenceMigrationUsesTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, migration := range migrations[len(migrations)-2:] {
+		if migration.Up.disableTx || migration.Down.disableTx {
+			t.Fatalf("MS OnCall persistence migration %q must use transactions for Up and Down", migration.ID)
+		}
+		if len(migration.Up.statements) == 0 || len(migration.Down.statements) == 0 {
+			t.Fatalf("MS OnCall persistence migration %q has an empty direction", migration.ID)
+		}
+	}
 	latest := migrations[len(migrations)-1]
-	if latest.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
+	if latest.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" {
 		t.Fatalf("latest migration = %q", latest.ID)
-	}
-	if latest.Up.disableTx || latest.Down.disableTx {
-		t.Fatalf("Organization persistence migration %q must use transactions for Up and Down", latest.ID)
-	}
-	if len(latest.Up.statements) == 0 || len(latest.Down.statements) == 0 {
-		t.Fatalf("Organization persistence migration %q has an empty direction", latest.ID)
 	}
 }
 

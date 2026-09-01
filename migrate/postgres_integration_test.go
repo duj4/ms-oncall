@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -99,19 +100,24 @@ func TestPostgresExistingPreFoundationDatabaseBootstrapsDeterministically(t *tes
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, testURL)
+	count, err := Up(ctx, testURL, history.entries[preLedgerCount-1].Name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureMigrationTable(ctx, conn); err != nil {
-		conn.Close(ctx)
+	if count != preLedgerCount {
+		t.Fatalf("existing pre-Foundation schema setup applied %d migrations, want %d", count, preLedgerCount)
+	}
+	assertProvenanceTableAbsent(t, ctx, testURL)
+
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
 		t.Fatal(err)
 	}
 	preLedgerAppliedAt := make(map[string]time.Time, preLedgerCount)
 	for index, entry := range history.entries[:preLedgerCount] {
 		appliedAt := time.Date(2020, time.January, 1, 0, 0, index, 0, time.UTC)
 		preLedgerAppliedAt[entry.ID] = appliedAt
-		if _, err := conn.Exec(ctx, `insert into gorp_migrations (id, applied_at) values ($1, $2)`, entry.ID, appliedAt); err != nil {
+		if _, err := conn.Exec(ctx, `update gorp_migrations set applied_at = $2 where id = $1`, entry.ID, appliedAt); err != nil {
 			conn.Close(ctx)
 			t.Fatal(err)
 		}
@@ -120,7 +126,7 @@ func TestPostgresExistingPreFoundationDatabaseBootstrapsDeterministically(t *tes
 		t.Fatal(err)
 	}
 
-	count, err := Up(ctx, testURL, "")
+	count, err = Up(ctx, testURL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,9 +615,9 @@ func TestPostgresOrganizationPersistenceFreshAndFoundationUpgrade(t *testing.T) 
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	latest := history.latest()
-	if latest.Position != 276 || latest.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
-		t.Fatalf("unexpected Organization persistence canonical tail: %#v", latest)
+	organizationFoundation := history.entries[len(history.entries)-2]
+	if organizationFoundation.Position != 276 || organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
+		t.Fatalf("unexpected Organization persistence entry: %#v", organizationFoundation)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
@@ -623,7 +629,7 @@ func TestPostgresOrganizationPersistenceFreshAndFoundationUpgrade(t *testing.T) 
 		t.Fatalf("fresh install applied %d migrations, want %d", count, len(history.entries))
 	}
 	freshDefault := readDefaultOrganizationIdentity(t, ctx, freshURL)
-	assertOrganizationPersistenceProvenance(t, ctx, freshURL, latest)
+	assertOrganizationPersistenceProvenance(t, ctx, freshURL, organizationFoundation)
 
 	upgradeURL := newPostgresTestDatabase(t, baseURL)
 	if count, err := Up(ctx, upgradeURL, foundation.Name); err != nil {
@@ -634,11 +640,11 @@ func TestPostgresOrganizationPersistenceFreshAndFoundationUpgrade(t *testing.T) 
 	assertOrganizationTablesAbsent(t, ctx, upgradeURL)
 	if count, err := Up(ctx, upgradeURL, ""); err != nil {
 		t.Fatal(err)
-	} else if count != 1 {
-		t.Fatalf("Foundation-only upgrade applied %d migrations, want 1", count)
+	} else if count != 2 {
+		t.Fatalf("Foundation-only upgrade applied %d migrations, want 2", count)
 	}
 	upgradeDefault := readDefaultOrganizationIdentity(t, ctx, upgradeURL)
-	assertOrganizationPersistenceProvenance(t, ctx, upgradeURL, latest)
+	assertOrganizationPersistenceProvenance(t, ctx, upgradeURL, organizationFoundation)
 
 	if freshDefault != upgradeDefault {
 		t.Fatalf("fresh and Foundation upgrade produced different Default identity: fresh=%#v upgrade=%#v", freshDefault, upgradeDefault)
@@ -659,6 +665,7 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
+	organizationFoundation := history.entries[len(history.entries)-2]
 	latest := history.latest()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -669,8 +676,8 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 	before := readDefaultOrganizationIdentity(t, ctx, testURL)
 	if count, err := Down(ctx, testURL, foundation.Name); err != nil {
 		t.Fatal(err)
-	} else if count != 1 {
-		t.Fatalf("Organization persistence rollback count = %d, want 1", count)
+	} else if count != 2 {
+		t.Fatalf("Organization persistence rollback count = %d, want 2", count)
 	}
 	assertOrganizationTablesAbsent(t, ctx, testURL)
 
@@ -696,14 +703,14 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 
 	if count, err := Up(ctx, testURL, ""); err != nil {
 		t.Fatal(err)
-	} else if count != 1 {
-		t.Fatalf("Organization persistence reapply count = %d, want 1", count)
+	} else if count != 2 {
+		t.Fatalf("Organization persistence reapply count = %d, want 2", count)
 	}
 	after := readDefaultOrganizationIdentity(t, ctx, testURL)
 	if after != before {
 		t.Fatalf("Organization persistence rollback/reapply changed Default identity: before=%#v after=%#v", before, after)
 	}
-	assertOrganizationPersistenceProvenance(t, ctx, testURL, latest)
+	assertOrganizationPersistenceProvenance(t, ctx, testURL, organizationFoundation)
 }
 
 func TestPostgresOrganizationPersistenceRejectsPartialSchema(t *testing.T) {
@@ -714,7 +721,7 @@ func TestPostgresOrganizationPersistenceRejectsPartialSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	latest := history.latest()
+	organizationFoundation := history.entries[len(history.entries)-2]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -753,10 +760,10 @@ func TestPostgresOrganizationPersistenceRejectsPartialSchema(t *testing.T) {
 		t.Fatalf("partial state was rewritten to %q", marker)
 	}
 	var migrationCount, provenanceCount int
-	if err := conn.QueryRow(ctx, `select count(*) from gorp_migrations where id = $1`, latest.ID).Scan(&migrationCount); err != nil {
+	if err := conn.QueryRow(ctx, `select count(*) from gorp_migrations where id = $1`, organizationFoundation.ID).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.QueryRow(ctx, `select count(*) from ms_oncall_migration_provenance where migration_id = $1`, latest.ID).Scan(&provenanceCount); err != nil {
+	if err := conn.QueryRow(ctx, `select count(*) from ms_oncall_migration_provenance where migration_id = $1`, organizationFoundation.ID).Scan(&provenanceCount); err != nil {
 		t.Fatal(err)
 	}
 	if migrationCount != 0 || provenanceCount != 0 {
@@ -768,6 +775,164 @@ func TestPostgresOrganizationPersistenceRejectsPartialSchema(t *testing.T) {
 	}
 	if classificationTypeExists {
 		t.Fatal("failed partial-schema migration left its enum type behind")
+	}
+}
+
+func TestPostgresUserOrganizationAssignmentFreshUpgradeRollbackReapply(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	organizationFoundation := history.entries[len(history.entries)-2]
+	latest := history.latest()
+	if organizationFoundation.Position != 276 ||
+		organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" ||
+		latest.Position != 277 ||
+		latest.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" {
+		t.Fatalf("unexpected assignment migration boundary: predecessor=%#v latest=%#v", organizationFoundation, latest)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	freshURL := newPostgresTestDatabase(t, baseURL)
+	if count, err := Up(ctx, freshURL, ""); err != nil {
+		t.Fatal(err)
+	} else if count != len(history.entries) {
+		t.Fatalf("fresh install applied %d migrations, want %d", count, len(history.entries))
+	}
+	assertUserOrganizationAssignmentTable(t, ctx, freshURL, true, 0)
+	assertAssignmentPersistenceProvenance(t, ctx, freshURL, latest)
+
+	upgradeURL := newPostgresTestDatabase(t, baseURL)
+	if count, err := Up(ctx, upgradeURL, organizationFoundation.Name); err != nil {
+		t.Fatal(err)
+	} else if count != int(organizationFoundation.Position) {
+		t.Fatalf("position-276 setup applied %d migrations, want %d", count, organizationFoundation.Position)
+	}
+	assertUserOrganizationAssignmentTable(t, ctx, upgradeURL, false, 0)
+
+	conn, err := pgx.Connect(ctx, upgradeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingUserID := uuid.New()
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO public.users (id, name, email)
+		VALUES ($1, 'Existing User', 'existing-user@example.invalid')
+	`, existingUserID); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if count, err := Up(ctx, upgradeURL, ""); err != nil {
+		t.Fatal(err)
+	} else if count != 1 {
+		t.Fatalf("position-276 upgrade applied %d migrations, want 1", count)
+	}
+	assertUserOrganizationAssignmentTable(t, ctx, upgradeURL, true, 0)
+	assertAssignmentPersistenceProvenance(t, ctx, upgradeURL, latest)
+
+	conn, err = pgx.Connect(ctx, upgradeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var existingUserCount int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.users WHERE id = $1`, existingUserID).Scan(&existingUserCount); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if existingUserCount != 1 {
+		t.Fatalf("position-276 upgrade changed existing User count to %d", existingUserCount)
+	}
+
+	if count, err := Down(ctx, upgradeURL, organizationFoundation.Name); err != nil {
+		t.Fatal(err)
+	} else if count != 1 {
+		t.Fatalf("assignment rollback count = %d, want 1", count)
+	}
+	assertUserOrganizationAssignmentTable(t, ctx, upgradeURL, false, 0)
+
+	conn, err = pgx.Connect(ctx, upgradeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrationCount, provenanceCount int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.gorp_migrations WHERE id = $1`, latest.ID).Scan(&migrationCount); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.ms_oncall_migration_provenance WHERE migration_id = $1`, latest.ID).Scan(&provenanceCount); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if migrationCount != 0 || provenanceCount != 0 {
+		t.Fatalf("assignment rollback left migration/provenance rows: %d/%d", migrationCount, provenanceCount)
+	}
+
+	if count, err := Up(ctx, upgradeURL, ""); err != nil {
+		t.Fatal(err)
+	} else if count != 1 {
+		t.Fatalf("assignment reapply count = %d, want 1", count)
+	}
+	assertUserOrganizationAssignmentTable(t, ctx, upgradeURL, true, 0)
+	assertAssignmentPersistenceProvenance(t, ctx, upgradeURL, latest)
+}
+
+func assertUserOrganizationAssignmentTable(t *testing.T, ctx context.Context, testURL string, wantExists bool, wantRows int) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var exists bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.user_organization_assignments') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists != wantExists {
+		t.Fatalf("UserOrganizationAssignment table exists = %v, want %v", exists, wantExists)
+	}
+	if !exists {
+		return
+	}
+	var rows int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.user_organization_assignments`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != wantRows {
+		t.Fatalf("UserOrganizationAssignment row count = %d, want %d", rows, wantRows)
+	}
+}
+
+func assertAssignmentPersistenceProvenance(t *testing.T, ctx context.Context, testURL string, entry canonicalMigration) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var position int64
+	var origin, dependency string
+	if err := conn.QueryRow(ctx, `
+		SELECT canonical_position, record_origin, dependency_evidence
+		FROM public.ms_oncall_migration_provenance
+		WHERE migration_id = $1
+	`, entry.ID).Scan(&position, &origin, &dependency); err != nil {
+		t.Fatal(err)
+	}
+	if position != 277 || origin != recordOriginCanonical || dependency != entry.DependencyEvidence {
+		t.Fatalf("assignment persistence provenance = position %d, origin %q, dependency %q", position, origin, dependency)
 	}
 }
 
@@ -807,7 +972,7 @@ func readDefaultOrganizationIdentity(t *testing.T, ctx context.Context, testURL 
 	return identity
 }
 
-func assertOrganizationPersistenceProvenance(t *testing.T, ctx context.Context, testURL string, latest canonicalMigration) {
+func assertOrganizationPersistenceProvenance(t *testing.T, ctx context.Context, testURL string, entry canonicalMigration) {
 	t.Helper()
 	conn, err := pgx.Connect(ctx, testURL)
 	if err != nil {
@@ -820,10 +985,10 @@ func assertOrganizationPersistenceProvenance(t *testing.T, ctx context.Context, 
 		select canonical_position, record_origin, dependency_evidence
 		from ms_oncall_migration_provenance
 		where migration_id = $1
-	`, latest.ID).Scan(&position, &origin, &dependency); err != nil {
+	`, entry.ID).Scan(&position, &origin, &dependency); err != nil {
 		t.Fatal(err)
 	}
-	if position != 276 || origin != recordOriginCanonical || dependency != latest.DependencyEvidence {
+	if position != entry.Position || origin != recordOriginCanonical || dependency != entry.DependencyEvidence {
 		t.Fatalf("Organization persistence provenance = position %d, origin %q, dependency %q", position, origin, dependency)
 	}
 }

@@ -35,6 +35,8 @@ var rules = migratetest.RuleSet{
 	{MigrationName: "ms-oncall-migration-provenance", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
 	{MigrationName: "ms-oncall-organization-persistence", TableName: "ms_oncall_migration_provenance", ColumnName: "applied_at"},
 	{MigrationName: "ms-oncall-organization-persistence", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
+	{MigrationName: "ms-oncall-user-organization-assignment-persistence", TableName: "ms_oncall_migration_provenance", ColumnName: "applied_at"},
+	{MigrationName: "ms-oncall-user-organization-assignment-persistence", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
 	// The deterministic Default identity is recreated with truthful bootstrap audit timestamps.
 	{MigrationName: "ms-oncall-organization-persistence", TableName: "organizations", ColumnName: "created_at"},
 	{MigrationName: "ms-oncall-organization-persistence", TableName: "organizations", ColumnName: "updated_at"},

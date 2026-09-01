@@ -174,3 +174,62 @@ The highest valid capability claim is: **Organization identity persistence
 foundation exists.** This position does not implement UserOrganizationAssignment,
 ordinary User selection, Organization authorization/isolation, operational
 `organization_id`, GraphQL/API/UI behavior, or Organization-aware Engine work.
+
+## Canonical position 277: UserOrganizationAssignment persistence foundation
+
+Bundle `ms-oncall-user-organization-assignment-persistence-foundation-v1`
+appends one MS OnCall migration at canonical position 277:
+`20260901220323-ms-oncall-user-organization-assignment-persistence.sql`, exact
+SHA-256
+`3e367a29872dbd91bf196b780de31e07bfad539d4c8b183b707cedbaa50602f2`.
+It binds to Core base commit
+`7e698840ee69eb04c84e19830221b4637be435c6`, base tree
+`4c2d01c2cdf2785a78d423e0b32258c9b6d7a212`, and Project authorization
+publication commit `de12830b9c2da4c4a2d71020cf4374f76cfdb7cf`, authorization
+tree `22aa6f10bb7fe3cbea306a250513e48caec50335`.
+
+The bundle depends exactly on accepted bundle
+`ms-oncall-organization-default-persistence-foundation-v1`, migration
+`20260901100808-ms-oncall-organization-persistence.sql`, checksum
+`4551270e716d9dd6572dbde7173b6d7a15a3510f11045e770d5f51c80dbfdc5f`.
+Its dependency evidence records that it appends only after the accepted
+Organization / NormalOrganization / Default persistence foundation. Positions
+1 through 276 remain unchanged, and the permanent provenance-Foundation
+boundary remains position 275.
+
+The migration adds at most one explicitly persisted
+`UserOrganizationAssignment` row per global User. The row contains an explicit
+effective Organization identity and classification; `NULL` never represents
+Default. `EXACTLY_ONE` requires a relationally verified NormalOrganization and
+`ORG_MEMBER` or `ORG_ADMIN`. `ZERO` and `MULTIPLE` require the distinguished
+Default Organization and `NONE`; their matched counts are respectively zero
+and greater than one. Assignment state is limited to `ACTIVE` and
+`TRANSITIONING`, and a non-nil pending-transfer identity is valid only while
+`TRANSITIONING`.
+
+Required authoritative evaluation evidence consists of a finite timestamp,
+non-blank source/config version, matched count, and non-zero 32-byte SHA-256
+digest. No raw identity-provider claims are persisted. Generation begins at
+one for store-created rows. Database truth requires state changes to use a
+higher generation, rejects generation decrease, and requires every evidence
+write to advance the authoritative evaluation time. The internal store uses an
+expected-generation compare-and-swap for replacement and permits a guarded
+unchanged-assignment evidence refresh without advancing generation.
+
+The update trigger is explicitly bound to `public`, has fixed
+`search_path=pg_catalog, pg_temp`, uses no `SECURITY DEFINER`, and resolves no
+application object through ambient search path. Declarative foreign keys and
+checks continuously bind effective normal identities to
+`public.normal_organizations`, Default to its distinguished UUID, and each row
+to its global User. Trigger rejections use stable SQLSTATE `23514` constraint,
+schema, table, and column identities.
+
+No existing User is backfilled, and no User-creation trigger or application
+hook creates an assignment. The migration and store do not implement a mapping
+resolver, identity-provider integration, login/session/permission/RBAC behavior,
+transfer execution, operational-resource ownership, GraphQL/API/UI surfaces,
+Engine work, Gateway integration, or production readiness.
+
+The highest valid capability claim is:
+**UserOrganizationAssignment additive persistence foundation exists for
+explicitly persisted rows.**

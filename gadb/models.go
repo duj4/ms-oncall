@@ -843,6 +843,134 @@ func (ns NullMsOncallOrganizationLifecycle) Value() (driver.Value, error) {
 	return string(ns.MsOncallOrganizationLifecycle), nil
 }
 
+type MsOncallUserOrganizationAssignmentState string
+
+const (
+	MsOncallUserOrganizationAssignmentStateACTIVE        MsOncallUserOrganizationAssignmentState = "ACTIVE"
+	MsOncallUserOrganizationAssignmentStateTRANSITIONING MsOncallUserOrganizationAssignmentState = "TRANSITIONING"
+)
+
+func (e *MsOncallUserOrganizationAssignmentState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MsOncallUserOrganizationAssignmentState(s)
+	case string:
+		*e = MsOncallUserOrganizationAssignmentState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MsOncallUserOrganizationAssignmentState: %T", src)
+	}
+	return nil
+}
+
+type NullMsOncallUserOrganizationAssignmentState struct {
+	MsOncallUserOrganizationAssignmentState MsOncallUserOrganizationAssignmentState
+	Valid                                   bool // Valid is true if MsOncallUserOrganizationAssignmentState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMsOncallUserOrganizationAssignmentState) Scan(value interface{}) error {
+	if value == nil {
+		ns.MsOncallUserOrganizationAssignmentState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MsOncallUserOrganizationAssignmentState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMsOncallUserOrganizationAssignmentState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MsOncallUserOrganizationAssignmentState), nil
+}
+
+type MsOncallUserOrganizationMappingOutcome string
+
+const (
+	MsOncallUserOrganizationMappingOutcomeEXACTLYONE MsOncallUserOrganizationMappingOutcome = "EXACTLY_ONE"
+	MsOncallUserOrganizationMappingOutcomeMULTIPLE   MsOncallUserOrganizationMappingOutcome = "MULTIPLE"
+	MsOncallUserOrganizationMappingOutcomeZERO       MsOncallUserOrganizationMappingOutcome = "ZERO"
+)
+
+func (e *MsOncallUserOrganizationMappingOutcome) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MsOncallUserOrganizationMappingOutcome(s)
+	case string:
+		*e = MsOncallUserOrganizationMappingOutcome(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MsOncallUserOrganizationMappingOutcome: %T", src)
+	}
+	return nil
+}
+
+type NullMsOncallUserOrganizationMappingOutcome struct {
+	MsOncallUserOrganizationMappingOutcome MsOncallUserOrganizationMappingOutcome
+	Valid                                  bool // Valid is true if MsOncallUserOrganizationMappingOutcome is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMsOncallUserOrganizationMappingOutcome) Scan(value interface{}) error {
+	if value == nil {
+		ns.MsOncallUserOrganizationMappingOutcome, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MsOncallUserOrganizationMappingOutcome.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMsOncallUserOrganizationMappingOutcome) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MsOncallUserOrganizationMappingOutcome), nil
+}
+
+type MsOncallUserOrganizationRole string
+
+const (
+	MsOncallUserOrganizationRoleNONE      MsOncallUserOrganizationRole = "NONE"
+	MsOncallUserOrganizationRoleORGADMIN  MsOncallUserOrganizationRole = "ORG_ADMIN"
+	MsOncallUserOrganizationRoleORGMEMBER MsOncallUserOrganizationRole = "ORG_MEMBER"
+)
+
+func (e *MsOncallUserOrganizationRole) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MsOncallUserOrganizationRole(s)
+	case string:
+		*e = MsOncallUserOrganizationRole(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MsOncallUserOrganizationRole: %T", src)
+	}
+	return nil
+}
+
+type NullMsOncallUserOrganizationRole struct {
+	MsOncallUserOrganizationRole MsOncallUserOrganizationRole
+	Valid                        bool // Valid is true if MsOncallUserOrganizationRole is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMsOncallUserOrganizationRole) Scan(value interface{}) error {
+	if value == nil {
+		ns.MsOncallUserOrganizationRole, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MsOncallUserOrganizationRole.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMsOncallUserOrganizationRole) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MsOncallUserOrganizationRole), nil
+}
+
 type RiverJobState string
 
 const (
@@ -1477,6 +1605,22 @@ type UserNotificationRule struct {
 	DelayMinutes    int32
 	ID              uuid.UUID
 	UserID          uuid.UUID
+}
+
+type UserOrganizationAssignment struct {
+	AssignmentGeneration                int64
+	AuthoritativeEvaluatedAt            time.Time
+	EffectiveNormalOrganizationID       uuid.NullUUID
+	EffectiveOrganizationClassification MsOncallOrganizationClassification
+	EffectiveOrganizationID             uuid.UUID
+	EvidenceDigest                      []byte
+	MappingOutcome                      MsOncallUserOrganizationMappingOutcome
+	MatchedCount                        int32
+	OrganizationRole                    MsOncallUserOrganizationRole
+	PendingTransferID                   uuid.NullUUID
+	SourceConfigVersion                 string
+	State                               MsOncallUserOrganizationAssignmentState
+	UserID                              uuid.UUID
 }
 
 type UserOverride struct {
