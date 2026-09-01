@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -45,7 +46,7 @@ func TestPostgresUserAssignmentStorePersistenceAndNoAutomaticAssignment(t *testi
 	member := createAssignmentTestValues(normal.ID, ClassificationNormal, AssignmentStateActive, OrganizationRoleMember, MappingOutcomeExactlyOne, 1, evaluatedAt, "store-member-v1")
 	admin := createAssignmentTestValues(normal.ID, ClassificationNormal, AssignmentStateActive, OrganizationRoleAdmin, MappingOutcomeExactlyOne, 1, evaluatedAt, "store-admin-v1")
 	zero := createAssignmentTestValues(defaultOrg.ID, ClassificationDefault, AssignmentStateActive, OrganizationRoleNone, MappingOutcomeZero, 0, evaluatedAt, "store-zero-v1")
-	multiple := createAssignmentTestValues(defaultOrg.ID, ClassificationDefault, AssignmentStateActive, OrganizationRoleNone, MappingOutcomeMultiple, 3, evaluatedAt, "store-multiple-v1")
+	multiple := createAssignmentTestValues(defaultOrg.ID, ClassificationDefault, AssignmentStateActive, OrganizationRoleNone, MappingOutcomeMultiple, math.MaxInt32, evaluatedAt, "store-multiple-v1")
 	pendingID := uuid.New()
 	transitioning := createAssignmentTestValues(normal.ID, ClassificationNormal, AssignmentStateTransitioning, OrganizationRoleMember, MappingOutcomeExactlyOne, 1, evaluatedAt, "store-transition-v1")
 	transitioning.PendingTransferID = &pendingID
@@ -304,6 +305,7 @@ func TestPostgresUserAssignmentDatabaseTruthTable(t *testing.T) {
 		expected pgErrorExpectation
 	}
 	mappingTruthError := pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_mapping_truth", SchemaName: "public", TableName: "user_organization_assignments"}
+	sourceConfigVersionError := pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_source_config_version_not_blank", SchemaName: "public", TableName: "user_organization_assignments"}
 	tests := []invariantCase{
 		{name: "Default represented as NULL", query: insertSQL, args: mutate(1, nil), expected: pgErrorExpectation{SQLState: "23502", SchemaName: "public", TableName: "user_organization_assignments", ColumnName: "effective_organization_id"}},
 		{name: "nil User identity", query: insertSQL, args: mutate(0, uuid.Nil), expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_user_id_non_nil", SchemaName: "public", TableName: "user_organization_assignments"}},
@@ -311,6 +313,7 @@ func TestPostgresUserAssignmentDatabaseTruthTable(t *testing.T) {
 		{name: "EXACTLY_ONE maps Default", query: insertSQL, args: []any{userID, defaultID, "DEFAULT", nil, "ACTIVE", "ORG_MEMBER", int64(1), "EXACTLY_ONE", evaluatedAt, "truth-v1", 1, digest[:], nil}, expected: mappingTruthError},
 		{name: "EXACTLY_ONE has NONE role", query: insertSQL, args: mutate(5, "NONE"), expected: mappingTruthError},
 		{name: "EXACTLY_ONE wrong matched count", query: insertSQL, args: mutate(10, 2), expected: mappingTruthError},
+		{name: "EXACTLY_ONE lacks explicit Normal subtype proof", query: insertSQL, args: []any{userID, baseWithoutSubtypeID, "NORMAL", nil, "ACTIVE", "ORG_MEMBER", int64(1), "EXACTLY_ONE", evaluatedAt, "truth-v1", 1, digest[:], nil}, expected: mappingTruthError},
 		{name: "EXACTLY_ONE base lacks Normal subtype", query: insertSQL, args: []any{userID, baseWithoutSubtypeID, "NORMAL", baseWithoutSubtypeID, "ACTIVE", "ORG_MEMBER", int64(1), "EXACTLY_ONE", evaluatedAt, "truth-v1", 1, digest[:], nil}, expected: pgErrorExpectation{SQLState: "23503", ConstraintName: "user_org_assignments_effective_normal_organization_fkey", SchemaName: "public", TableName: "user_organization_assignments"}},
 		{name: "ZERO maps normal Organization", query: insertSQL, args: []any{userID, normal.ID, "NORMAL", normal.ID, "ACTIVE", "NONE", int64(1), "ZERO", evaluatedAt, "truth-v1", 0, digest[:], nil}, expected: mappingTruthError},
 		{name: "ZERO has member role", query: insertSQL, args: []any{userID, defaultID, "DEFAULT", nil, "ACTIVE", "ORG_MEMBER", int64(1), "ZERO", evaluatedAt, "truth-v1", 0, digest[:], nil}, expected: mappingTruthError},
@@ -331,12 +334,32 @@ func TestPostgresUserAssignmentDatabaseTruthTable(t *testing.T) {
 				source_config_version, matched_count, evidence_digest
 			) VALUES ($1, $2, 'NORMAL', $2, 'ACTIVE', 'ORG_MEMBER', 1, 'EXACTLY_ONE', 'infinity', 'truth-v1', 1, $3)
 		`, args: []any{userID, normal.ID, digest[:]}, expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_evaluated_at_finite", SchemaName: "public", TableName: "user_organization_assignments"}},
-		{name: "blank source/config version", query: insertSQL, args: mutate(9, ""), expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_source_config_version_not_blank", SchemaName: "public", TableName: "user_organization_assignments"}},
-		{name: "untrimmed source/config version", query: insertSQL, args: mutate(9, " truth-v1 "), expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_source_config_version_not_blank", SchemaName: "public", TableName: "user_organization_assignments"}},
+		{name: "empty source/config version", query: insertSQL, args: mutate(9, ""), expected: sourceConfigVersionError},
+		{name: "ordinary spaces only source/config version", query: insertSQL, args: mutate(9, "   "), expected: sourceConfigVersionError},
+		{name: "tab only source/config version", query: insertSQL, args: mutate(9, "\t"), expected: sourceConfigVersionError},
+		{name: "newline only source/config version", query: insertSQL, args: mutate(9, "\n"), expected: sourceConfigVersionError},
+		{name: "leading tab source/config version", query: insertSQL, args: mutate(9, "\ttruth-v1"), expected: sourceConfigVersionError},
+		{name: "trailing tab source/config version", query: insertSQL, args: mutate(9, "truth-v1\t"), expected: sourceConfigVersionError},
+		{name: "leading newline source/config version", query: insertSQL, args: mutate(9, "\ntruth-v1"), expected: sourceConfigVersionError},
+		{name: "trailing newline source/config version", query: insertSQL, args: mutate(9, "truth-v1\n"), expected: sourceConfigVersionError},
 		{name: "short evidence digest", query: insertSQL, args: mutate(11, []byte("short")), expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_evidence_digest_sha256", SchemaName: "public", TableName: "user_organization_assignments"}},
 		{name: "zero evidence digest", query: insertSQL, args: mutate(11, zeroDigest), expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_evidence_digest_sha256", SchemaName: "public", TableName: "user_organization_assignments"}},
 		{name: "pending transfer while ACTIVE", query: insertSQL, args: mutate(12, uuid.New()), expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_pending_transfer_state", SchemaName: "public", TableName: "user_organization_assignments"}},
 		{name: "nil pending transfer identity", query: insertSQL, args: []any{userID, normal.ID, "NORMAL", normal.ID, "TRANSITIONING", "ORG_MEMBER", int64(1), "EXACTLY_ONE", evaluatedAt, "truth-v1", 1, digest[:], uuid.Nil}, expected: pgErrorExpectation{SQLState: "23514", ConstraintName: "user_organization_assignments_pending_transfer_state", SchemaName: "public", TableName: "user_organization_assignments"}},
+	}
+	for _, boundaryWhitespace := range sourceConfigVersionBoundaryWhitespace {
+		for _, sourceVersion := range []string{
+			string(boundaryWhitespace),
+			string(boundaryWhitespace) + "truth-v1",
+			"truth-v1" + string(boundaryWhitespace),
+		} {
+			tests = append(tests, invariantCase{
+				name:     fmt.Sprintf("source/config version boundary whitespace U+%04X", boundaryWhitespace),
+				query:    insertSQL,
+				args:     mutate(9, sourceVersion),
+				expected: sourceConfigVersionError,
+			})
+		}
 	}
 
 	for _, test := range tests {

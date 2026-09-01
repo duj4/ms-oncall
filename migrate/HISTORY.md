@@ -181,7 +181,7 @@ Bundle `ms-oncall-user-organization-assignment-persistence-foundation-v1`
 appends one MS OnCall migration at canonical position 277:
 `20260901220323-ms-oncall-user-organization-assignment-persistence.sql`, exact
 SHA-256
-`3e367a29872dbd91bf196b780de31e07bfad539d4c8b183b707cedbaa50602f2`.
+`b9bbade729665431c23c74c689aa90f1c0ba484678026b6a6398b649f0e21b8e`.
 It binds to Core base commit
 `7e698840ee69eb04c84e19830221b4637be435c6`, base tree
 `4c2d01c2cdf2785a78d423e0b32258c9b6d7a212`, and Project authorization
@@ -200,19 +200,23 @@ boundary remains position 275.
 The migration adds at most one explicitly persisted
 `UserOrganizationAssignment` row per global User. The row contains an explicit
 effective Organization identity and classification; `NULL` never represents
-Default. `EXACTLY_ONE` requires a relationally verified NormalOrganization and
-`ORG_MEMBER` or `ORG_ADMIN`. `ZERO` and `MULTIPLE` require the distinguished
-Default Organization and `NONE`; their matched counts are respectively zero
-and greater than one. Assignment state is limited to `ACTIVE` and
-`TRANSITIONING`, and a non-nil pending-transfer identity is valid only while
-`TRANSITIONING`.
+Default. `EXACTLY_ONE` requires an explicit non-NULL subtype identity equal to
+the effective Organization and relationally verified by the
+`normal_organizations` foreign key, plus `ORG_MEMBER` or `ORG_ADMIN`. `ZERO`
+and `MULTIPLE` require the distinguished Default Organization and `NONE`;
+their matched counts are respectively zero and greater than one. Assignment
+state is limited to `ACTIVE` and `TRANSITIONING`, and a non-nil
+pending-transfer identity is valid only while `TRANSITIONING`.
 
 Required authoritative evaluation evidence consists of a finite timestamp,
 non-blank source/config version, matched count, and non-zero 32-byte SHA-256
-digest. No raw identity-provider claims are persisted. Generation begins at
-one for store-created rows. Database truth requires state changes to use a
-higher generation, rejects generation decrease, and requires every evidence
-write to advance the authoritative evaluation time. The internal store uses an
+digest. Source/config versions reject the same fixed Unicode White_Space set
+at either boundary in Go and PostgreSQL, and matched counts outside the
+PostgreSQL `integer` range fail Go validation before SQL. No raw
+identity-provider claims are persisted. Generation begins at one for
+store-created rows. Database truth requires state changes to use a higher
+generation, rejects generation decrease, and requires every evidence write to
+advance the authoritative evaluation time. The internal store uses an
 expected-generation compare-and-swap for replacement and permits a guarded
 unchanged-assignment evidence refresh without advancing generation.
 

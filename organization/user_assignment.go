@@ -3,6 +3,7 @@ package organization
 import (
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -10,6 +11,13 @@ import (
 )
 
 const InitialAssignmentGeneration int64 = 1
+
+// sourceConfigVersionBoundaryWhitespace is the fixed Unicode White_Space set
+// accepted as boundary whitespace by neither Go validation nor PostgreSQL.
+// Keep it synchronized with the source_config_version CHECK constraint.
+const sourceConfigVersionBoundaryWhitespace = "\t\n\v\f\r \u0085\u00a0\u1680" +
+	"\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a" +
+	"\u2028\u2029\u202f\u205f\u3000"
 
 var (
 	// ErrUserAssignmentNotFound indicates that no explicit assignment is
@@ -133,11 +141,15 @@ func validateAssignmentEvaluation(value AssignmentEvaluation) error {
 	if value.AuthoritativeEvaluatedAt.IsZero() {
 		return fmt.Errorf("authoritative evaluation time is required")
 	}
-	if value.SourceConfigVersion == "" || strings.TrimSpace(value.SourceConfigVersion) != value.SourceConfigVersion {
+	if value.SourceConfigVersion == "" ||
+		strings.Trim(value.SourceConfigVersion, sourceConfigVersionBoundaryWhitespace) != value.SourceConfigVersion {
 		return fmt.Errorf("source/config version must be non-empty and trimmed")
 	}
 	if value.MatchedCount < 0 {
 		return fmt.Errorf("matched count cannot be negative")
+	}
+	if int64(value.MatchedCount) > math.MaxInt32 {
+		return fmt.Errorf("matched count exceeds PostgreSQL integer range")
 	}
 	if value.EvidenceDigest == (EvidenceDigest{}) {
 		return fmt.Errorf("evidence digest is required")

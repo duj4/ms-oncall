@@ -3,6 +3,8 @@ package organization
 import (
 	"crypto/sha256"
 	"errors"
+	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -133,6 +135,120 @@ func TestValidateUserOrganizationAssignmentRejectsInvalidValues(t *testing.T) {
 			test.mutate(&value)
 			if err := validateUserOrganizationAssignmentValues(value); err == nil {
 				t.Fatal("invalid UserOrganizationAssignment was accepted")
+			}
+		})
+	}
+}
+
+func TestValidateAssignmentEvaluationSourceConfigVersionWhitespacePolicy(t *testing.T) {
+	valid := validUserOrganizationAssignmentValues().Evaluation
+	for _, sourceVersion := range []string{"mapping-config-v1", "mapping\tconfig\nversion"} {
+		valid.SourceConfigVersion = sourceVersion
+		if err := validateAssignmentEvaluation(valid); err != nil {
+			t.Fatalf("valid source/config version %q: %v", sourceVersion, err)
+		}
+	}
+
+	tests := []struct {
+		name          string
+		sourceVersion string
+	}{
+		{name: "empty", sourceVersion: ""},
+		{name: "ordinary spaces only", sourceVersion: "   "},
+		{name: "tab only", sourceVersion: "\t"},
+		{name: "newline only", sourceVersion: "\n"},
+		{name: "leading tab", sourceVersion: "\tmapping-config-v1"},
+		{name: "trailing tab", sourceVersion: "mapping-config-v1\t"},
+		{name: "leading newline", sourceVersion: "\nmapping-config-v1"},
+		{name: "trailing newline", sourceVersion: "mapping-config-v1\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := valid
+			invalid.SourceConfigVersion = test.sourceVersion
+			if err := validateAssignmentEvaluation(invalid); err == nil {
+				t.Fatalf("invalid source/config version %q was accepted", test.sourceVersion)
+			}
+		})
+	}
+
+	for _, boundaryWhitespace := range sourceConfigVersionBoundaryWhitespace {
+		for _, sourceVersion := range []string{
+			string(boundaryWhitespace),
+			string(boundaryWhitespace) + "mapping-config-v1",
+			"mapping-config-v1" + string(boundaryWhitespace),
+		} {
+			invalid := valid
+			invalid.SourceConfigVersion = sourceVersion
+			if err := validateAssignmentEvaluation(invalid); err == nil {
+				t.Errorf("source/config version with boundary whitespace U+%04X was accepted: %q", boundaryWhitespace, sourceVersion)
+			}
+		}
+	}
+}
+
+func TestValidateAssignmentEvaluationMatchedCountPostgresIntegerRange(t *testing.T) {
+	values := validUserOrganizationAssignmentValues()
+	values.EffectiveOrganizationID = uuid.MustParse(DefaultOrganizationID)
+	values.EffectiveOrganizationClassification = ClassificationDefault
+	values.Role = OrganizationRoleNone
+	values.MappingOutcome = MappingOutcomeMultiple
+	values.Evaluation.MatchedCount = math.MaxInt32
+	if err := validateUserOrganizationAssignmentValues(values); err != nil {
+		t.Fatalf("PostgreSQL maximum integer matched count was rejected: %v", err)
+	}
+
+	if strconv.IntSize < 64 {
+		t.Skip("Go int cannot represent a value above PostgreSQL integer on this architecture")
+	}
+	values.Evaluation.MatchedCount = int(int64(math.MaxInt32) + 1)
+	if err := validateUserOrganizationAssignmentValues(values); err == nil {
+		t.Fatal("matched count above PostgreSQL integer range was accepted")
+	}
+
+	store := NewStore(nil)
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "create",
+			run: func() error {
+				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "guarded update",
+			run: func() error {
+				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					ExpectedGeneration:               InitialAssignmentGeneration,
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "evidence refresh",
+			run: func() error {
+				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
+					UserID:             uuid.New(),
+					ExpectedGeneration: InitialAssignmentGeneration,
+					Evaluation:         values.Evaluation,
+				})
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run()
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("matched count above PostgreSQL integer range error = %v, want ErrInvalidInput", err)
 			}
 		})
 	}
