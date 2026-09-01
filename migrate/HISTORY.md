@@ -104,7 +104,7 @@ This foundation contains no Organization persistence or authorization behavior.
 Bundle `ms-oncall-organization-default-persistence-foundation-v1` appends one
 MS OnCall migration at canonical position 276:
 `20260901100808-ms-oncall-organization-persistence.sql`, exact SHA-256
-`da5bafe83d84d7529cb8ec0dd2b3161cd9dee5036f82854de7d8895f6f975889`.
+`4551270e716d9dd6572dbde7173b6d7a15a3510f11045e770d5f51c80dbfdc5f`.
 It binds to Core base commit
 `53393ce48da36c2185c36b92ac5393f8658bf7e7`, base tree
 `c7bbe26f003a286d9fe162a4313d4d9acff874ec`, and Project authorization commit
@@ -140,6 +140,27 @@ changes, corporate mapping-key changes, and invalid lifecycle transitions.
 Supported time-zone writes use Core's existing canonical zone mapping. Store
 writes create base/subtype atomically and expose no generic Default creation or
 hard-delete method.
+
+All position 276 application objects and trigger targets are explicitly bound
+to schema `public`. Each of its three PL/pgSQL trigger functions has exact
+function configuration `search_path=pg_catalog, pg_temp`, uses no
+`SECURITY DEFINER`, and schema-qualifies every application-object reference.
+Consequently neither a caller-controlled schema before `public` nor an implicit
+temporary schema can redirect the NormalOrganization audit touch away from
+`public.organizations`. Down migration object resolution is likewise explicitly
+bound to `public` and cannot remove an identically named shadow object.
+
+Trigger-generated rejections use SQLSTATE `23514` with stable, semantic
+constraint identities and structured `public` schema/table/column metadata.
+The identities distinguish base UUID, classification, canonical identity, and
+creation-time immutability; distinguished Default lifecycle and deletion;
+normal lifecycle transitions; NormalOrganization subtype identity and
+classification; corporate mapping-key immutability; and the subtype/base
+invariant. PostgreSQL tests compare exact SQLSTATE, constraint, schema, table,
+column, and datatype metadata for each trigger and declarative invariant, then
+verify the transaction rollback and durable state. Store classification is
+limited to known constraint identities and preserves the original PostgreSQL
+error for diagnostic unwrapping.
 
 Focused validation covers fresh installation, Foundation-only upgrade,
 Foundation and new-tail rollback/reapply, unsupported partial schema state,

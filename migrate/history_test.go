@@ -50,7 +50,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if latest.Provenance != provenanceMSOnCall || latest.BundleID != "ms-oncall-organization-default-persistence-foundation-v1" {
 		t.Fatalf("latest migration provenance/bundle = %q/%q", latest.Provenance, latest.BundleID)
 	}
-	if latest.OriginalID != latest.ID || latest.SHA256 != "da5bafe83d84d7529cb8ec0dd2b3161cd9dee5036f82854de7d8895f6f975889" {
+	if latest.OriginalID != latest.ID || latest.SHA256 != "4551270e716d9dd6572dbde7173b6d7a15a3510f11045e770d5f51c80dbfdc5f" {
 		t.Fatalf("latest migration original identity/checksum = %q/%q", latest.OriginalID, latest.SHA256)
 	}
 	if latest.PredecessorID != foundation.ID ||

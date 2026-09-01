@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/target/goalert/util/sqlutil"
 )
 
@@ -386,21 +387,84 @@ func mapWriteError(operation string, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	dbErr := sqlutil.MapError(err)
-	if dbErr == nil {
+	var dbErr *pgconn.PgError
+	if !errors.As(err, &dbErr) {
 		return fmt.Errorf("%s: %w", operation, err)
 	}
+	var target error
 	switch dbErr.Code {
 	case "23505":
-		return fmt.Errorf("%w: %s", ErrConflict, operation)
-	case "23514":
-		if dbErr.ConstraintName == "organizations_lifecycle_transition" {
-			return fmt.Errorf("%w: %s", ErrInvalidLifecycleTransition, operation)
+		switch dbErr.ConstraintName {
+		case "organizations_pkey", "organizations_canonical_name_key", "organizations_id_classification_key", "organizations_single_default_idx":
+			if dbErr.SchemaName == "public" && dbErr.TableName == "organizations" {
+				target = ErrConflict
+			}
+		case "normal_organizations_pkey", "normal_organizations_corporate_mapping_key_key":
+			if dbErr.SchemaName == "public" && dbErr.TableName == "normal_organizations" {
+				target = ErrConflict
+			}
 		}
-		return fmt.Errorf("%w: %s", ErrInvariantViolation, operation)
-	case "23503", "22P02", "23502":
-		return fmt.Errorf("%w: %s", ErrInvariantViolation, operation)
-	default:
+	case "23514":
+		switch dbErr.ConstraintName {
+		case "organizations_lifecycle_transition":
+			if dbErr.SchemaName == "public" && dbErr.TableName == "organizations" && dbErr.ColumnName == "lifecycle" {
+				target = ErrInvalidLifecycleTransition
+			}
+		case "organizations_display_name_not_blank",
+			"organizations_canonical_name_not_blank",
+			"organizations_audit_timestamp_order",
+			"organizations_default_delete_forbidden",
+			"organizations_id_immutable",
+			"organizations_classification_immutable",
+			"organizations_canonical_name_immutable",
+			"organizations_created_at_immutable",
+			"organizations_default_lifecycle_immutable":
+			if dbErr.SchemaName == "public" && dbErr.TableName == "organizations" {
+				target = ErrInvariantViolation
+			}
+		case "normal_organizations_classification_normal",
+			"normal_organizations_corporate_mapping_key_not_blank",
+			"normal_organizations_iana_time_zone_not_blank",
+			"normal_organizations_organization_id_immutable",
+			"normal_organizations_classification_immutable",
+			"normal_organizations_corporate_mapping_key_immutable":
+			if dbErr.SchemaName == "public" && dbErr.TableName == "normal_organizations" {
+				target = ErrInvariantViolation
+			}
+		case "normal_organizations_base_invariant":
+			if dbErr.SchemaName == "public" && dbErr.TableName == "organizations" && dbErr.ColumnName == "id" {
+				target = ErrInvariantViolation
+			}
+		}
+	case "23503":
+		if dbErr.ConstraintName == "normal_organizations_organization_classification_fkey" &&
+			dbErr.SchemaName == "public" && dbErr.TableName == "normal_organizations" {
+			target = ErrInvariantViolation
+		}
+	case "22P02":
+		if dbErr.ConstraintName == "" {
+			target = ErrInvariantViolation
+		}
+	case "23502":
+		if dbErr.ConstraintName == "" && dbErr.SchemaName == "public" {
+			switch dbErr.TableName + "." + dbErr.ColumnName {
+			case "organizations.id",
+				"organizations.classification",
+				"organizations.display_name",
+				"organizations.canonical_name",
+				"organizations.lifecycle",
+				"organizations.created_at",
+				"organizations.updated_at",
+				"normal_organizations.organization_id",
+				"normal_organizations.organization_classification",
+				"normal_organizations.corporate_mapping_key",
+				"normal_organizations.iana_time_zone":
+				target = ErrInvariantViolation
+			}
+		}
+	}
+	if target == nil {
 		return fmt.Errorf("%s: %w", operation, err)
 	}
+	return fmt.Errorf("%w: %s: %w", target, operation, err)
 }

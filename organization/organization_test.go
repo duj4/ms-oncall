@@ -147,16 +147,30 @@ func TestMapWriteError(t *testing.T) {
 		err        error
 		wantTarget error
 	}{
-		{name: "unique", err: &pgconn.PgError{Code: "23505"}, wantTarget: ErrConflict},
-		{name: "lifecycle", err: &pgconn.PgError{Code: "23514", ConstraintName: "organizations_lifecycle_transition"}, wantTarget: ErrInvalidLifecycleTransition},
-		{name: "check", err: &pgconn.PgError{Code: "23514"}, wantTarget: ErrInvariantViolation},
-		{name: "foreign key", err: &pgconn.PgError{Code: "23503"}, wantTarget: ErrInvariantViolation},
+		{name: "mapping key conflict", err: &pgconn.PgError{Code: "23505", SchemaName: "public", TableName: "normal_organizations", ConstraintName: "normal_organizations_corporate_mapping_key_key"}, wantTarget: ErrConflict},
+		{name: "canonical identity conflict", err: &pgconn.PgError{Code: "23505", SchemaName: "public", TableName: "organizations", ConstraintName: "organizations_canonical_name_key"}, wantTarget: ErrConflict},
+		{name: "unknown unique constraint", err: &pgconn.PgError{Code: "23505", SchemaName: "public", TableName: "organizations", ConstraintName: "future_unique_constraint"}},
+		{name: "lifecycle", err: &pgconn.PgError{Code: "23514", SchemaName: "public", TableName: "organizations", ColumnName: "lifecycle", ConstraintName: "organizations_lifecycle_transition"}, wantTarget: ErrInvalidLifecycleTransition},
+		{name: "other known check", err: &pgconn.PgError{Code: "23514", SchemaName: "public", TableName: "organizations", ConstraintName: "organizations_display_name_not_blank"}, wantTarget: ErrInvariantViolation},
+		{name: "same SQLSTATE unknown constraint", err: &pgconn.PgError{Code: "23514", SchemaName: "public", TableName: "organizations", ConstraintName: "future_check_constraint"}},
+		{name: "subtype foreign key", err: &pgconn.PgError{Code: "23503", SchemaName: "public", TableName: "normal_organizations", ConstraintName: "normal_organizations_organization_classification_fkey"}, wantTarget: ErrInvariantViolation},
+		{name: "unknown foreign key", err: &pgconn.PgError{Code: "23503", SchemaName: "public", TableName: "normal_organizations", ConstraintName: "future_foreign_key"}},
 		{name: "invalid enum", err: &pgconn.PgError{Code: "22P02"}, wantTarget: ErrInvariantViolation},
+		{name: "known not null", err: &pgconn.PgError{Code: "23502", SchemaName: "public", TableName: "organizations", ColumnName: "display_name"}, wantTarget: ErrInvariantViolation},
+		{name: "unknown not null", err: &pgconn.PgError{Code: "23502", SchemaName: "public", TableName: "future_table", ColumnName: "display_name"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := mapWriteError("test", test.err); !errors.Is(got, test.wantTarget) {
-				t.Fatalf("mapWriteError = %v, want %v", got, test.wantTarget)
+			got := mapWriteError("test", test.err)
+			semanticTargets := []error{ErrConflict, ErrInvalidLifecycleTransition, ErrInvariantViolation}
+			for _, target := range semanticTargets {
+				if errors.Is(got, target) != (test.wantTarget == target) {
+					t.Fatalf("mapWriteError = %v, target %v match = %v", got, target, errors.Is(got, target))
+				}
+			}
+			var raw *pgconn.PgError
+			if !errors.As(got, &raw) || raw != test.err {
+				t.Fatalf("mapWriteError did not preserve raw PostgreSQL error: %v", got)
 			}
 		})
 	}
