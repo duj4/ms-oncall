@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -140,6 +141,9 @@ func validateMappingOutcome(value MappingOutcome) bool {
 func validateAssignmentEvaluation(value AssignmentEvaluation) error {
 	if value.AuthoritativeEvaluatedAt.IsZero() {
 		return fmt.Errorf("authoritative evaluation time is required")
+	}
+	if !utf8.ValidString(value.SourceConfigVersion) {
+		return fmt.Errorf("source/config version must be valid UTF-8")
 	}
 	if value.SourceConfigVersion == "" ||
 		strings.Trim(value.SourceConfigVersion, sourceConfigVersionBoundaryWhitespace) != value.SourceConfigVersion {

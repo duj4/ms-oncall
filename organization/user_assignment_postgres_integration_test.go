@@ -43,7 +43,7 @@ func TestPostgresUserAssignmentStorePersistenceAndNoAutomaticAssignment(t *testi
 	}
 
 	evaluatedAt := time.Date(2026, 9, 1, 14, 0, 0, 0, time.UTC)
-	member := createAssignmentTestValues(normal.ID, ClassificationNormal, AssignmentStateActive, OrganizationRoleMember, MappingOutcomeExactlyOne, 1, evaluatedAt, "store-member-v1")
+	member := createAssignmentTestValues(normal.ID, ClassificationNormal, AssignmentStateActive, OrganizationRoleMember, MappingOutcomeExactlyOne, 1, evaluatedAt, "store-member-版本-v1")
 	admin := createAssignmentTestValues(normal.ID, ClassificationNormal, AssignmentStateActive, OrganizationRoleAdmin, MappingOutcomeExactlyOne, 1, evaluatedAt, "store-admin-v1")
 	zero := createAssignmentTestValues(defaultOrg.ID, ClassificationDefault, AssignmentStateActive, OrganizationRoleNone, MappingOutcomeZero, 0, evaluatedAt, "store-zero-v1")
 	multiple := createAssignmentTestValues(defaultOrg.ID, ClassificationDefault, AssignmentStateActive, OrganizationRoleNone, MappingOutcomeMultiple, math.MaxInt32, evaluatedAt, "store-multiple-v1")

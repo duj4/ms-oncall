@@ -142,7 +142,12 @@ func TestValidateUserOrganizationAssignmentRejectsInvalidValues(t *testing.T) {
 
 func TestValidateAssignmentEvaluationSourceConfigVersionWhitespacePolicy(t *testing.T) {
 	valid := validUserOrganizationAssignmentValues().Evaluation
-	for _, sourceVersion := range []string{"mapping-config-v1", "mapping\tconfig\nversion"} {
+	for _, sourceVersion := range []string{
+		"mapping-config-v1",
+		"配置-v1",
+		"mapping\tconfig\nversion",
+		"mapping\u3000config",
+	} {
 		valid.SourceConfigVersion = sourceVersion
 		if err := validateAssignmentEvaluation(valid); err != nil {
 			t.Fatalf("valid source/config version %q: %v", sourceVersion, err)
@@ -184,6 +189,79 @@ func TestValidateAssignmentEvaluationSourceConfigVersionWhitespacePolicy(t *test
 				t.Errorf("source/config version with boundary whitespace U+%04X was accepted: %q", boundaryWhitespace, sourceVersion)
 			}
 		}
+	}
+}
+
+func TestValidateAssignmentEvaluationSourceConfigVersionRejectsInvalidUTF8(t *testing.T) {
+	valid := validUserOrganizationAssignmentValues().Evaluation
+	tests := []struct {
+		name          string
+		sourceVersion string
+	}{
+		{name: "isolated invalid byte", sourceVersion: string([]byte{0xff})},
+		{name: "truncated multi-byte sequence", sourceVersion: string([]byte{0xe2, 0x82})},
+		{name: "invalid continuation sequence", sourceVersion: string([]byte{0xe2, 0x28, 0xa1})},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := valid
+			invalid.SourceConfigVersion = test.sourceVersion
+			if err := validateAssignmentEvaluation(invalid); err == nil {
+				t.Fatal("invalid UTF-8 source/config version was accepted")
+			}
+		})
+	}
+}
+
+func TestUserOrganizationAssignmentStoreRejectsInvalidUTF8BeforeSQL(t *testing.T) {
+	store := NewStore(nil)
+	values := validUserOrganizationAssignmentValues()
+	values.Evaluation.SourceConfigVersion = string([]byte{0xff})
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "create",
+			run: func() error {
+				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "guarded update",
+			run: func() error {
+				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					ExpectedGeneration:               InitialAssignmentGeneration,
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "evidence refresh",
+			run: func() error {
+				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
+					UserID:             uuid.New(),
+					ExpectedGeneration: InitialAssignmentGeneration,
+					Evaluation:         values.Evaluation,
+				})
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run()
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("invalid UTF-8 source/config version error = %v, want ErrInvalidInput", err)
+			}
+		})
 	}
 }
 
