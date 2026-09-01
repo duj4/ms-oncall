@@ -33,6 +33,11 @@ var rules = migratetest.RuleSet{
 	// Provenance audit timestamps truthfully follow each bootstrap/application; all immutable ledger fields must still match.
 	{MigrationName: "ms-oncall-migration-provenance", TableName: "ms_oncall_migration_provenance", ColumnName: "applied_at"},
 	{MigrationName: "ms-oncall-migration-provenance", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
+	{MigrationName: "ms-oncall-organization-persistence", TableName: "ms_oncall_migration_provenance", ColumnName: "applied_at"},
+	{MigrationName: "ms-oncall-organization-persistence", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
+	// The deterministic Default identity is recreated with truthful bootstrap audit timestamps.
+	{MigrationName: "ms-oncall-organization-persistence", TableName: "organizations", ColumnName: "created_at"},
+	{MigrationName: "ms-oncall-organization-persistence", TableName: "organizations", ColumnName: "updated_at"},
 
 	// id will be regenerated each time the table is created
 	{MigrationName: "ev3-assign-schedule-rotations", TableName: "assignments", ColumnName: "src_schedule_rule_id"},
