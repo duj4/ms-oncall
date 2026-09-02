@@ -91,6 +91,75 @@ func assertOrganizationAssignmentDecision(t *testing.T, got OrganizationAssignme
 	}
 }
 
+func assertOrganizationAssignmentResolverCallDoesNotPanic(t *testing.T, call func()) {
+	t.Helper()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("Organization assignment resolver call panicked: %v", recovered)
+		}
+	}()
+	call()
+}
+
+func TestNewOrganizationAssignmentResolverRejectsNilReader(t *testing.T) {
+	var store *Store
+	var fake *fakeOrganizationAssignmentReader
+	tests := []struct {
+		name   string
+		reader organizationAssignmentReader
+	}{
+		{name: "plain nil interface"},
+		{name: "typed nil Store", reader: store},
+		{name: "typed nil fake", reader: fake},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var resolver *OrganizationAssignmentResolver
+			var err error
+			assertOrganizationAssignmentResolverCallDoesNotPanic(t, func() {
+				resolver, err = NewOrganizationAssignmentResolver(test.reader, OrganizationAssignmentResolverConfig{
+					SourceConfigVersion: "config-v1",
+				})
+			})
+			if resolver != nil {
+				t.Fatalf("resolver = %#v, want nil", resolver)
+			}
+			if !errors.Is(err, ErrInvalidOrganizationAssignmentResolverConfiguration) {
+				t.Fatalf("constructor error = %v, want invalid resolver configuration", err)
+			}
+		})
+	}
+}
+
+func TestOrganizationAssignmentResolverResolveRejectsInvalidReader(t *testing.T) {
+	var fake *fakeOrganizationAssignmentReader
+	tests := []struct {
+		name     string
+		resolver *OrganizationAssignmentResolver
+	}{
+		{name: "nil resolver"},
+		{name: "zero value resolver", resolver: &OrganizationAssignmentResolver{}},
+		{name: "typed nil reader", resolver: &OrganizationAssignmentResolver{reader: fake}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var decision OrganizationAssignmentDecision
+			var err error
+			assertOrganizationAssignmentResolverCallDoesNotPanic(t, func() {
+				decision, err = test.resolver.Resolve(context.Background(), nil)
+			})
+			if decision != (OrganizationAssignmentDecision{}) {
+				t.Fatalf("decision = %#v, want zero value", decision)
+			}
+			if !errors.Is(err, ErrInvalidOrganizationAssignmentResolverConfiguration) {
+				t.Fatalf("Resolve error = %v, want invalid resolver configuration", err)
+			}
+		})
+	}
+}
+
 func TestNormalizeEnterpriseMappingIdentifier(t *testing.T) {
 	boundary := sourceConfigVersionBoundaryWhitespace
 	tests := []struct {

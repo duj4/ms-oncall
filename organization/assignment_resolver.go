@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -66,7 +67,7 @@ type OrganizationAssignmentResolver struct {
 // NewOrganizationAssignmentResolver validates and copies a complete
 // configuration snapshot. No Organization lookup occurs during construction.
 func NewOrganizationAssignmentResolver(reader organizationAssignmentReader, config OrganizationAssignmentResolverConfig) (*OrganizationAssignmentResolver, error) {
-	if reader == nil {
+	if nilOrganizationAssignmentReader(reader) {
 		return nil, fmt.Errorf("%w: Organization reader is required", ErrInvalidOrganizationAssignmentResolverConfiguration)
 	}
 	if err := validateSourceConfigVersion(config.SourceConfigVersion); err != nil {
@@ -104,7 +105,7 @@ func NewOrganizationAssignmentResolver(reader organizationAssignmentReader, conf
 // this method does not authenticate or interpret identity-provider claims.
 func (r *OrganizationAssignmentResolver) Resolve(ctx context.Context, enterpriseMappingIdentifiers []string) (OrganizationAssignmentDecision, error) {
 	var zero OrganizationAssignmentDecision
-	if r == nil || r.reader == nil {
+	if r == nil || nilOrganizationAssignmentReader(r.reader) {
 		return zero, fmt.Errorf("%w: resolver is not initialized", ErrInvalidOrganizationAssignmentResolverConfiguration)
 	}
 
@@ -184,6 +185,19 @@ func (r *OrganizationAssignmentResolver) Resolve(ctx context.Context, enterprise
 		decision.MappingOutcome = MappingOutcomeMultiple
 	}
 	return decision, nil
+}
+
+func nilOrganizationAssignmentReader(reader organizationAssignmentReader) bool {
+	if reader == nil {
+		return true
+	}
+	value := reflect.ValueOf(reader)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func normalizeEnterpriseMappingIdentifier(value string) (string, error) {
