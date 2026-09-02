@@ -139,6 +139,71 @@ func TestPostgresUserAssignmentStorePersistenceAndNoAutomaticAssignment(t *testi
 	}
 }
 
+func TestPostgresUserAssignmentEvaluationRepresentability(t *testing.T) {
+	db := newOrganizationPostgresDatabase(t)
+	store := NewStore(db)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	normal, err := store.CreateNormal(ctx, CreateNormalOrganizationInput{
+		DisplayName:         "Assignment Timestamp Boundary Organization",
+		CanonicalName:       "assignment.timestamp-boundary.organization",
+		CorporateMappingKey: "corp:assignment-timestamp-boundary",
+		TimeZone:            "Asia/Shanghai",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name          string
+		evaluatedAt   time.Time
+		sourceVersion string
+	}{
+		{name: "ordinary", evaluatedAt: time.Date(2026, time.September, 2, 12, 0, 0, 123456789, time.UTC), sourceVersion: "ordinary-配置-v1"},
+		{name: "lower endpoint", evaluatedAt: postgresTimestamptzMinimum, sourceVersion: "lower-endpoint-v1"},
+		{name: "lower sub-microsecond", evaluatedAt: postgresTimestamptzMinimum.Add(500 * time.Nanosecond), sourceVersion: "embedded-\x01-control"},
+		{name: "near upper endpoint", evaluatedAt: postgresTimestamptzEnd.Add(-24 * time.Hour), sourceVersion: "near\tupper\nendpoint"},
+		{name: "last representable microsecond", evaluatedAt: postgresTimestamptzEnd.Add(-time.Microsecond), sourceVersion: "last-microsecond-v1"},
+		{name: "upper sub-microsecond", evaluatedAt: postgresTimestamptzEnd.Add(-time.Nanosecond), sourceVersion: "upper-sub-microsecond-v1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			userID := insertAssignmentTestUser(t, ctx, db, "Assignment Timestamp Boundary "+test.name)
+			values := createAssignmentTestValues(
+				normal.ID,
+				ClassificationNormal,
+				AssignmentStateActive,
+				OrganizationRoleMember,
+				MappingOutcomeExactlyOne,
+				1,
+				test.evaluatedAt,
+				test.sourceVersion,
+			)
+			created, err := store.CreateUserOrganizationAssignment(ctx, CreateUserOrganizationAssignmentInput{
+				UserID:                           userID,
+				UserOrganizationAssignmentValues: values,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTime := test.evaluatedAt.Truncate(time.Microsecond)
+			if !created.Evaluation.AuthoritativeEvaluatedAt.Equal(wantTime) ||
+				created.Evaluation.SourceConfigVersion != test.sourceVersion {
+				t.Fatalf("created evaluation = %#v, want time %v and source version %q", created.Evaluation, wantTime, test.sourceVersion)
+			}
+			found, err := store.FindUserOrganizationAssignment(ctx, userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !found.Evaluation.AuthoritativeEvaluatedAt.Equal(wantTime) ||
+				found.Evaluation.SourceConfigVersion != test.sourceVersion {
+				t.Fatalf("stored evaluation = %#v, want time %v and source version %q", found.Evaluation, wantTime, test.sourceVersion)
+			}
+		})
+	}
+}
+
 func TestPostgresUserAssignmentGuardedConcurrency(t *testing.T) {
 	db := newOrganizationPostgresDatabase(t)
 	store := NewStore(db)

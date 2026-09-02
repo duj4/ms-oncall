@@ -21,6 +21,12 @@ const sourceConfigVersionBoundaryWhitespace = "\t\n\v\f\r \u0085\u00a0\u1680" +
 	"\u2028\u2029\u202f\u205f\u3000"
 
 var (
+	// PostgreSQL timestamptz accepts finite instants in this half-open range.
+	// Go year -4713 is PostgreSQL year 4714 BC because Go uses astronomical
+	// year numbering with a year zero.
+	postgresTimestamptzMinimum = time.Date(-4713, time.November, 24, 0, 0, 0, 0, time.UTC)
+	postgresTimestamptzEnd     = time.Date(294277, time.January, 1, 0, 0, 0, 0, time.UTC)
+
 	// ErrUserAssignmentNotFound indicates that no explicit assignment is
 	// persisted for the requested global User.
 	ErrUserAssignmentNotFound = fmt.Errorf("user Organization assignment not found")
@@ -142,8 +148,15 @@ func validateAssignmentEvaluation(value AssignmentEvaluation) error {
 	if value.AuthoritativeEvaluatedAt.IsZero() {
 		return fmt.Errorf("authoritative evaluation time is required")
 	}
+	evaluatedAt := value.AuthoritativeEvaluatedAt.UTC()
+	if evaluatedAt.Before(postgresTimestamptzMinimum) || !evaluatedAt.Before(postgresTimestamptzEnd) {
+		return fmt.Errorf("authoritative evaluation time is outside PostgreSQL timestamptz range")
+	}
 	if !utf8.ValidString(value.SourceConfigVersion) {
 		return fmt.Errorf("source/config version must be valid UTF-8")
+	}
+	if strings.IndexByte(value.SourceConfigVersion, 0) >= 0 {
+		return fmt.Errorf("source/config version cannot contain U+0000")
 	}
 	if value.SourceConfigVersion == "" ||
 		strings.Trim(value.SourceConfigVersion, sourceConfigVersionBoundaryWhitespace) != value.SourceConfigVersion {

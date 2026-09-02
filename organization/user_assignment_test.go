@@ -213,6 +213,73 @@ func TestValidateAssignmentEvaluationSourceConfigVersionRejectsInvalidUTF8(t *te
 	}
 }
 
+func TestValidateAssignmentEvaluationSourceConfigVersionPostgresTextCompatibility(t *testing.T) {
+	valid := validUserOrganizationAssignmentValues().Evaluation
+	for _, sourceVersion := range []string{
+		"ordinary-unicode-配置-v1",
+		"embedded\twhitespace\nversion",
+		"embedded-\x01-control",
+	} {
+		valid.SourceConfigVersion = sourceVersion
+		if err := validateAssignmentEvaluation(valid); err != nil {
+			t.Errorf("PostgreSQL-compatible source/config version %q: %v", sourceVersion, err)
+		}
+	}
+
+	for _, sourceVersion := range []string{
+		"\x00",
+		"\x00prefix",
+		"suffix\x00",
+		"prefix\x00suffix",
+		"prefix\x00middle\x00suffix",
+		"配置\x00版本",
+	} {
+		invalid := valid
+		invalid.SourceConfigVersion = sourceVersion
+		if err := validateAssignmentEvaluation(invalid); err == nil {
+			t.Errorf("source/config version containing U+0000 was accepted: %q", sourceVersion)
+		}
+	}
+}
+
+func TestValidateAssignmentEvaluationPostgresTimestamptzRange(t *testing.T) {
+	ordinaryUTC := time.Date(2026, time.September, 2, 12, 0, 0, 123456789, time.UTC)
+	utcPlusEight := time.FixedZone("UTC+08", 8*60*60)
+	tests := []struct {
+		name        string
+		evaluatedAt time.Time
+		wantError   bool
+	}{
+		{name: "ordinary UTC", evaluatedAt: ordinaryUTC},
+		{name: "ordinary same instant non-UTC", evaluatedAt: ordinaryUTC.In(utcPlusEight)},
+		{name: "zero", evaluatedAt: time.Time{}, wantError: true},
+		{name: "lower endpoint", evaluatedAt: postgresTimestamptzMinimum},
+		{name: "inside lower endpoint by nanosecond", evaluatedAt: postgresTimestamptzMinimum.Add(time.Nanosecond)},
+		{name: "inside lower endpoint by microsecond", evaluatedAt: postgresTimestamptzMinimum.Add(time.Microsecond)},
+		{name: "below lower endpoint by nanosecond", evaluatedAt: postgresTimestamptzMinimum.Add(-time.Nanosecond), wantError: true},
+		{name: "clearly valid near upper endpoint", evaluatedAt: postgresTimestamptzEnd.Add(-24 * time.Hour)},
+		{name: "last representable microsecond", evaluatedAt: postgresTimestamptzEnd.Add(-time.Microsecond)},
+		{name: "sub-microsecond before upper endpoint", evaluatedAt: postgresTimestamptzEnd.Add(-time.Nanosecond)},
+		{name: "last representable microsecond same instant non-UTC", evaluatedAt: postgresTimestamptzEnd.Add(-time.Microsecond).In(utcPlusEight)},
+		{name: "first non-representable upper instant", evaluatedAt: postgresTimestamptzEnd, wantError: true},
+		{name: "beyond upper endpoint", evaluatedAt: postgresTimestamptzEnd.Add(time.Microsecond), wantError: true},
+		{name: "reviewer reproduction year 300000", evaluatedAt: time.Date(300000, time.January, 1, 0, 0, 0, 0, time.UTC), wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evaluation := validUserOrganizationAssignmentValues().Evaluation
+			evaluation.AuthoritativeEvaluatedAt = test.evaluatedAt
+			err := validateAssignmentEvaluation(evaluation)
+			if test.wantError && err == nil {
+				t.Fatal("PostgreSQL-incompatible evaluation time was accepted")
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("PostgreSQL-compatible evaluation time was rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestUserOrganizationAssignmentStoreRejectsInvalidUTF8BeforeSQL(t *testing.T) {
 	store := NewStore(nil)
 	values := validUserOrganizationAssignmentValues()
@@ -260,6 +327,110 @@ func TestUserOrganizationAssignmentStoreRejectsInvalidUTF8BeforeSQL(t *testing.T
 			err := test.run()
 			if !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("invalid UTF-8 source/config version error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func TestUserOrganizationAssignmentStoreRejectsNULBeforeSQL(t *testing.T) {
+	store := NewStore(nil)
+	values := validUserOrganizationAssignmentValues()
+	values.Evaluation.SourceConfigVersion = "prefix\x00配置"
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "create",
+			run: func() error {
+				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "guarded update",
+			run: func() error {
+				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					ExpectedGeneration:               InitialAssignmentGeneration,
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "evidence refresh",
+			run: func() error {
+				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
+					UserID:             uuid.New(),
+					ExpectedGeneration: InitialAssignmentGeneration,
+					Evaluation:         values.Evaluation,
+				})
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run()
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("U+0000 source/config version error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func TestUserOrganizationAssignmentStoreRejectsOutOfRangeEvaluationTimeBeforeSQL(t *testing.T) {
+	store := NewStore(nil)
+	values := validUserOrganizationAssignmentValues()
+	values.Evaluation.AuthoritativeEvaluatedAt = time.Date(300000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "create",
+			run: func() error {
+				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "guarded update",
+			run: func() error {
+				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
+					UserID:                           uuid.New(),
+					ExpectedGeneration:               InitialAssignmentGeneration,
+					UserOrganizationAssignmentValues: values,
+				})
+				return err
+			},
+		},
+		{
+			name: "evidence refresh",
+			run: func() error {
+				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
+					UserID:             uuid.New(),
+					ExpectedGeneration: InitialAssignmentGeneration,
+					Evaluation:         values.Evaluation,
+				})
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run()
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("out-of-range evaluation time error = %v, want ErrInvalidInput", err)
 			}
 		})
 	}
