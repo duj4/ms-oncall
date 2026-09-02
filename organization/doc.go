@@ -1,6 +1,7 @@
 // Package organization provides the internal persistence foundation for
-// Organization identity. It deliberately has no GraphQL, HTTP, authorization,
-// User-assignment, or operational-resource integration.
+// Organization identity and explicitly persisted UserOrganizationAssignment
+// rows. It deliberately has no GraphQL, HTTP, authorization, resolver, session,
+// automatic-assignment, transfer-execution, or operational-resource integration.
 //
 // Normal Organizations are created as a base Organization and constrained
 // relational subtype in one transaction. The distinguished Default

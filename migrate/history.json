@@ -1443,6 +1443,35 @@
           "sha256": "4551270e716d9dd6572dbde7173b6d7a15a3510f11045e770d5f51c80dbfdc5f"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-user-organization-assignment-persistence-foundation-v1",
+      "first_position": 277,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "Core Enterprise Identity & Organization Isolation UserOrganizationAssignment Additive Persistence Foundation V1",
+        "base_commit": "7e698840ee69eb04c84e19830221b4637be435c6",
+        "base_tree": "4c2d01c2cdf2785a78d423e0b32258c9b6d7a212",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "de12830b9c2da4c4a2d71020cf4374f76cfdb7cf",
+        "authorization_tree": "22aa6f10bb7fe3cbea306a250513e48caec50335"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-organization-default-persistence-foundation-v1",
+        "migration_id": "20260901100808-ms-oncall-organization-persistence.sql",
+        "sha256": "4551270e716d9dd6572dbde7173b6d7a15a3510f11045e770d5f51c80dbfdc5f",
+        "evidence": "APPEND_AFTER_ACCEPTED_ORGANIZATION_DEFAULT_PERSISTENCE_FOUNDATION_V1"
+      },
+      "adaptation_evidence": "ADDITIVE_MS_ONCALL_USER_ORGANIZATION_ASSIGNMENT_PERSISTENCE_FOUNDATION_NOT_AN_UPSTREAM_MIGRATION",
+      "entries": [
+        {
+          "id": "20260901220323-ms-oncall-user-organization-assignment-persistence.sql",
+          "original_id": "20260901220323-ms-oncall-user-organization-assignment-persistence.sql",
+          "sha256": "b9bbade729665431c23c74c689aa90f1c0ba484678026b6a6398b649f0e21b8e"
+        }
+      ]
     }
   ]
 }
