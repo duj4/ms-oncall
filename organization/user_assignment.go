@@ -144,6 +144,19 @@ func validateMappingOutcome(value MappingOutcome) bool {
 	return value == MappingOutcomeExactlyOne || value == MappingOutcomeZero || value == MappingOutcomeMultiple
 }
 
+func validateSourceConfigVersion(value string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("source/config version must be valid UTF-8")
+	}
+	if strings.IndexByte(value, 0) >= 0 {
+		return fmt.Errorf("source/config version cannot contain U+0000")
+	}
+	if value == "" || strings.Trim(value, sourceConfigVersionBoundaryWhitespace) != value {
+		return fmt.Errorf("source/config version must be non-empty and trimmed")
+	}
+	return nil
+}
+
 func validateAssignmentEvaluation(value AssignmentEvaluation) error {
 	if value.AuthoritativeEvaluatedAt.IsZero() {
 		return fmt.Errorf("authoritative evaluation time is required")
@@ -152,15 +165,8 @@ func validateAssignmentEvaluation(value AssignmentEvaluation) error {
 	if evaluatedAt.Before(postgresTimestamptzMinimum) || !evaluatedAt.Before(postgresTimestamptzEnd) {
 		return fmt.Errorf("authoritative evaluation time is outside PostgreSQL timestamptz range")
 	}
-	if !utf8.ValidString(value.SourceConfigVersion) {
-		return fmt.Errorf("source/config version must be valid UTF-8")
-	}
-	if strings.IndexByte(value.SourceConfigVersion, 0) >= 0 {
-		return fmt.Errorf("source/config version cannot contain U+0000")
-	}
-	if value.SourceConfigVersion == "" ||
-		strings.Trim(value.SourceConfigVersion, sourceConfigVersionBoundaryWhitespace) != value.SourceConfigVersion {
-		return fmt.Errorf("source/config version must be non-empty and trimmed")
+	if err := validateSourceConfigVersion(value.SourceConfigVersion); err != nil {
+		return err
 	}
 	if value.MatchedCount < 0 {
 		return fmt.Errorf("matched count cannot be negative")
