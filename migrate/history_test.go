@@ -15,7 +15,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(history.entries), 277; got != want {
+	if got, want := len(history.entries), 278; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
 	if got, want := history.provenanceFoundationIndex, 274; got != want {
@@ -43,7 +43,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		t.Fatalf("MS OnCall foundation source binding does not contain the exact parent commit and tree: %s", foundation.SourceBinding)
 	}
 
-	organizationFoundation := history.entries[len(history.entries)-2]
+	organizationFoundation := history.entries[len(history.entries)-3]
 	if organizationFoundation.Position != 276 || organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
 		t.Fatalf("Organization persistence migration = position %d, ID %q", organizationFoundation.Position, organizationFoundation.ID)
 	}
@@ -74,25 +74,25 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	latest := history.latest()
-	if latest.Position != 277 || latest.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" {
-		t.Fatalf("latest canonical migration = position %d, ID %q", latest.Position, latest.ID)
+	assignmentFoundation := history.entries[len(history.entries)-2]
+	if assignmentFoundation.Position != 277 || assignmentFoundation.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" {
+		t.Fatalf("UserOrganizationAssignment persistence migration = position %d, ID %q", assignmentFoundation.Position, assignmentFoundation.ID)
 	}
-	if latest.Provenance != provenanceMSOnCall || latest.BundleID != "ms-oncall-user-organization-assignment-persistence-foundation-v1" {
-		t.Fatalf("latest migration provenance/bundle = %q/%q", latest.Provenance, latest.BundleID)
+	if assignmentFoundation.Provenance != provenanceMSOnCall || assignmentFoundation.BundleID != "ms-oncall-user-organization-assignment-persistence-foundation-v1" {
+		t.Fatalf("UserOrganizationAssignment persistence provenance/bundle = %q/%q", assignmentFoundation.Provenance, assignmentFoundation.BundleID)
 	}
-	if latest.OriginalID != latest.ID || latest.SHA256 != "b9bbade729665431c23c74c689aa90f1c0ba484678026b6a6398b649f0e21b8e" {
-		t.Fatalf("latest migration original identity/checksum = %q/%q", latest.OriginalID, latest.SHA256)
+	if assignmentFoundation.OriginalID != assignmentFoundation.ID || assignmentFoundation.SHA256 != "b9bbade729665431c23c74c689aa90f1c0ba484678026b6a6398b649f0e21b8e" {
+		t.Fatalf("UserOrganizationAssignment persistence original identity/checksum = %q/%q", assignmentFoundation.OriginalID, assignmentFoundation.SHA256)
 	}
-	if latest.PredecessorID != organizationFoundation.ID ||
-		!strings.Contains(latest.DependencyEvidence, "bundle=ms-oncall-organization-default-persistence-foundation-v1") ||
-		!strings.Contains(latest.DependencyEvidence, "id=20260901100808-ms-oncall-organization-persistence.sql") ||
-		!strings.Contains(latest.DependencyEvidence, "sha256=4551270e716d9dd6572dbde7173b6d7a15a3510f11045e770d5f51c80dbfdc5f") ||
-		!strings.Contains(latest.DependencyEvidence, "APPEND_AFTER_ACCEPTED_ORGANIZATION_DEFAULT_PERSISTENCE_FOUNDATION_V1") {
-		t.Fatalf("UserOrganizationAssignment persistence dependency evidence is incomplete: %s", latest.DependencyEvidence)
+	if assignmentFoundation.PredecessorID != organizationFoundation.ID ||
+		!strings.Contains(assignmentFoundation.DependencyEvidence, "bundle=ms-oncall-organization-default-persistence-foundation-v1") ||
+		!strings.Contains(assignmentFoundation.DependencyEvidence, "id=20260901100808-ms-oncall-organization-persistence.sql") ||
+		!strings.Contains(assignmentFoundation.DependencyEvidence, "sha256=4551270e716d9dd6572dbde7173b6d7a15a3510f11045e770d5f51c80dbfdc5f") ||
+		!strings.Contains(assignmentFoundation.DependencyEvidence, "APPEND_AFTER_ACCEPTED_ORGANIZATION_DEFAULT_PERSISTENCE_FOUNDATION_V1") {
+		t.Fatalf("UserOrganizationAssignment persistence dependency evidence is incomplete: %s", assignmentFoundation.DependencyEvidence)
 	}
-	if latest.AdaptationEvidence != "ADDITIVE_MS_ONCALL_USER_ORGANIZATION_ASSIGNMENT_PERSISTENCE_FOUNDATION_NOT_AN_UPSTREAM_MIGRATION" {
-		t.Fatalf("UserOrganizationAssignment persistence adaptation evidence = %q", latest.AdaptationEvidence)
+	if assignmentFoundation.AdaptationEvidence != "ADDITIVE_MS_ONCALL_USER_ORGANIZATION_ASSIGNMENT_PERSISTENCE_FOUNDATION_NOT_AN_UPSTREAM_MIGRATION" {
+		t.Fatalf("UserOrganizationAssignment persistence adaptation evidence = %q", assignmentFoundation.AdaptationEvidence)
 	}
 	for _, value := range []string{
 		"7e698840ee69eb04c84e19830221b4637be435c6",
@@ -100,8 +100,39 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		"de12830b9c2da4c4a2d71020cf4374f76cfdb7cf",
 		"22aa6f10bb7fe3cbea306a250513e48caec50335",
 	} {
+		if !strings.Contains(assignmentFoundation.SourceBinding, value) {
+			t.Fatalf("UserOrganizationAssignment persistence source binding is missing %q: %s", value, assignmentFoundation.SourceBinding)
+		}
+	}
+
+	latest := history.latest()
+	if latest.Position != 278 || latest.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" {
+		t.Fatalf("latest canonical migration = position %d, ID %q", latest.Position, latest.ID)
+	}
+	if latest.Provenance != provenanceMSOnCall || latest.BundleID != "ms-oncall-human-security-generation-persistence-foundation-v1" {
+		t.Fatalf("human security generation provenance/bundle = %q/%q", latest.Provenance, latest.BundleID)
+	}
+	if latest.OriginalID != latest.ID || latest.SHA256 != "442b919a8b001b9cf6ea1a118b0a5ebe7d6b674483ca867e1c264efb7e854d16" {
+		t.Fatalf("human security generation original identity/checksum = %q/%q", latest.OriginalID, latest.SHA256)
+	}
+	if latest.PredecessorID != assignmentFoundation.ID ||
+		!strings.Contains(latest.DependencyEvidence, "bundle=ms-oncall-user-organization-assignment-persistence-foundation-v1") ||
+		!strings.Contains(latest.DependencyEvidence, "id=20260901220323-ms-oncall-user-organization-assignment-persistence.sql") ||
+		!strings.Contains(latest.DependencyEvidence, "sha256=b9bbade729665431c23c74c689aa90f1c0ba484678026b6a6398b649f0e21b8e") ||
+		!strings.Contains(latest.DependencyEvidence, "APPEND_AFTER_ACCEPTED_USER_ORGANIZATION_ASSIGNMENT_PERSISTENCE_FOUNDATION_V1") {
+		t.Fatalf("human security generation dependency evidence is incomplete: %s", latest.DependencyEvidence)
+	}
+	if latest.AdaptationEvidence != "ADDITIVE_MS_ONCALL_HUMAN_SECURITY_GENERATION_PERSISTENCE_FOUNDATION_NOT_AN_UPSTREAM_MIGRATION" {
+		t.Fatalf("human security generation adaptation evidence = %q", latest.AdaptationEvidence)
+	}
+	for _, value := range []string{
+		"bbdaebfe27a74643e8cdd03d27845ff76e69771b",
+		"364ad3fa042b186c3e32b3ee3e4bc25f529c925e",
+		"3a7bd58b9d1a3c5e866b402f6600e9e416ae2705",
+		"588b843dd81fb81cdd2ce2aa3e30464bfdb05e10",
+	} {
 		if !strings.Contains(latest.SourceBinding, value) {
-			t.Fatalf("UserOrganizationAssignment persistence source binding is missing %q: %s", value, latest.SourceBinding)
+			t.Fatalf("human security generation source binding is missing %q: %s", value, latest.SourceBinding)
 		}
 	}
 }
