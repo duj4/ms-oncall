@@ -1,6 +1,9 @@
 package executioncontext_test
 
 import (
+	"encoding"
+	"encoding/gob"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/executioncontext"
 )
 
@@ -33,6 +37,40 @@ func TestExternalZeroValueHasNoAuthority(t *testing.T) {
 	if _, present := original.PlatformAdminAssumptionID(); present {
 		t.Fatal("external zero value exposed assumption evidence")
 	}
+	if original.AuthenticationSource() != nil || original.Privileges() != nil {
+		t.Fatal("external zero value exposed nested trust evidence")
+	}
+}
+
+func TestExternalNilPointerAccessorsFailClosed(t *testing.T) {
+	var context *executioncontext.ExecutionContext
+	var source *executioncontext.AuthenticationSource
+	var privileges *executioncontext.PrivilegeMetadata
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("nil-pointer accessor panicked: %v", recovered)
+		}
+	}()
+
+	if context.Valid() || context.PrincipalKind() != "" || context.PrincipalID() != "" || context.ActualActorID() != "" ||
+		context.AuthenticationSource() != nil || context.Privileges() != nil || context.AuthorityMode() != "" {
+		t.Fatal("nil ExecutionContext exposed identity or authority")
+	}
+	if value, present := context.EffectiveOrganizationID(); present || value != uuid.Nil {
+		t.Fatalf("nil EffectiveOrganizationID = (%s, %t), want absent", value, present)
+	}
+	if value, present := context.AssignmentGeneration(); present || value != 0 {
+		t.Fatalf("nil AssignmentGeneration = (%d, %t), want absent", value, present)
+	}
+	if value, present := context.PlatformAdminAssumptionID(); present || value != "" {
+		t.Fatalf("nil PlatformAdminAssumptionID = (%q, %t), want absent", value, present)
+	}
+	if source.Type() != "" || source.ID() != "" {
+		t.Fatal("nil AuthenticationSource exposed evidence")
+	}
+	if privileges.OrganizationRole() != "" || privileges.PlatformAdmin() {
+		t.Fatal("nil PrivilegeMetadata exposed evidence")
+	}
 }
 
 func TestTrustBearingRepresentationsHaveNoExportedFields(t *testing.T) {
@@ -49,12 +87,18 @@ func TestTrustBearingRepresentationsHaveNoExportedFields(t *testing.T) {
 					t.Fatalf("trust-bearing field %s.%s is exported", typ.Name(), field.Name)
 				}
 			}
+			value := reflect.New(typ).Elem()
+			for i := 0; i < value.NumField(); i++ {
+				if value.Field(i).CanSet() {
+					t.Fatalf("external reflection can set private trust-bearing field %s.%s", typ.Name(), typ.Field(i).Name)
+				}
+			}
 		})
 	}
 }
 
 func TestExecutionContextReadOnlyMethodSurface(t *testing.T) {
-	assertMethodSurface(t, reflect.TypeOf(executioncontext.ExecutionContext{}), []string{
+	assertMethodSurface(t, reflect.TypeOf((*executioncontext.ExecutionContext)(nil)), []string{
 		"ActualActorID",
 		"AssignmentGeneration",
 		"AuthenticationSource",
@@ -66,8 +110,11 @@ func TestExecutionContextReadOnlyMethodSurface(t *testing.T) {
 		"Privileges",
 		"Valid",
 	})
-	assertMethodSurface(t, reflect.TypeOf(executioncontext.AuthenticationSource{}), []string{"ID", "Type"})
-	assertMethodSurface(t, reflect.TypeOf(executioncontext.PrivilegeMetadata{}), []string{"OrganizationRole", "PlatformAdmin"})
+	assertMethodSurface(t, reflect.TypeOf((*executioncontext.AuthenticationSource)(nil)), []string{"ID", "Type"})
+	assertMethodSurface(t, reflect.TypeOf((*executioncontext.PrivilegeMetadata)(nil)), []string{"OrganizationRole", "PlatformAdmin"})
+	assertMethodSurface(t, reflect.TypeOf(executioncontext.ExecutionContext{}), []string{})
+	assertMethodSurface(t, reflect.TypeOf(executioncontext.AuthenticationSource{}), []string{})
+	assertMethodSurface(t, reflect.TypeOf(executioncontext.PrivilegeMetadata{}), []string{})
 }
 
 func assertMethodSurface(t *testing.T, typ reflect.Type, want []string) {
@@ -79,7 +126,28 @@ func assertMethodSurface(t *testing.T, typ reflect.Type, want []string) {
 	sort.Strings(got)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("%s exported methods = %v, want read-only surface %v", typ.Name(), got, want)
+		t.Fatalf("%s exported methods = %v, want read-only surface %v", typ, got, want)
+	}
+}
+
+func TestTrustBearingTypesImplementNoUnmarshaler(t *testing.T) {
+	values := map[string]any{
+		"ExecutionContext":     (*executioncontext.ExecutionContext)(nil),
+		"AuthenticationSource": (*executioncontext.AuthenticationSource)(nil),
+		"PrivilegeMetadata":    (*executioncontext.PrivilegeMetadata)(nil),
+	}
+	for name, value := range values {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := value.(json.Unmarshaler); ok {
+				t.Fatal("implements json.Unmarshaler")
+			}
+			if _, ok := value.(gob.GobDecoder); ok {
+				t.Fatal("implements gob.GobDecoder")
+			}
+			if _, ok := value.(encoding.TextUnmarshaler); ok {
+				t.Fatal("implements encoding.TextUnmarshaler")
+			}
+		})
 	}
 }
 

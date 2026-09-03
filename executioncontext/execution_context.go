@@ -56,12 +56,24 @@ type AuthenticationSource struct {
 }
 
 // Type returns the authentication-source type exactly as supplied by the
-// private trusted construction seam. The zero value returns an empty string.
-func (s AuthenticationSource) Type() string { return s.sourceType }
+// private trusted construction seam. Nil and zero values return an empty
+// string.
+func (s *AuthenticationSource) Type() string {
+	if s == nil {
+		return ""
+	}
+	return s.sourceType
+}
 
 // ID returns the authentication-source identity exactly as supplied by the
-// private trusted construction seam. The zero value returns an empty string.
-func (s AuthenticationSource) ID() string { return s.sourceID }
+// private trusted construction seam. Nil and zero values return an empty
+// string.
+func (s *AuthenticationSource) ID() string {
+	if s == nil {
+		return ""
+	}
+	return s.sourceID
+}
 
 // PrivilegeMetadata is immutable coarse privilege evidence. It deliberately
 // provides no capability catalog, evaluator, or authorization decision.
@@ -71,14 +83,19 @@ type PrivilegeMetadata struct {
 }
 
 // OrganizationRole returns the accepted coarse Organization role metadata.
-// The zero value returns the zero, invalid Organization role.
-func (p PrivilegeMetadata) OrganizationRole() organization.OrganizationRole {
+// Nil and zero values return the zero, invalid Organization role.
+func (p *PrivilegeMetadata) OrganizationRole() organization.OrganizationRole {
+	if p == nil {
+		return ""
+	}
 	return p.organizationRole
 }
 
 // PlatformAdmin reports the structural PlatformAdmin privilege marker. It
 // makes no authorization decision and grants no behavior.
-func (p PrivilegeMetadata) PlatformAdmin() bool { return p.platformAdmin }
+func (p *PrivilegeMetadata) PlatformAdmin() bool {
+	return p != nil && p.platformAdmin
+}
 
 // ExecutionContext is an immutable value carrying validated identity and
 // authority-mode evidence. All trust-bearing fields are private, the zero value
@@ -100,14 +117,14 @@ type ExecutionContext struct {
 }
 
 // Valid reports whether the value was completely validated by the private
-// trusted construction seam. The zero value is invalid and carries no trusted
-// authority.
-func (c ExecutionContext) Valid() bool { return c.valid }
+// trusted construction seam. Nil and zero values are invalid and carry no
+// trusted authority.
+func (c *ExecutionContext) Valid() bool { return c != nil && c.valid }
 
 // PrincipalKind returns the validated principal kind, or its invalid zero
 // value when the ExecutionContext is invalid.
-func (c ExecutionContext) PrincipalKind() PrincipalKind {
-	if !c.valid {
+func (c *ExecutionContext) PrincipalKind() PrincipalKind {
+	if !c.Valid() {
 		return ""
 	}
 	return c.principalKind
@@ -115,8 +132,8 @@ func (c ExecutionContext) PrincipalKind() PrincipalKind {
 
 // PrincipalID returns the stable principal identity exactly as supplied, or an
 // empty string when the ExecutionContext is invalid.
-func (c ExecutionContext) PrincipalID() string {
-	if !c.valid {
+func (c *ExecutionContext) PrincipalID() string {
+	if !c.Valid() {
 		return ""
 	}
 	return c.principalID
@@ -124,35 +141,39 @@ func (c ExecutionContext) PrincipalID() string {
 
 // ActualActorID returns the stable actual-actor identity exactly as supplied,
 // or an empty string when the ExecutionContext is invalid.
-func (c ExecutionContext) ActualActorID() string {
-	if !c.valid {
+func (c *ExecutionContext) ActualActorID() string {
+	if !c.Valid() {
 		return ""
 	}
 	return c.actualActorID
 }
 
 // AuthenticationSource returns immutable authentication-source evidence. An
-// invalid ExecutionContext returns the zero AuthenticationSource.
-func (c ExecutionContext) AuthenticationSource() AuthenticationSource {
-	if !c.valid {
-		return AuthenticationSource{}
+// invalid ExecutionContext returns no evidence. The returned pointer addresses
+// a copy so callers cannot mutate the ExecutionContext's internal state.
+func (c *ExecutionContext) AuthenticationSource() *AuthenticationSource {
+	if !c.Valid() {
+		return nil
 	}
-	return c.authenticationSource
+	source := c.authenticationSource
+	return &source
 }
 
 // Privileges returns immutable coarse privilege metadata. An invalid
-// ExecutionContext returns the zero PrivilegeMetadata.
-func (c ExecutionContext) Privileges() PrivilegeMetadata {
-	if !c.valid {
-		return PrivilegeMetadata{}
+// ExecutionContext returns no metadata. The returned pointer addresses a copy
+// so callers cannot mutate the ExecutionContext's internal state.
+func (c *ExecutionContext) Privileges() *PrivilegeMetadata {
+	if !c.Valid() {
+		return nil
 	}
-	return c.privileges
+	privileges := c.privileges
+	return &privileges
 }
 
 // AuthorityMode returns the validated authority mode, or its invalid zero
 // value when the ExecutionContext is invalid.
-func (c ExecutionContext) AuthorityMode() AuthorityMode {
-	if !c.valid {
+func (c *ExecutionContext) AuthorityMode() AuthorityMode {
+	if !c.Valid() {
 		return ""
 	}
 	return c.authorityMode
@@ -160,8 +181,8 @@ func (c ExecutionContext) AuthorityMode() AuthorityMode {
 
 // EffectiveOrganizationID returns the effective Organization identity and
 // true only for a valid ORG_SCOPED ExecutionContext.
-func (c ExecutionContext) EffectiveOrganizationID() (uuid.UUID, bool) {
-	if !c.valid || !c.hasEffectiveOrganization {
+func (c *ExecutionContext) EffectiveOrganizationID() (uuid.UUID, bool) {
+	if !c.Valid() || !c.hasEffectiveOrganization {
 		return uuid.Nil, false
 	}
 	return c.effectiveOrganizationID, true
@@ -169,8 +190,8 @@ func (c ExecutionContext) EffectiveOrganizationID() (uuid.UUID, bool) {
 
 // AssignmentGeneration returns optional positive assignment-generation
 // evidence. It does not load, compare, or enforce generation state.
-func (c ExecutionContext) AssignmentGeneration() (int64, bool) {
-	if !c.valid || !c.hasAssignmentGeneration {
+func (c *ExecutionContext) AssignmentGeneration() (int64, bool) {
+	if !c.Valid() || !c.hasAssignmentGeneration {
 		return 0, false
 	}
 	return c.assignmentGeneration, true
@@ -179,8 +200,8 @@ func (c ExecutionContext) AssignmentGeneration() (int64, bool) {
 // PlatformAdminAssumptionID returns optional structurally validated assumption
 // identity evidence. It does not create, validate, activate, or revoke an
 // assumption.
-func (c ExecutionContext) PlatformAdminAssumptionID() (string, bool) {
-	if !c.valid || !c.hasPlatformAdminAssumption {
+func (c *ExecutionContext) PlatformAdminAssumptionID() (string, bool) {
+	if !c.Valid() || !c.hasPlatformAdminAssumption {
 		return "", false
 	}
 	return c.platformAdminAssumptionID, true
@@ -270,6 +291,9 @@ func newExecutionContext(spec executionContextSpec) (ExecutionContext, error) {
 			return zero, invalidContextError("PlatformAdmin assumption identity")
 		}
 	}
+	if !validPrincipalAuthorityCombination(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) {
+		return zero, invalidContextError("principal privilege and authority-mode combination")
+	}
 
 	return ExecutionContext{
 		valid:         true,
@@ -292,6 +316,55 @@ func newExecutionContext(spec executionContextSpec) (ExecutionContext, error) {
 		platformAdminAssumptionID:  platformAdminAssumptionID,
 		hasPlatformAdminAssumption: hasPlatformAdminAssumption,
 	}, nil
+}
+
+// validPrincipalAuthorityCombination is the structural principal/privilege
+// matrix. It deliberately makes no operation or capability decision.
+func validPrincipalAuthorityCombination(spec executionContextSpec, hasAssignmentGeneration, hasPlatformAdminAssumption bool) bool {
+	switch spec.principalKind {
+	case PrincipalKindHuman:
+		return validHumanAuthorityCombination(spec, hasPlatformAdminAssumption)
+	case PrincipalKindIntegration:
+		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+			spec.authorityMode == AuthorityModeOrganizationScoped
+	case PrincipalKindOrganizationSystem:
+		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+			spec.authorityMode == AuthorityModeOrganizationScoped
+	case PrincipalKindMachine:
+		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+			(spec.authorityMode == AuthorityModeOrganizationScoped || spec.authorityMode == AuthorityModePlatformGlobal)
+	case PrincipalKindPlatformSystem:
+		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+			spec.authorityMode == AuthorityModePlatformGlobal
+	default:
+		return false
+	}
+}
+
+func validHumanAuthorityCombination(spec executionContextSpec, hasPlatformAdminAssumption bool) bool {
+	switch spec.authorityMode {
+	case AuthorityModeDefaultRestricted:
+		return spec.organizationRole == organization.OrganizationRoleNone && !hasPlatformAdminAssumption
+	case AuthorityModePlatformGlobal:
+		return spec.platformAdmin &&
+			spec.organizationRole == organization.OrganizationRoleNone &&
+			!hasPlatformAdminAssumption
+	case AuthorityModeOrganizationScoped:
+		if hasPlatformAdminAssumption {
+			return spec.platformAdmin && spec.organizationRole == organization.OrganizationRoleNone
+		}
+		return !spec.platformAdmin &&
+			(spec.organizationRole == organization.OrganizationRoleMember || spec.organizationRole == organization.OrganizationRoleAdmin)
+	default:
+		return false
+	}
+}
+
+func validNonHumanMetadata(spec executionContextSpec, hasAssignmentGeneration, hasPlatformAdminAssumption bool) bool {
+	return spec.organizationRole == organization.OrganizationRoleNone &&
+		!spec.platformAdmin &&
+		!hasPlatformAdminAssumption &&
+		!hasAssignmentGeneration
 }
 
 func validPrincipalKind(value PrincipalKind) bool {

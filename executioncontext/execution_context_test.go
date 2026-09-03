@@ -1,6 +1,9 @@
 package executioncontext
 
 import (
+	"bytes"
+	"encoding/gob"
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -20,6 +23,36 @@ func validTestSpec() executionContextSpec {
 	}
 }
 
+func structuralTestSpec(kind PrincipalKind, mode AuthorityMode, role organization.OrganizationRole, platformAdmin, assumption bool) executionContextSpec {
+	spec := validTestSpec()
+	spec.principalKind = kind
+	spec.authorityMode = mode
+	spec.organizationRole = role
+	spec.platformAdmin = platformAdmin
+	if mode == AuthorityModeOrganizationScoped {
+		spec.effectiveOrganizationID = pointerTo(uuid.MustParse("e0ff2a3f-a9f8-4cd5-904f-e6599965110e"))
+	}
+	if assumption {
+		spec.platformAdminAssumptionID = pointerTo("assumption:structural")
+	}
+	return spec
+}
+
+func validTestSpecForPrincipal(kind PrincipalKind) executionContextSpec {
+	switch kind {
+	case PrincipalKindHuman:
+		return structuralTestSpec(kind, AuthorityModeDefaultRestricted, organization.OrganizationRoleNone, false, false)
+	case PrincipalKindIntegration, PrincipalKindOrganizationSystem, PrincipalKindMachine:
+		return structuralTestSpec(kind, AuthorityModeOrganizationScoped, organization.OrganizationRoleNone, false, false)
+	case PrincipalKindPlatformSystem:
+		return structuralTestSpec(kind, AuthorityModePlatformGlobal, organization.OrganizationRoleNone, false, false)
+	default:
+		spec := validTestSpec()
+		spec.principalKind = kind
+		return spec
+	}
+}
+
 func requireInvalidContext(t *testing.T, spec executionContextSpec) {
 	t.Helper()
 	got, err := newExecutionContext(spec)
@@ -31,17 +64,22 @@ func requireInvalidContext(t *testing.T, spec executionContextSpec) {
 
 func assertNoAuthority(t *testing.T, got ExecutionContext) {
 	t.Helper()
+	assertNoAuthorityPointer(t, &got)
+}
+
+func assertNoAuthorityPointer(t *testing.T, got *ExecutionContext) {
+	t.Helper()
 	if got.Valid() {
 		t.Fatal("ExecutionContext.Valid = true, want false")
 	}
 	if got.PrincipalKind() != "" || got.PrincipalID() != "" || got.ActualActorID() != "" {
 		t.Fatalf("invalid ExecutionContext exposed principal evidence: kind=%q principal=%q actor=%q", got.PrincipalKind(), got.PrincipalID(), got.ActualActorID())
 	}
-	if source := got.AuthenticationSource(); source != (AuthenticationSource{}) || source.Type() != "" || source.ID() != "" {
-		t.Fatalf("invalid ExecutionContext authentication source = %#v, want zero", source)
+	if source := got.AuthenticationSource(); source != nil {
+		t.Fatalf("invalid ExecutionContext authentication source = %#v, want absent", source)
 	}
-	if privileges := got.Privileges(); privileges != (PrivilegeMetadata{}) || privileges.OrganizationRole() != "" || privileges.PlatformAdmin() {
-		t.Fatalf("invalid ExecutionContext privileges = %#v, want zero", privileges)
+	if privileges := got.Privileges(); privileges != nil {
+		t.Fatalf("invalid ExecutionContext privileges = %#v, want absent", privileges)
 	}
 	if got.AuthorityMode() != "" {
 		t.Fatalf("invalid ExecutionContext authority mode = %q, want zero", got.AuthorityMode())
@@ -71,8 +109,7 @@ func TestPrincipalKindValidation(t *testing.T) {
 	}
 	for _, kind := range validKinds {
 		t.Run(string(kind), func(t *testing.T) {
-			spec := validTestSpec()
-			spec.principalKind = kind
+			spec := validTestSpecForPrincipal(kind)
 			got, err := newExecutionContext(spec)
 			if err != nil {
 				t.Fatalf("newExecutionContext: %v", err)
@@ -121,6 +158,12 @@ func TestAuthorityModeOrganizationMatrix(t *testing.T) {
 			spec := validTestSpec()
 			spec.authorityMode = test.mode
 			spec.effectiveOrganizationID = test.orgID
+			switch test.mode {
+			case AuthorityModeOrganizationScoped:
+				spec.organizationRole = organization.OrganizationRoleMember
+			case AuthorityModePlatformGlobal:
+				spec.platformAdmin = true
+			}
 			got, err := newExecutionContext(spec)
 			if test.wantErr {
 				if err == nil {
@@ -222,6 +265,19 @@ func TestAssignmentGenerationEvidence(t *testing.T) {
 			requireInvalidContext(t, spec)
 		})
 	}
+
+	for _, kind := range []PrincipalKind{
+		PrincipalKindIntegration,
+		PrincipalKindOrganizationSystem,
+		PrincipalKindMachine,
+		PrincipalKindPlatformSystem,
+	} {
+		t.Run("reject_non_human_"+string(kind), func(t *testing.T) {
+			spec := validTestSpecForPrincipal(kind)
+			spec.assignmentGeneration = pointerTo(int64(1))
+			requireInvalidContext(t, spec)
+		})
+	}
 }
 
 func TestPlatformAdminAssumptionEvidence(t *testing.T) {
@@ -237,7 +293,7 @@ func TestPlatformAdminAssumptionEvidence(t *testing.T) {
 
 	for _, value := range []string{"assumption:Case-Ä", "550e8400-e29b-41d4-a716-446655440000"} {
 		t.Run("valid", func(t *testing.T) {
-			spec := validTestSpec()
+			spec := structuralTestSpec(PrincipalKindHuman, AuthorityModeOrganizationScoped, organization.OrganizationRoleNone, true, true)
 			spec.platformAdminAssumptionID = &value
 			got, err := newExecutionContext(spec)
 			if err != nil {
@@ -251,51 +307,209 @@ func TestPlatformAdminAssumptionEvidence(t *testing.T) {
 
 	for _, value := range []string{"", "bad\x00assumption", string([]byte{0xff})} {
 		t.Run("invalid", func(t *testing.T) {
-			spec := validTestSpec()
+			spec := structuralTestSpec(PrincipalKindHuman, AuthorityModeOrganizationScoped, organization.OrganizationRoleNone, true, true)
 			spec.platformAdminAssumptionID = &value
 			requireInvalidContext(t, spec)
 		})
 	}
 }
 
-func TestPrivilegeMetadataIsBoundedAndNotInferred(t *testing.T) {
-	roles := []organization.OrganizationRole{
-		organization.OrganizationRoleMember,
-		organization.OrganizationRoleAdmin,
-		organization.OrganizationRoleNone,
+func TestHumanPrincipalPrivilegeAuthorityMatrix(t *testing.T) {
+	tests := []struct {
+		name          string
+		mode          AuthorityMode
+		role          organization.OrganizationRole
+		platformAdmin bool
+		assumption    bool
+		wantValid     bool
+	}{
+		{name: "ORG_SCOPED member ordinary", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleMember, wantValid: true},
+		{name: "ORG_SCOPED admin ordinary", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleAdmin, wantValid: true},
+		{name: "ORG_SCOPED none ordinary", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone},
+		{name: "ORG_SCOPED PlatformAdmin assumed", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, platformAdmin: true, assumption: true, wantValid: true},
+		{name: "ORG_SCOPED PlatformAdmin without assumption", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, platformAdmin: true},
+		{name: "ORG_SCOPED assumption without PlatformAdmin", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, assumption: true},
+		{name: "ORG_SCOPED assumed member", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleMember, platformAdmin: true, assumption: true},
+		{name: "ORG_SCOPED assumed admin", mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleAdmin, platformAdmin: true, assumption: true},
+		{name: "DEFAULT_RESTRICTED none", mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleNone, wantValid: true},
+		{name: "DEFAULT_RESTRICTED PlatformAdmin inert", mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleNone, platformAdmin: true, wantValid: true},
+		{name: "DEFAULT_RESTRICTED member", mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleMember},
+		{name: "DEFAULT_RESTRICTED admin", mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleAdmin},
+		{name: "DEFAULT_RESTRICTED assumption", mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleNone, platformAdmin: true, assumption: true},
+		{name: "PLATFORM_GLOBAL PlatformAdmin", mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone, platformAdmin: true, wantValid: true},
+		{name: "PLATFORM_GLOBAL non PlatformAdmin", mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone},
+		{name: "PLATFORM_GLOBAL member", mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleMember, platformAdmin: true},
+		{name: "PLATFORM_GLOBAL admin", mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleAdmin, platformAdmin: true},
+		{name: "PLATFORM_GLOBAL assumption", mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone, platformAdmin: true, assumption: true},
 	}
-	for _, role := range roles {
-		t.Run(string(role), func(t *testing.T) {
-			spec := validTestSpec()
-			spec.organizationRole = role
-			spec.platformAdmin = role == organization.OrganizationRoleNone
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := structuralTestSpec(PrincipalKindHuman, test.mode, test.role, test.platformAdmin, test.assumption)
 			got, err := newExecutionContext(spec)
+			if !test.wantValid {
+				if err == nil {
+					t.Fatal("newExecutionContext error = nil, want structural rejection")
+				}
+				assertNoAuthority(t, got)
+				return
+			}
 			if err != nil {
 				t.Fatalf("newExecutionContext: %v", err)
 			}
+			if !got.Valid() {
+				t.Fatal("ExecutionContext.Valid = false, want true")
+			}
 			privileges := got.Privileges()
-			if privileges.OrganizationRole() != role || privileges.PlatformAdmin() != spec.platformAdmin {
-				t.Fatalf("Privileges = (%q, %t), want (%q, %t)", privileges.OrganizationRole(), privileges.PlatformAdmin(), role, spec.platformAdmin)
+			if privileges.OrganizationRole() != test.role || privileges.PlatformAdmin() != test.platformAdmin {
+				t.Fatalf("Privileges = (%q, %t), want (%q, %t)", privileges.OrganizationRole(), privileges.PlatformAdmin(), test.role, test.platformAdmin)
+			}
+		})
+	}
+}
+
+func TestNonHumanPrincipalPrivilegeAuthorityMatrix(t *testing.T) {
+	tests := []struct {
+		name          string
+		kind          PrincipalKind
+		mode          AuthorityMode
+		role          organization.OrganizationRole
+		platformAdmin bool
+		assumption    bool
+		wantValid     bool
+	}{
+		{name: "INTEGRATION ORG_SCOPED", kind: PrincipalKindIntegration, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, wantValid: true},
+		{name: "INTEGRATION role", kind: PrincipalKindIntegration, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleMember},
+		{name: "INTEGRATION PlatformAdmin", kind: PrincipalKindIntegration, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, platformAdmin: true},
+		{name: "INTEGRATION assumption", kind: PrincipalKindIntegration, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, assumption: true},
+		{name: "INTEGRATION DEFAULT_RESTRICTED", kind: PrincipalKindIntegration, mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleNone},
+		{name: "INTEGRATION PLATFORM_GLOBAL", kind: PrincipalKindIntegration, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone},
+		{name: "ORG_SYSTEM ORG_SCOPED", kind: PrincipalKindOrganizationSystem, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, wantValid: true},
+		{name: "ORG_SYSTEM DEFAULT_RESTRICTED", kind: PrincipalKindOrganizationSystem, mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleNone},
+		{name: "ORG_SYSTEM PLATFORM_GLOBAL", kind: PrincipalKindOrganizationSystem, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone},
+		{name: "ORG_SYSTEM role", kind: PrincipalKindOrganizationSystem, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleAdmin},
+		{name: "ORG_SYSTEM PlatformAdmin", kind: PrincipalKindOrganizationSystem, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, platformAdmin: true},
+		{name: "ORG_SYSTEM assumption", kind: PrincipalKindOrganizationSystem, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, assumption: true},
+		{name: "PLATFORM_SYSTEM PLATFORM_GLOBAL", kind: PrincipalKindPlatformSystem, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone, wantValid: true},
+		{name: "PLATFORM_SYSTEM ORG_SCOPED", kind: PrincipalKindPlatformSystem, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone},
+		{name: "PLATFORM_SYSTEM DEFAULT_RESTRICTED", kind: PrincipalKindPlatformSystem, mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleNone},
+		{name: "PLATFORM_SYSTEM role", kind: PrincipalKindPlatformSystem, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleMember},
+		{name: "PLATFORM_SYSTEM PlatformAdmin", kind: PrincipalKindPlatformSystem, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone, platformAdmin: true},
+		{name: "PLATFORM_SYSTEM assumption", kind: PrincipalKindPlatformSystem, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone, assumption: true},
+		{name: "MACHINE ORG_SCOPED", kind: PrincipalKindMachine, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, wantValid: true},
+		{name: "MACHINE PLATFORM_GLOBAL", kind: PrincipalKindMachine, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone, wantValid: true},
+		{name: "MACHINE DEFAULT_RESTRICTED", kind: PrincipalKindMachine, mode: AuthorityModeDefaultRestricted, role: organization.OrganizationRoleNone},
+		{name: "MACHINE role", kind: PrincipalKindMachine, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleAdmin},
+		{name: "MACHINE PlatformAdmin", kind: PrincipalKindMachine, mode: AuthorityModePlatformGlobal, role: organization.OrganizationRoleNone, platformAdmin: true},
+		{name: "MACHINE assumption", kind: PrincipalKindMachine, mode: AuthorityModeOrganizationScoped, role: organization.OrganizationRoleNone, assumption: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := structuralTestSpec(test.kind, test.mode, test.role, test.platformAdmin, test.assumption)
+			got, err := newExecutionContext(spec)
+			if !test.wantValid {
+				if err == nil {
+					t.Fatal("newExecutionContext error = nil, want structural rejection")
+				}
+				assertNoAuthority(t, got)
+				return
+			}
+			if err != nil {
+				t.Fatalf("newExecutionContext: %v", err)
+			}
+			if !got.Valid() {
+				t.Fatal("ExecutionContext.Valid = false, want true")
 			}
 		})
 	}
 
-	normalID := uuid.MustParse("cc93a9e6-31d0-411b-a78f-ddf471c9231d")
 	spec := validTestSpec()
-	spec.authorityMode = AuthorityModeOrganizationScoped
-	spec.effectiveOrganizationID = &normalID
-	spec.organizationRole = organization.OrganizationRoleNone
-	got, err := newExecutionContext(spec)
-	if err != nil {
-		t.Fatalf("newExecutionContext with explicit NONE role: %v", err)
-	}
-	if got.Privileges().OrganizationRole() != organization.OrganizationRoleNone {
-		t.Fatalf("ORG_SCOPED role = %q, want explicit NONE without inference", got.Privileges().OrganizationRole())
-	}
-
-	spec = validTestSpec()
 	spec.organizationRole = organization.OrganizationRole("UNKNOWN")
 	requireInvalidContext(t, spec)
+}
+
+func TestAccessorFailClosedMatrix(t *testing.T) {
+	var nilContext *ExecutionContext
+	var nilSource *AuthenticationSource
+	var nilPrivileges *PrivilegeMetadata
+
+	nilCalls := []struct {
+		name string
+		call func()
+	}{
+		{name: "ExecutionContext.Valid", call: func() { _ = nilContext.Valid() }},
+		{name: "ExecutionContext.PrincipalKind", call: func() { _ = nilContext.PrincipalKind() }},
+		{name: "ExecutionContext.PrincipalID", call: func() { _ = nilContext.PrincipalID() }},
+		{name: "ExecutionContext.ActualActorID", call: func() { _ = nilContext.ActualActorID() }},
+		{name: "ExecutionContext.AuthenticationSource", call: func() { _ = nilContext.AuthenticationSource() }},
+		{name: "ExecutionContext.Privileges", call: func() { _ = nilContext.Privileges() }},
+		{name: "ExecutionContext.AuthorityMode", call: func() { _ = nilContext.AuthorityMode() }},
+		{name: "ExecutionContext.EffectiveOrganizationID", call: func() { _, _ = nilContext.EffectiveOrganizationID() }},
+		{name: "ExecutionContext.AssignmentGeneration", call: func() { _, _ = nilContext.AssignmentGeneration() }},
+		{name: "ExecutionContext.PlatformAdminAssumptionID", call: func() { _, _ = nilContext.PlatformAdminAssumptionID() }},
+		{name: "AuthenticationSource.Type", call: func() { _ = nilSource.Type() }},
+		{name: "AuthenticationSource.ID", call: func() { _ = nilSource.ID() }},
+		{name: "PrivilegeMetadata.OrganizationRole", call: func() { _ = nilPrivileges.OrganizationRole() }},
+		{name: "PrivilegeMetadata.PlatformAdmin", call: func() { _ = nilPrivileges.PlatformAdmin() }},
+	}
+	for _, test := range nilCalls {
+		t.Run("nil_"+test.name, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Fatalf("nil-pointer accessor panicked: %v", recovered)
+				}
+			}()
+			test.call()
+		})
+	}
+
+	assertNoAuthorityPointer(t, nilContext)
+	zeroContext := ExecutionContext{}
+	assertNoAuthorityPointer(t, &zeroContext)
+	zeroSource := AuthenticationSource{}
+	if zeroSource.Type() != "" || zeroSource.ID() != "" || nilSource.Type() != "" || nilSource.ID() != "" {
+		t.Fatal("nil or zero AuthenticationSource exposed evidence")
+	}
+	zeroPrivileges := PrivilegeMetadata{}
+	if zeroPrivileges.OrganizationRole() != "" || zeroPrivileges.PlatformAdmin() || nilPrivileges.OrganizationRole() != "" || nilPrivileges.PlatformAdmin() {
+		t.Fatal("nil or zero PrivilegeMetadata exposed evidence")
+	}
+
+	spec := structuralTestSpec(PrincipalKindHuman, AuthorityModeOrganizationScoped, organization.OrganizationRoleMember, false, false)
+	spec.assignmentGeneration = pointerTo(int64(23))
+	validContext, err := newExecutionContext(spec)
+	if err != nil {
+		t.Fatalf("newExecutionContext: %v", err)
+	}
+	if !validContext.Valid() || validContext.PrincipalKind() != PrincipalKindHuman || validContext.PrincipalID() != spec.principalID ||
+		validContext.ActualActorID() != spec.actualActorID || validContext.AuthorityMode() != AuthorityModeOrganizationScoped {
+		t.Fatal("valid ExecutionContext accessors did not return accepted evidence")
+	}
+	if source := validContext.AuthenticationSource(); source == nil || source.Type() != spec.authenticationSourceType || source.ID() != spec.authenticationSourceID {
+		t.Fatalf("AuthenticationSource = %#v, want accepted evidence", source)
+	}
+	if privileges := validContext.Privileges(); privileges == nil || privileges.OrganizationRole() != organization.OrganizationRoleMember || privileges.PlatformAdmin() {
+		t.Fatalf("Privileges = %#v, want ordinary member evidence", privileges)
+	}
+	if organizationID, present := validContext.EffectiveOrganizationID(); !present || organizationID != *spec.effectiveOrganizationID {
+		t.Fatalf("EffectiveOrganizationID = (%s, %t), want (%s, true)", organizationID, present, *spec.effectiveOrganizationID)
+	}
+	if generation, present := validContext.AssignmentGeneration(); !present || generation != 23 {
+		t.Fatalf("AssignmentGeneration = (%d, %t), want (23, true)", generation, present)
+	}
+	if assumptionID, present := validContext.PlatformAdminAssumptionID(); present || assumptionID != "" {
+		t.Fatalf("PlatformAdminAssumptionID = (%q, %t), want absent", assumptionID, present)
+	}
+
+	assumedSpec := structuralTestSpec(PrincipalKindHuman, AuthorityModeOrganizationScoped, organization.OrganizationRoleNone, true, true)
+	assumedContext, err := newExecutionContext(assumedSpec)
+	if err != nil {
+		t.Fatalf("newExecutionContext assumed: %v", err)
+	}
+	if assumptionID, present := assumedContext.PlatformAdminAssumptionID(); !present || assumptionID != *assumedSpec.platformAdminAssumptionID {
+		t.Fatalf("PlatformAdminAssumptionID = (%q, %t), want (%q, true)", assumptionID, present, *assumedSpec.platformAdminAssumptionID)
+	}
 }
 
 func TestExecutionContextIsImmutableByValue(t *testing.T) {
@@ -307,6 +521,7 @@ func TestExecutionContextIsImmutableByValue(t *testing.T) {
 	spec.effectiveOrganizationID = &organizationID
 	spec.assignmentGeneration = &generation
 	spec.platformAdminAssumptionID = &assumptionID
+	spec.platformAdmin = true
 	spec.authenticationSourceID = "source:original"
 
 	got, err := newExecutionContext(spec)
@@ -340,6 +555,47 @@ func TestExecutionContextIsImmutableByValue(t *testing.T) {
 	}
 	if got.AuthenticationSource().ID() != "source:original" {
 		t.Fatalf("authentication source identity changed to %q", got.AuthenticationSource().ID())
+	}
+	returnedSource := got.AuthenticationSource()
+	returnedPrivileges := got.Privileges()
+	returnedSource.sourceID = "source:returned-copy-changed"
+	returnedPrivileges.organizationRole = organization.OrganizationRoleAdmin
+	returnedPrivileges.platformAdmin = false
+	if got.AuthenticationSource().ID() != "source:original" {
+		t.Fatalf("returned AuthenticationSource mutated internal identity to %q", got.AuthenticationSource().ID())
+	}
+	if got.Privileges().OrganizationRole() != organization.OrganizationRoleNone || !got.Privileges().PlatformAdmin() {
+		t.Fatalf("returned PrivilegeMetadata mutated internal evidence to (%q, %t)", got.Privileges().OrganizationRole(), got.Privileges().PlatformAdmin())
+	}
+	if !reflect.DeepEqual(got, original) {
+		t.Fatalf("ExecutionContext changed after returned-copy mutation: got %#v, want %#v", got, original)
+	}
+}
+
+func TestSerializationCannotMintAuthority(t *testing.T) {
+	valid, err := newExecutionContext(structuralTestSpec(PrincipalKindHuman, AuthorityModeOrganizationScoped, organization.OrganizationRoleMember, false, false))
+	if err != nil {
+		t.Fatalf("newExecutionContext: %v", err)
+	}
+
+	encodedJSON, err := json.Marshal(valid) //nolint:staticcheck // The test proves private trust state is not serialized.
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var restoredFromJSON ExecutionContext
+	if err := json.Unmarshal(encodedJSON, &restoredFromJSON); err != nil { //nolint:staticcheck // The test proves no authority is restored.
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	assertNoAuthority(t, restoredFromJSON)
+	forgedJSON := []byte(`{"valid":true,"principalKind":"HUMAN","authorityMode":"PLATFORM_GLOBAL"}`)
+	if err := json.Unmarshal(forgedJSON, &restoredFromJSON); err != nil { //nolint:staticcheck // The test exercises an intentionally opaque type.
+		t.Fatalf("json.Unmarshal forged payload: %v", err)
+	}
+	assertNoAuthority(t, restoredFromJSON)
+
+	var encodedGob bytes.Buffer
+	if err := gob.NewEncoder(&encodedGob).Encode(valid); err == nil {
+		t.Fatal("gob encoded an ExecutionContext with only private trust-bearing state")
 	}
 }
 
