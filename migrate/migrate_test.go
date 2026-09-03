@@ -89,7 +89,7 @@ func TestMSOnCallPersistenceMigrationsUseTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range migrations[len(migrations)-2:] {
+	for _, migration := range migrations[len(migrations)-3:] {
 		if migration.Up.disableTx || migration.Down.disableTx {
 			t.Fatalf("MS OnCall persistence migration %q must use transactions for Up and Down", migration.ID)
 		}
@@ -98,7 +98,7 @@ func TestMSOnCallPersistenceMigrationsUseTransactions(t *testing.T) {
 		}
 	}
 	latest := migrations[len(migrations)-1]
-	if latest.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" {
+	if latest.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" {
 		t.Fatalf("latest migration = %q", latest.ID)
 	}
 }

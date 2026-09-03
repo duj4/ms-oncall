@@ -237,3 +237,53 @@ Engine work, Gateway integration, or production readiness.
 The highest valid capability claim is:
 **UserOrganizationAssignment additive persistence foundation exists for
 explicitly persisted rows.**
+
+## Canonical position 278: Human security generation persistence foundation
+
+Bundle `ms-oncall-human-security-generation-persistence-foundation-v1`
+appends one MS OnCall migration at canonical position 278:
+`20260903184951-ms-oncall-human-security-generation-persistence.sql`, exact
+SHA-256
+`442b919a8b001b9cf6ea1a118b0a5ebe7d6b674483ca867e1c264efb7e854d16`.
+It binds to Core base commit
+`bbdaebfe27a74643e8cdd03d27845ff76e69771b`, base tree
+`364ad3fa042b186c3e32b3ee3e4bc25f529c925e`, and Project authorization
+commit `3a7bd58b9d1a3c5e866b402f6600e9e416ae2705`, authorization tree
+`588b843dd81fb81cdd2ce2aa3e30464bfdb05e10`.
+
+The bundle depends exactly on accepted bundle
+`ms-oncall-user-organization-assignment-persistence-foundation-v1`, migration
+`20260901220323-ms-oncall-user-organization-assignment-persistence.sql`,
+checksum
+`b9bbade729665431c23c74c689aa90f1c0ba484678026b6a6398b649f0e21b8e`.
+Its dependency evidence records that it appends only after the accepted
+UserOrganizationAssignment persistence foundation. Positions 1 through 277
+remain unchanged, and the permanent provenance-Foundation boundary remains
+position 275.
+
+The migration adds at most one explicitly persisted human security generation
+row per global User. Generation begins at one. There is no migration backfill,
+User-creation trigger, login hook, or missing-state fallback. The database
+rejects non-one inserts, User identity mutation, unchanged or decreasing
+generation, skipped generation, and advancement past the PostgreSQL `bigint`
+maximum. The only accepted update advances generation by exactly one. Deleting
+the global User cascades its sidecar row.
+
+The invariant trigger is explicitly bound to `public`, has fixed
+`search_path=pg_catalog, pg_temp`, uses no `SECURITY DEFINER`, and resolves no
+application object through ambient search path. Trigger rejections use stable
+SQLSTATE `23514` constraint, schema, table, and column identities.
+
+The additive internal User Store seam supports only explicit create, read, and
+expected-generation guarded advance. Loaded zero, negative, or nil-identity
+state fails closed. A missing row remains NotFound, a stale guarded write is
+not retried, and `math.MaxInt64` is rejected before increment SQL is issued.
+Existing `users.role` writes neither create nor advance this sidecar state.
+
+This position adds no session persistence, issuance, revocation, authentication
+or OIDC wiring, runtime consumer, ExecutionContext construction, role or
+privilege coupling, PlatformAdmin grant or assumption semantics, authorization
+effect, API, GraphQL, UI, Engine behavior, or Gateway behavior.
+
+The highest valid capability claim is: **Human security generation additive
+persistence foundation exists for explicitly persisted rows.**

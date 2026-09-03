@@ -1599,6 +1599,11 @@ type UserFavorite struct {
 	UserID                uuid.UUID
 }
 
+type UserHumanSecurityGeneration struct {
+	HumanSecurityGeneration int64
+	UserID                  uuid.UUID
+}
+
 type UserNotificationRule struct {
 	ContactMethodID uuid.UUID
 	CreatedAt       sql.NullTime
