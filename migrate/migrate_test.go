@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -80,7 +81,7 @@ func TestProvenanceFoundationMigrationUsesTransaction(t *testing.T) {
 	}
 }
 
-func TestMSOnCallPersistenceMigrationsUseTransactions(t *testing.T) {
+func TestMSOnCallTailMigrationsUseTransactions(t *testing.T) {
 	history, err := loadEmbeddedHistory()
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestMSOnCallPersistenceMigrationsUseTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range migrations[len(migrations)-3:] {
+	for _, migration := range migrations[len(migrations)-4:] {
 		if migration.Up.disableTx || migration.Down.disableTx {
 			t.Fatalf("MS OnCall persistence migration %q must use transactions for Up and Down", migration.ID)
 		}
@@ -98,8 +99,28 @@ func TestMSOnCallPersistenceMigrationsUseTransactions(t *testing.T) {
 		}
 	}
 	latest := migrations[len(migrations)-1]
-	if latest.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" {
+	if latest.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
 		t.Fatalf("latest migration = %q", latest.ID)
+	}
+}
+
+func TestGenerationRetirementDownRestoresExactPosition278Definition(t *testing.T) {
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := parseMigrations(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	position278 := migrations[len(migrations)-2]
+	position279 := migrations[len(migrations)-1]
+	if position278.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" ||
+		position279.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
+		t.Fatalf("unexpected retirement boundary: position278=%q position279=%q", position278.ID, position279.ID)
+	}
+	if !slices.Equal(position279.Down.statements, position278.Up.statements) {
+		t.Fatal("position-279 Down does not exactly reproduce the parsed position-278 Up definition")
 	}
 }
 

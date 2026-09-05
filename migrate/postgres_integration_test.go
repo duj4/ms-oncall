@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"slices"
@@ -18,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	userstore "github.com/target/goalert/user"
 )
 
 const postgresIntegrationEnableEnv = "MS_ONCALL_CORE_MIGRATION_TEST_POSTGRES_ENABLE"
@@ -617,7 +617,7 @@ func TestPostgresOrganizationPersistenceFreshAndFoundationUpgrade(t *testing.T) 
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	organizationFoundation := history.entries[len(history.entries)-3]
+	organizationFoundation := history.entries[len(history.entries)-4]
 	if organizationFoundation.Position != 276 || organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
 		t.Fatalf("unexpected Organization persistence entry: %#v", organizationFoundation)
 	}
@@ -642,8 +642,8 @@ func TestPostgresOrganizationPersistenceFreshAndFoundationUpgrade(t *testing.T) 
 	assertOrganizationTablesAbsent(t, ctx, upgradeURL)
 	if count, err := Up(ctx, upgradeURL, ""); err != nil {
 		t.Fatal(err)
-	} else if count != 3 {
-		t.Fatalf("Foundation-only upgrade applied %d migrations, want 3", count)
+	} else if count != 4 {
+		t.Fatalf("Foundation-only upgrade applied %d migrations, want 4", count)
 	}
 	upgradeDefault := readDefaultOrganizationIdentity(t, ctx, upgradeURL)
 	assertOrganizationPersistenceProvenance(t, ctx, upgradeURL, organizationFoundation)
@@ -667,7 +667,7 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	organizationFoundation := history.entries[len(history.entries)-3]
+	organizationFoundation := history.entries[len(history.entries)-4]
 	latest := history.latest()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -678,8 +678,8 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 	before := readDefaultOrganizationIdentity(t, ctx, testURL)
 	if count, err := Down(ctx, testURL, foundation.Name); err != nil {
 		t.Fatal(err)
-	} else if count != 3 {
-		t.Fatalf("Organization persistence rollback count = %d, want 3", count)
+	} else if count != 4 {
+		t.Fatalf("Organization persistence rollback count = %d, want 4", count)
 	}
 	assertOrganizationTablesAbsent(t, ctx, testURL)
 
@@ -705,8 +705,8 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 
 	if count, err := Up(ctx, testURL, ""); err != nil {
 		t.Fatal(err)
-	} else if count != 3 {
-		t.Fatalf("Organization persistence reapply count = %d, want 3", count)
+	} else if count != 4 {
+		t.Fatalf("Organization persistence reapply count = %d, want 4", count)
 	}
 	after := readDefaultOrganizationIdentity(t, ctx, testURL)
 	if after != before {
@@ -723,7 +723,7 @@ func TestPostgresOrganizationPersistenceRejectsPartialSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	organizationFoundation := history.entries[len(history.entries)-3]
+	organizationFoundation := history.entries[len(history.entries)-4]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -786,8 +786,8 @@ func TestPostgresUserOrganizationAssignmentFreshUpgradeRollbackReapply(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	organizationFoundation := history.entries[len(history.entries)-3]
-	assignmentFoundation := history.entries[len(history.entries)-2]
+	organizationFoundation := history.entries[len(history.entries)-4]
+	assignmentFoundation := history.entries[len(history.entries)-3]
 	if organizationFoundation.Position != 276 ||
 		organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" ||
 		assignmentFoundation.Position != 277 ||
@@ -891,19 +891,19 @@ func TestPostgresUserOrganizationAssignmentFreshUpgradeRollbackReapply(t *testin
 	assertAssignmentPersistenceProvenance(t, ctx, upgradeURL, assignmentFoundation)
 }
 
-func TestPostgresHumanSecurityGenerationFreshUpgradeRollbackReapply(t *testing.T) {
+func TestPostgresGenerationRetirementFreshUpgradeRollbackReapply(t *testing.T) {
 	baseURL := postgresIntegrationURL(t)
 	history, err := loadEmbeddedHistory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	predecessor := history.entries[len(history.entries)-2]
+	position278 := history.entries[len(history.entries)-2]
 	latest := history.latest()
-	if predecessor.Position != 277 ||
-		predecessor.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" ||
-		latest.Position != 278 ||
-		latest.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" {
-		t.Fatalf("unexpected human security generation migration boundary: predecessor=%#v latest=%#v", predecessor, latest)
+	if position278.Position != 278 ||
+		position278.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" ||
+		latest.Position != 279 ||
+		latest.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
+		t.Fatalf("unexpected generation retirement migration boundary: position278=%#v latest=%#v", position278, latest)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
@@ -915,16 +915,20 @@ func TestPostgresHumanSecurityGenerationFreshUpgradeRollbackReapply(t *testing.T
 	} else if count != len(history.entries) {
 		t.Fatalf("fresh install applied %d migrations, want %d", count, len(history.entries))
 	}
-	assertHumanSecurityGenerationTable(t, ctx, freshURL, true, 0)
-	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, freshURL, latest)
+	assertHumanSecurityGenerationCapability(t, ctx, freshURL, false, 0)
+	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, freshURL, position278)
+	assertGenerationRetirementProvenance(t, ctx, freshURL, latest)
+	assertRetainedOrganizationAssignmentObjects(t, ctx, freshURL)
 
 	upgradeURL := newPostgresTestDatabase(t, baseURL)
-	if count, err := Up(ctx, upgradeURL, predecessor.Name); err != nil {
+	if count, err := Up(ctx, upgradeURL, position278.Name); err != nil {
 		t.Fatal(err)
-	} else if count != int(predecessor.Position) {
-		t.Fatalf("position-277 setup applied %d migrations, want %d", count, predecessor.Position)
+	} else if count != int(position278.Position) {
+		t.Fatalf("position-278 setup applied %d migrations, want %d", count, position278.Position)
 	}
-	assertHumanSecurityGenerationTable(t, ctx, upgradeURL, false, 0)
+	assertHumanSecurityGenerationCapability(t, ctx, upgradeURL, true, 0)
+	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, upgradeURL, position278)
+	assertRetainedOrganizationAssignmentObjects(t, ctx, upgradeURL)
 
 	conn, err := pgx.Connect(ctx, upgradeURL)
 	if err != nil {
@@ -933,7 +937,14 @@ func TestPostgresHumanSecurityGenerationFreshUpgradeRollbackReapply(t *testing.T
 	existingUserID := uuid.New()
 	if _, err := conn.Exec(ctx, `
 		INSERT INTO public.users (id, name, email)
-		VALUES ($1, 'Pre-278 Existing User', 'pre-278-existing-user@example.invalid')
+		VALUES ($1, 'Position 278 Existing User', '')
+	`, existingUserID); err != nil {
+		conn.Close(ctx)
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO public.user_human_security_generations (user_id)
+		VALUES ($1)
 	`, existingUserID); err != nil {
 		conn.Close(ctx)
 		t.Fatal(err)
@@ -941,134 +952,358 @@ func TestPostgresHumanSecurityGenerationFreshUpgradeRollbackReapply(t *testing.T
 	if err := conn.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
+	assertHumanSecurityGenerationCapability(t, ctx, upgradeURL, true, 1)
 
 	if count, err := Up(ctx, upgradeURL, latest.Name); err != nil {
 		t.Fatal(err)
 	} else if count != 1 {
-		t.Fatalf("position-277 upgrade applied %d migrations, want 1", count)
+		t.Fatalf("position-278 to position-279 upgrade applied %d migrations, want 1", count)
 	}
-	assertHumanSecurityGenerationTable(t, ctx, upgradeURL, true, 0)
-	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, upgradeURL, latest)
+	assertHumanSecurityGenerationCapability(t, ctx, upgradeURL, false, 0)
+	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, upgradeURL, position278)
+	assertGenerationRetirementProvenance(t, ctx, upgradeURL, latest)
+	assertRetainedOrganizationAssignmentObjects(t, ctx, upgradeURL)
 
-	db, err := sql.Open("pgx", upgradeURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := userstore.NewStore(ctx, db)
-	if err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	state, err := store.CreateHumanSecurityGeneration(ctx, existingUserID)
-	if err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if state.UserID != existingUserID || state.Generation != userstore.InitialHumanSecurityGeneration {
-		db.Close()
-		t.Fatalf("explicitly created upgraded state = %#v", state)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	assertHumanSecurityGenerationTable(t, ctx, upgradeURL, true, 1)
-
-	if count, err := Down(ctx, upgradeURL, predecessor.Name); err != nil {
+	if count, err := Down(ctx, upgradeURL, position278.Name); err != nil {
 		t.Fatal(err)
 	} else if count != 1 {
-		t.Fatalf("human security generation rollback count = %d, want 1", count)
+		t.Fatalf("position-279 rollback count = %d, want 1", count)
 	}
-	assertHumanSecurityGenerationTable(t, ctx, upgradeURL, false, 0)
-
-	conn, err = pgx.Connect(ctx, upgradeURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var existingUserCount int
-	var assignmentTableExists, triggerFunctionExists bool
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.users WHERE id = $1`, existingUserID).Scan(&existingUserCount); err != nil {
-		conn.Close(ctx)
-		t.Fatal(err)
-	}
-	if err := conn.QueryRow(ctx, `
-		SELECT
-			to_regclass('public.user_organization_assignments') IS NOT NULL,
-			to_regprocedure('public.ms_oncall_enforce_user_human_security_generation_invariants()') IS NOT NULL
-	`).Scan(&assignmentTableExists, &triggerFunctionExists); err != nil {
-		conn.Close(ctx)
-		t.Fatal(err)
-	}
-	var migrationCount, provenanceCount int
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.gorp_migrations WHERE id = $1`, latest.ID).Scan(&migrationCount); err != nil {
-		conn.Close(ctx)
-		t.Fatal(err)
-	}
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.ms_oncall_migration_provenance WHERE migration_id = $1`, latest.ID).Scan(&provenanceCount); err != nil {
-		conn.Close(ctx)
-		t.Fatal(err)
-	}
-	if err := conn.Close(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if existingUserCount != 1 || !assignmentTableExists || triggerFunctionExists || migrationCount != 0 || provenanceCount != 0 {
-		t.Fatalf("rollback pre-278 state: User=%d assignment-table=%v trigger-function=%v migration/provenance=%d/%d",
-			existingUserCount, assignmentTableExists, triggerFunctionExists, migrationCount, provenanceCount)
-	}
+	assertHumanSecurityGenerationCapability(t, ctx, upgradeURL, true, 0)
+	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, upgradeURL, position278)
+	assertGenerationRetirementProvenanceAbsent(t, ctx, upgradeURL, latest)
+	assertRetainedOrganizationAssignmentObjects(t, ctx, upgradeURL)
+	assertRestoredHumanSecurityGenerationBehavior(t, ctx, upgradeURL)
 
 	if count, err := Up(ctx, upgradeURL, latest.Name); err != nil {
 		t.Fatal(err)
 	} else if count != 1 {
-		t.Fatalf("human security generation reapply count = %d, want 1", count)
+		t.Fatalf("position-279 reapply count = %d, want 1", count)
 	}
-	assertHumanSecurityGenerationTable(t, ctx, upgradeURL, true, 0)
-	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, upgradeURL, latest)
-
-	db, err = sql.Open("pgx", upgradeURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err = userstore.NewStore(ctx, db)
-	if err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	state, err = store.CreateHumanSecurityGeneration(ctx, existingUserID)
-	if err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if state.Generation != userstore.InitialHumanSecurityGeneration {
-		db.Close()
-		t.Fatalf("reapplied explicit generation = %d", state.Generation)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	assertHumanSecurityGenerationCapability(t, ctx, upgradeURL, false, 0)
+	assertHumanSecurityGenerationPersistenceProvenance(t, ctx, upgradeURL, position278)
+	assertGenerationRetirementProvenance(t, ctx, upgradeURL, latest)
+	assertRetainedOrganizationAssignmentObjects(t, ctx, upgradeURL)
 }
 
-func assertHumanSecurityGenerationTable(t *testing.T, ctx context.Context, testURL string, wantExists bool, wantRows int) {
+func assertHumanSecurityGenerationCapability(t *testing.T, ctx context.Context, testURL string, wantExists bool, wantRows int) {
 	t.Helper()
 	conn, err := pgx.Connect(ctx, testURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(ctx)
-	var exists bool
-	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.user_human_security_generations') IS NOT NULL`).Scan(&exists); err != nil {
+	var tableExists, primaryKeyIndexExists, functionExists, triggerExists bool
+	if err := conn.QueryRow(ctx, `
+		SELECT
+			to_regclass('public.user_human_security_generations') IS NOT NULL,
+			to_regclass('public.user_human_security_generations_pkey') IS NOT NULL,
+			to_regprocedure('public.ms_oncall_enforce_user_human_security_generation_invariants()') IS NOT NULL,
+			EXISTS (
+				SELECT 1
+				FROM pg_catalog.pg_trigger trigger
+				JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
+				JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+				WHERE namespace.nspname = 'public'
+					AND relation.relname = 'user_human_security_generations'
+					AND trigger.tgname = 'user_human_security_generations_enforce_invariants'
+					AND NOT trigger.tgisinternal
+			)
+	`).Scan(&tableExists, &primaryKeyIndexExists, &functionExists, &triggerExists); err != nil {
 		t.Fatal(err)
 	}
-	if exists != wantExists {
-		t.Fatalf("human security generation table exists = %v, want %v", exists, wantExists)
+	if tableExists != wantExists || primaryKeyIndexExists != wantExists || functionExists != wantExists || triggerExists != wantExists {
+		t.Fatalf("human security generation objects table/index/function/trigger = %v/%v/%v/%v, want all %v",
+			tableExists, primaryKeyIndexExists, functionExists, triggerExists, wantExists)
 	}
-	if !exists {
+	if !tableExists {
+		var ownedConstraintCount int
+		if err := conn.QueryRow(ctx, `
+			SELECT count(*)
+			FROM pg_catalog.pg_constraint
+			WHERE conname = ANY($1::text[])
+		`, []string{
+			"user_human_security_generations_pkey",
+			"user_human_security_generations_user_id_non_nil",
+			"user_human_security_generations_generation_positive",
+			"user_human_security_generations_user_id_fkey",
+		}).Scan(&ownedConstraintCount); err != nil {
+			t.Fatal(err)
+		}
+		if ownedConstraintCount != 0 {
+			t.Fatalf("retired human security generation constraints remain = %d", ownedConstraintCount)
+		}
 		return
 	}
-	var rows int
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.user_human_security_generations`).Scan(&rows); err != nil {
+
+	type columnDefinition struct {
+		name       string
+		dataType   string
+		notNull    bool
+		defaultSQL string
+	}
+	rows, err := conn.Query(ctx, `
+		SELECT attribute.attname,
+			pg_catalog.format_type(attribute.atttypid, attribute.atttypmod),
+			attribute.attnotnull,
+			COALESCE(pg_catalog.pg_get_expr(default_value.adbin, default_value.adrelid), '')
+		FROM pg_catalog.pg_attribute attribute
+		LEFT JOIN pg_catalog.pg_attrdef default_value
+			ON default_value.adrelid = attribute.attrelid
+			AND default_value.adnum = attribute.attnum
+		WHERE attribute.attrelid = 'public.user_human_security_generations'::regclass
+			AND attribute.attnum > 0
+			AND NOT attribute.attisdropped
+		ORDER BY attribute.attnum
+	`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if rows != wantRows {
-		t.Fatalf("human security generation row count = %d, want %d", rows, wantRows)
+	var columns []columnDefinition
+	for rows.Next() {
+		var column columnDefinition
+		if err := rows.Scan(&column.name, &column.dataType, &column.notNull, &column.defaultSQL); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		columns = append(columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if len(columns) != 2 ||
+		columns[0] != (columnDefinition{name: "user_id", dataType: "uuid", notNull: true}) ||
+		columns[1].name != "human_security_generation" || columns[1].dataType != "bigint" ||
+		!columns[1].notNull || columns[1].defaultSQL != "1" {
+		t.Fatalf("restored human security generation columns = %#v", columns)
+	}
+
+	type constraintDefinition struct {
+		kind       string
+		updateRule string
+		deleteRule string
+	}
+	constraints := make(map[string]constraintDefinition)
+	rows, err = conn.Query(ctx, `
+		SELECT conname, contype::text, confupdtype::text, confdeltype::text
+		FROM pg_catalog.pg_constraint
+		WHERE conrelid = 'public.user_human_security_generations'::regclass
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var name string
+		var definition constraintDefinition
+		if err := rows.Scan(&name, &definition.kind, &definition.updateRule, &definition.deleteRule); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		constraints[name] = definition
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if len(constraints) != 4 ||
+		constraints["user_human_security_generations_pkey"].kind != "p" ||
+		constraints["user_human_security_generations_user_id_non_nil"].kind != "c" ||
+		constraints["user_human_security_generations_generation_positive"].kind != "c" ||
+		constraints["user_human_security_generations_user_id_fkey"] != (constraintDefinition{kind: "f", updateRule: "r", deleteRule: "c"}) {
+		t.Fatalf("restored human security generation constraints = %#v", constraints)
+	}
+
+	var functionConfig string
+	var securityDefiner bool
+	if err := conn.QueryRow(ctx, `
+		SELECT config, procedure.prosecdef
+		FROM pg_catalog.pg_proc procedure
+		JOIN pg_catalog.pg_namespace namespace ON namespace.oid = procedure.pronamespace
+		CROSS JOIN LATERAL unnest(procedure.proconfig) AS config
+		WHERE namespace.nspname = 'public'
+			AND procedure.proname = 'ms_oncall_enforce_user_human_security_generation_invariants'
+			AND config LIKE 'search_path=%'
+	`).Scan(&functionConfig, &securityDefiner); err != nil {
+		t.Fatal(err)
+	}
+	if functionConfig != "search_path=pg_catalog, pg_temp" || securityDefiner {
+		t.Fatalf("restored trigger function hardening = config %q security-definer %v", functionConfig, securityDefiner)
+	}
+
+	var rowCount int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.user_human_security_generations`).Scan(&rowCount); err != nil {
+		t.Fatal(err)
+	}
+	if rowCount != wantRows {
+		t.Fatalf("human security generation row count = %d, want %d", rowCount, wantRows)
+	}
+}
+
+func assertRestoredHumanSecurityGenerationBehavior(t *testing.T, ctx context.Context, testURL string) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+
+	validUserID := uuid.New()
+	otherUserID := uuid.New()
+	maxUserID := uuid.New()
+	cascadeUserID := uuid.New()
+	for name, id := range map[string]uuid.UUID{
+		"Restored Valid Generation":   validUserID,
+		"Restored Other User":         otherUserID,
+		"Restored Maximum Generation": maxUserID,
+		"Restored Cascade Generation": cascadeUserID,
+	} {
+		if _, err := conn.Exec(ctx, `INSERT INTO public.users (id, name, email) VALUES ($1, $2, '')`, id, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var generation int64
+	if err := conn.QueryRow(ctx, `
+		INSERT INTO public.user_human_security_generations (user_id)
+		VALUES ($1)
+		RETURNING human_security_generation
+	`, validUserID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	if generation != 1 {
+		t.Fatalf("restored initial generation = %d, want 1", generation)
+	}
+
+	_, err = conn.Exec(ctx, `
+		INSERT INTO public.user_human_security_generations (user_id, human_security_generation)
+		VALUES ($1, 1)
+	`, uuid.Nil)
+	assertHumanSecurityGenerationPGError(t, err, humanSecurityGenerationPGErrorExpectation{
+		SQLState: "23514", ConstraintName: "user_human_security_generations_user_id_non_nil",
+		SchemaName: "public", TableName: "user_human_security_generations",
+	})
+	for _, invalid := range []int64{0, -1, 2} {
+		userID := uuid.New()
+		if _, err := conn.Exec(ctx, `INSERT INTO public.users (id, name, email) VALUES ($1, $2, '')`, userID, fmt.Sprintf("Restored Invalid Initial %d", invalid)); err != nil {
+			t.Fatal(err)
+		}
+		_, err := conn.Exec(ctx, `
+			INSERT INTO public.user_human_security_generations (user_id, human_security_generation)
+			VALUES ($1, $2)
+		`, userID, invalid)
+		assertHumanSecurityGenerationPGError(t, err, humanSecurityGenerationPGErrorExpectation{
+			SQLState: "23514", ConstraintName: "user_human_security_generations_initial_generation",
+			SchemaName: "public", TableName: "user_human_security_generations", ColumnName: "human_security_generation",
+		})
+	}
+	_, err = conn.Exec(ctx, `
+		INSERT INTO public.user_human_security_generations (user_id)
+		VALUES ($1)
+	`, uuid.New())
+	assertHumanSecurityGenerationPGError(t, err, humanSecurityGenerationPGErrorExpectation{
+		SQLState: "23503", ConstraintName: "user_human_security_generations_user_id_fkey",
+		SchemaName: "public", TableName: "user_human_security_generations",
+	})
+
+	if err := conn.QueryRow(ctx, `
+		UPDATE public.user_human_security_generations
+		SET human_security_generation = 2
+		WHERE user_id = $1
+		RETURNING human_security_generation
+	`, validUserID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	if generation != 2 {
+		t.Fatalf("restored exact generation advancement = %d, want 2", generation)
+	}
+	for _, invalid := range []int64{2, 1, 4} {
+		_, err := conn.Exec(ctx, `
+			UPDATE public.user_human_security_generations
+			SET human_security_generation = $2
+			WHERE user_id = $1
+		`, validUserID, invalid)
+		assertHumanSecurityGenerationPGError(t, err, humanSecurityGenerationPGErrorExpectation{
+			SQLState: "23514", ConstraintName: "user_human_security_generations_generation_step",
+			SchemaName: "public", TableName: "user_human_security_generations", ColumnName: "human_security_generation",
+		})
+	}
+	_, err = conn.Exec(ctx, `
+		UPDATE public.user_human_security_generations
+		SET user_id = $2, human_security_generation = 3
+		WHERE user_id = $1
+	`, validUserID, otherUserID)
+	assertHumanSecurityGenerationPGError(t, err, humanSecurityGenerationPGErrorExpectation{
+		SQLState: "23514", ConstraintName: "user_human_security_generations_user_id_immutable",
+		SchemaName: "public", TableName: "user_human_security_generations", ColumnName: "user_id",
+	})
+
+	if _, err := conn.Exec(ctx, `INSERT INTO public.user_human_security_generations (user_id) VALUES ($1)`, maxUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `ALTER TABLE public.user_human_security_generations DISABLE TRIGGER user_human_security_generations_enforce_invariants`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `
+		UPDATE public.user_human_security_generations
+		SET human_security_generation = $2
+		WHERE user_id = $1
+	`, maxUserID, int64(math.MaxInt64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `ALTER TABLE public.user_human_security_generations ENABLE TRIGGER user_human_security_generations_enforce_invariants`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = conn.Exec(ctx, `
+		UPDATE public.user_human_security_generations
+		SET human_security_generation = human_security_generation
+		WHERE user_id = $1
+	`, maxUserID)
+	assertHumanSecurityGenerationPGError(t, err, humanSecurityGenerationPGErrorExpectation{
+		SQLState: "23514", ConstraintName: "user_human_security_generations_generation_step",
+		SchemaName: "public", TableName: "user_human_security_generations", ColumnName: "human_security_generation",
+	})
+
+	if _, err := conn.Exec(ctx, `INSERT INTO public.user_human_security_generations (user_id) VALUES ($1)`, cascadeUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `DELETE FROM public.users WHERE id = $1`, cascadeUserID); err != nil {
+		t.Fatal(err)
+	}
+	var cascadeRows int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.user_human_security_generations WHERE user_id = $1`, cascadeUserID).Scan(&cascadeRows); err != nil {
+		t.Fatal(err)
+	}
+	if cascadeRows != 0 {
+		t.Fatalf("restored delete cascade left %d rows", cascadeRows)
+	}
+}
+
+type humanSecurityGenerationPGErrorExpectation struct {
+	SQLState       string
+	ConstraintName string
+	SchemaName     string
+	TableName      string
+	ColumnName     string
+}
+
+func assertHumanSecurityGenerationPGError(t *testing.T, err error, expected humanSecurityGenerationPGErrorExpectation) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("database operation unexpectedly succeeded")
+	}
+	var dbErr *pgconn.PgError
+	if !errors.As(err, &dbErr) {
+		t.Fatalf("database operation returned non-PostgreSQL error: %v", err)
+	}
+	if dbErr.Code != expected.SQLState || dbErr.ConstraintName != expected.ConstraintName ||
+		dbErr.SchemaName != expected.SchemaName || dbErr.TableName != expected.TableName ||
+		dbErr.ColumnName != expected.ColumnName {
+		t.Fatalf("PostgreSQL error metadata = code=%q constraint=%q schema=%q table=%q column=%q; want code=%q constraint=%q schema=%q table=%q column=%q: %v",
+			dbErr.Code, dbErr.ConstraintName, dbErr.SchemaName, dbErr.TableName, dbErr.ColumnName,
+			expected.SQLState, expected.ConstraintName, expected.SchemaName, expected.TableName, expected.ColumnName, err)
 	}
 }
 
@@ -1090,6 +1325,76 @@ func assertHumanSecurityGenerationPersistenceProvenance(t *testing.T, ctx contex
 	}
 	if position != 278 || origin != recordOriginCanonical || dependency != entry.DependencyEvidence {
 		t.Fatalf("human security generation provenance = position %d, origin %q, dependency %q", position, origin, dependency)
+	}
+}
+
+func assertGenerationRetirementProvenance(t *testing.T, ctx context.Context, testURL string, entry canonicalMigration) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var position int64
+	var origin, dependency string
+	if err := conn.QueryRow(ctx, `
+		SELECT canonical_position, record_origin, dependency_evidence
+		FROM public.ms_oncall_migration_provenance
+		WHERE migration_id = $1
+	`, entry.ID).Scan(&position, &origin, &dependency); err != nil {
+		t.Fatal(err)
+	}
+	if position != 279 || origin != recordOriginCanonical || dependency != entry.DependencyEvidence {
+		t.Fatalf("generation retirement provenance = position %d, origin %q, dependency %q", position, origin, dependency)
+	}
+}
+
+func assertGenerationRetirementProvenanceAbsent(t *testing.T, ctx context.Context, testURL string, entry canonicalMigration) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var migrationCount, provenanceCount int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.gorp_migrations WHERE id = $1`, entry.ID).Scan(&migrationCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.ms_oncall_migration_provenance WHERE migration_id = $1`, entry.ID).Scan(&provenanceCount); err != nil {
+		t.Fatal(err)
+	}
+	if migrationCount != 0 || provenanceCount != 0 {
+		t.Fatalf("generation retirement rollback left migration/provenance rows: %d/%d", migrationCount, provenanceCount)
+	}
+}
+
+func assertRetainedOrganizationAssignmentObjects(t *testing.T, ctx context.Context, testURL string) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var organizations, normalOrganizations, assignments bool
+	var migrationCount, provenanceCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT
+			to_regclass('public.organizations') IS NOT NULL,
+			to_regclass('public.normal_organizations') IS NOT NULL,
+			to_regclass('public.user_organization_assignments') IS NOT NULL,
+			(SELECT count(*) FROM public.gorp_migrations
+				WHERE id IN (
+					'20260901100808-ms-oncall-organization-persistence.sql',
+					'20260901220323-ms-oncall-user-organization-assignment-persistence.sql'
+				)),
+			(SELECT count(*) FROM public.ms_oncall_migration_provenance
+				WHERE canonical_position IN (276, 277))
+	`).Scan(&organizations, &normalOrganizations, &assignments, &migrationCount, &provenanceCount); err != nil {
+		t.Fatal(err)
+	}
+	if !organizations || !normalOrganizations || !assignments || migrationCount != 2 || provenanceCount != 2 {
+		t.Fatalf("retained Organization/assignment objects = %v/%v/%v migrations/provenance=%d/%d",
+			organizations, normalOrganizations, assignments, migrationCount, provenanceCount)
 	}
 }
 

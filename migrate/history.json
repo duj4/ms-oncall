@@ -1501,6 +1501,35 @@
           "sha256": "442b919a8b001b9cf6ea1a118b0a5ebe7d6b674483ca867e1c264efb7e854d16"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1",
+      "first_position": 279,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "Core Enterprise Identity & Organization Isolation Session Generation Binding and Human Security Generation Retirement Cleanup V1",
+        "base_commit": "56e688226e2dda22376e331a16961216fc0d5501",
+        "base_tree": "d15f45322f722598a483d2c3d87077cbfb848f0f",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "120852c2dc74ff474d985cde9c28282a26fbbfb9",
+        "authorization_tree": "985695a0cc16e787eeee2eb1d51a853a2d0d1ad2"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-human-security-generation-persistence-foundation-v1",
+        "migration_id": "20260903184951-ms-oncall-human-security-generation-persistence.sql",
+        "sha256": "442b919a8b001b9cf6ea1a118b0a5ebe7d6b674483ca867e1c264efb7e854d16",
+        "evidence": "APPEND_AFTER_IMMUTABLE_ACCEPTED_HUMAN_SECURITY_GENERATION_PERSISTENCE_FOUNDATION_V1"
+      },
+      "adaptation_evidence": "FORWARD_RETIREMENT_OF_SUPERSEDED_SESSION_GENERATION_BINDING_AND_HUMAN_SECURITY_GENERATION_CAPABILITIES",
+      "entries": [
+        {
+          "id": "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql",
+          "original_id": "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql",
+          "sha256": "14b6dc8797bf8a55ccc0d35737dbdafe698c9da601693ac2d651057a7c7aaf5f"
+        }
+      ]
     }
   ]
 }
