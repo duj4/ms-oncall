@@ -42,32 +42,8 @@ func TestExternalZeroValueHasNoAuthority(t *testing.T) {
 	}
 }
 
-func TestExternalZeroSessionGenerationBindingHasNoEvidence(t *testing.T) {
-	original := executioncontext.SessionGenerationBinding{}
-	copyOfBinding := original
-	if original.Valid() || copyOfBinding.Valid() {
-		t.Fatal("an externally initialized or copied zero binding is valid")
-	}
-	if value, present := original.SessionID(); present || value != uuid.Nil {
-		t.Fatalf("zero SessionID = (%s, %t), want absent", value, present)
-	}
-	if value, present := original.UserID(); present || value != uuid.Nil {
-		t.Fatalf("zero UserID = (%s, %t), want absent", value, present)
-	}
-	if value, present := original.AssignmentGeneration(); present || value != 0 {
-		t.Fatalf("zero AssignmentGeneration = (%d, %t), want absent", value, present)
-	}
-	if value, present := original.HumanSecurityGeneration(); present || value != 0 {
-		t.Fatalf("zero HumanSecurityGeneration = (%d, %t), want absent", value, present)
-	}
-	if original.CurrentAgainst(executioncontext.SessionGenerationCurrentState{}) {
-		t.Fatal("external zero binding is current")
-	}
-}
-
 func TestExternalNilPointerAccessorsFailClosed(t *testing.T) {
 	var context *executioncontext.ExecutionContext
-	var binding *executioncontext.SessionGenerationBinding
 	var source *executioncontext.AuthenticationSource
 	var privileges *executioncontext.PrivilegeMetadata
 	defer func() {
@@ -95,21 +71,6 @@ func TestExternalNilPointerAccessorsFailClosed(t *testing.T) {
 	if privileges.OrganizationRole() != "" || privileges.PlatformAdmin() {
 		t.Fatal("nil PrivilegeMetadata exposed evidence")
 	}
-	if binding.Valid() || binding.CurrentAgainst(executioncontext.SessionGenerationCurrentState{}) {
-		t.Fatal("nil SessionGenerationBinding exposed current evidence")
-	}
-	if value, present := binding.SessionID(); present || value != uuid.Nil {
-		t.Fatalf("nil SessionID = (%s, %t), want absent", value, present)
-	}
-	if value, present := binding.UserID(); present || value != uuid.Nil {
-		t.Fatalf("nil UserID = (%s, %t), want absent", value, present)
-	}
-	if value, present := binding.AssignmentGeneration(); present || value != 0 {
-		t.Fatalf("nil binding AssignmentGeneration = (%d, %t), want absent", value, present)
-	}
-	if value, present := binding.HumanSecurityGeneration(); present || value != 0 {
-		t.Fatalf("nil HumanSecurityGeneration = (%d, %t), want absent", value, present)
-	}
 }
 
 func TestTrustBearingRepresentationsHaveNoExportedFields(t *testing.T) {
@@ -117,7 +78,6 @@ func TestTrustBearingRepresentationsHaveNoExportedFields(t *testing.T) {
 		reflect.TypeOf(executioncontext.ExecutionContext{}),
 		reflect.TypeOf(executioncontext.AuthenticationSource{}),
 		reflect.TypeOf(executioncontext.PrivilegeMetadata{}),
-		reflect.TypeOf(executioncontext.SessionGenerationBinding{}),
 	}
 	for _, typ := range types {
 		t.Run(typ.Name(), func(t *testing.T) {
@@ -152,18 +112,9 @@ func TestExecutionContextReadOnlyMethodSurface(t *testing.T) {
 	})
 	assertMethodSurface(t, reflect.TypeOf((*executioncontext.AuthenticationSource)(nil)), []string{"ID", "Type"})
 	assertMethodSurface(t, reflect.TypeOf((*executioncontext.PrivilegeMetadata)(nil)), []string{"OrganizationRole", "PlatformAdmin"})
-	assertMethodSurface(t, reflect.TypeOf((*executioncontext.SessionGenerationBinding)(nil)), []string{
-		"AssignmentGeneration",
-		"CurrentAgainst",
-		"HumanSecurityGeneration",
-		"SessionID",
-		"UserID",
-		"Valid",
-	})
 	assertMethodSurface(t, reflect.TypeOf(executioncontext.ExecutionContext{}), []string{})
 	assertMethodSurface(t, reflect.TypeOf(executioncontext.AuthenticationSource{}), []string{})
 	assertMethodSurface(t, reflect.TypeOf(executioncontext.PrivilegeMetadata{}), []string{})
-	assertMethodSurface(t, reflect.TypeOf(executioncontext.SessionGenerationBinding{}), []string{})
 }
 
 func assertMethodSurface(t *testing.T, typ reflect.Type, want []string) {
@@ -181,10 +132,9 @@ func assertMethodSurface(t *testing.T, typ reflect.Type, want []string) {
 
 func TestTrustBearingTypesImplementNoUnmarshaler(t *testing.T) {
 	values := map[string]any{
-		"ExecutionContext":         (*executioncontext.ExecutionContext)(nil),
-		"AuthenticationSource":     (*executioncontext.AuthenticationSource)(nil),
-		"PrivilegeMetadata":        (*executioncontext.PrivilegeMetadata)(nil),
-		"SessionGenerationBinding": (*executioncontext.SessionGenerationBinding)(nil),
+		"ExecutionContext":     (*executioncontext.ExecutionContext)(nil),
+		"AuthenticationSource": (*executioncontext.AuthenticationSource)(nil),
+		"PrivilegeMetadata":    (*executioncontext.PrivilegeMetadata)(nil),
 	}
 	for name, value := range values {
 		t.Run(name, func(t *testing.T) {
@@ -236,7 +186,7 @@ func returnedTrustBearingType(expression ast.Expr) (string, bool) {
 	switch value := expression.(type) {
 	case *ast.Ident:
 		switch value.Name {
-		case "ExecutionContext", "SessionGenerationBinding":
+		case "ExecutionContext":
 			return value.Name, true
 		default:
 			return "", false

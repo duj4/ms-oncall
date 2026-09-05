@@ -287,3 +287,51 @@ effect, API, GraphQL, UI, Engine behavior, or Gateway behavior.
 
 The highest valid capability claim is: **Human security generation additive
 persistence foundation exists for explicitly persisted rows.**
+
+## Canonical position 279: Session generation binding and human security generation retirement cleanup
+
+Bundle
+`ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1`
+appends one MS OnCall migration at canonical position 279:
+`20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql`,
+exact SHA-256
+`14b6dc8797bf8a55ccc0d35737dbdafe698c9da601693ac2d651057a7c7aaf5f`.
+It binds to Core base commit
+`56e688226e2dda22376e331a16961216fc0d5501`, base tree
+`d15f45322f722598a483d2c3d87077cbfb848f0f`, and merged Project
+authorization commit `120852c2dc74ff474d985cde9c28282a26fbbfb9`, authorization
+tree `985695a0cc16e787eeee2eb1d51a853a2d0d1ad2`.
+
+The bundle depends exactly on immutable accepted bundle
+`ms-oncall-human-security-generation-persistence-foundation-v1`, migration
+`20260903184951-ms-oncall-human-security-generation-persistence.sql`, checksum
+`442b919a8b001b9cf6ea1a118b0a5ebe7d6b674483ca867e1c264efb7e854d16`.
+Positions 1 through 278 and their provenance remain unchanged; position 278
+continues to record truthfully that it introduced the HumanSecurityGeneration
+persistence capability.
+
+The position-279 Up migration removes only the
+`user_human_security_generations_enforce_invariants` trigger,
+`public.ms_oncall_enforce_user_human_security_generation_invariants()`
+function, and `public.user_human_security_generations` table. Removing the
+table also removes its owned columns, defaults, primary-key constraint/index,
+User foreign key, non-nil User constraint, and positive-generation constraint.
+
+The Down migration reproduces the complete position-278 Up definition. It
+restores the same table, columns, default, primary key, User foreign key with
+`ON UPDATE RESTRICT` and `ON DELETE CASCADE`, checks, hardened trigger function,
+and trigger. Restored database behavior again permits only an initial generation
+of one and updates that advance by exactly one, while rejecting User identity
+changes and advancement past PostgreSQL `bigint` maximum.
+
+The final position-279 schema retains Organization,
+UserOrganizationAssignment, positive AssignmentGeneration and its guarded CAS,
+deterministic OrganizationAssignmentResolver, typed ExecutionContext assignment
+evidence, Policy Scope Eligibility, Default restrictions, Organization roles,
+and PlatformAdmin separation. It contains no active HumanSecurityGeneration
+table/model/API and no SessionGenerationBinding API. This retirement implements
+no replacement Current Authority or Complete Operation Guard runtime behavior.
+
+The highest valid capability claim is: **The superseded session-generation
+binding contract and generic human-security-generation source/current-schema
+capability are retired forward, with exact position-278 rollback restoration.**
