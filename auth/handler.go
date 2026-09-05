@@ -33,6 +33,11 @@ const (
 	v1CookieName = "goalert_session"
 )
 
+// ErrCurrentUserSessionNotFound indicates that a session is not present in
+// the canonical durable session store. Session deletion is the existing
+// revocation mechanism, so a revoked session has the same result.
+var ErrCurrentUserSessionNotFound = errors.New("current user session not found")
+
 type registeredProvider struct {
 	// ID is the unique identifier of the provider.
 	ID string
@@ -149,6 +154,37 @@ type UserSession struct {
 	CreatedAt    time.Time
 	LastAccessAt time.Time
 	UserID       string
+}
+
+// CurrentUserSession is the minimal current durable session state used by the
+// separately constructed operation-local human authority context. It carries
+// no Organization authority or session-lifetime authority snapshot.
+type CurrentUserSession struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	UserRole permission.Role
+}
+
+// FindCurrentUserSession reads the existing canonical session-validity state.
+// A session is current only while its row exists and still joins to its global
+// User. The existing bounded last-access update remains part of this lookup.
+func (h *Handler) FindCurrentUserSession(ctx context.Context, sessionID uuid.UUID) (*CurrentUserSession, error) {
+	if h == nil || h.fetchSession == nil || sessionID == uuid.Nil {
+		return nil, ErrCurrentUserSessionNotFound
+	}
+
+	session := &CurrentUserSession{ID: sessionID}
+	err := h.fetchSession.QueryRowContext(ctx, sessionID.String()).Scan(&session.UserID, &session.UserRole)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrCurrentUserSessionNotFound
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "read current user session")
+	}
+	if session.UserID == uuid.Nil {
+		return nil, errors.New("current user session has invalid user identity")
+	}
+	return session, nil
 }
 
 func (h *Handler) EndUserSessionTx(ctx context.Context, tx *sql.Tx, id ...string) error {
@@ -617,9 +653,7 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 		return nil, err
 	}
 
-	var userID uuid.UUID
-	var userRole permission.Role
-	err = h.fetchSession.QueryRowContext(ctx, tok.ID.String()).Scan(&userID, &userRole)
+	session, err := h.FindCurrentUserSession(ctx, tok.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -640,8 +674,8 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 
 	return permission.UserSourceContext(
 		ctx,
-		userID.String(),
-		userRole,
+		session.UserID.String(),
+		session.UserRole,
 		&permission.SourceInfo{
 			Type: permission.SourceTypeAuthProvider,
 			ID:   tok.ID.String(),
