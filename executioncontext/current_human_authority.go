@@ -45,6 +45,17 @@ type currentHumanOrganizationReader interface {
 // current durable state for one operation. It retains no result or
 // session-lifetime Organization authority between calls.
 //
+// Foundation-phase security boundary: Construct independently re-reads the
+// durable session, User, assignment, and Organization state, but public
+// permission metadata (including User ID, AuthProvider source, and session ID)
+// is not unforgeable proof that a signed session credential was presented and
+// verified. This constructor therefore MUST NOT be wired into a runtime or
+// business request path until centralized authenticated request composition
+// closes that provenance boundary. Closure is required before the first such
+// consumer and no later than HTTP Intake / Composition. The intended flow is
+// canonical credential authentication, then current-authority construction,
+// then delivery of the typed ExecutionContext to runtime code.
+//
 // Its zero value is invalid. The public constructor accepts only the canonical
 // Core stores; the interface-backed seam remains package-private for focused
 // tests and prevents arbitrary packages from supplying authority assertions.
