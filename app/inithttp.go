@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/target/goalert/app/csp"
 	"github.com/target/goalert/config"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/expflag"
 	"github.com/target/goalert/genericapi"
 	"github.com/target/goalert/grafana"
@@ -24,6 +26,11 @@ import (
 )
 
 func (app *App) initHTTP(ctx context.Context) error {
+	currentHumanAuthority, err := executioncontext.NewCurrentHumanAuthorityConstructor(app.UserStore, app.OrganizationStore)
+	if err != nil {
+		return errors.Wrap(err, "init current human authority composition")
+	}
+
 	middleware := []func(http.Handler) http.Handler{
 		func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -96,6 +103,9 @@ func (app *App) initHTTP(ctx context.Context) error {
 
 		// authenticate requests
 		app.AuthHandler.WrapHandler,
+
+		// compose current ordinary-human authority from authenticated identity
+		currentHumanAuthority.WrapHandler,
 
 		// add auth info to request logs
 		logRequestAuth,

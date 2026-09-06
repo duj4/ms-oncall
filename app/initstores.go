@@ -26,6 +26,7 @@ import (
 	"github.com/target/goalert/notification/slack"
 	"github.com/target/goalert/notificationchannel"
 	"github.com/target/goalert/oncall"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/override"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
@@ -184,6 +185,9 @@ func (app *App) initStores(ctx context.Context) error {
 	}
 	if err != nil {
 		return errors.Wrap(err, "init user store")
+	}
+	if app.OrganizationStore == nil {
+		app.OrganizationStore = organization.NewStore(app.db)
 	}
 
 	if app.ScheduleStore == nil {

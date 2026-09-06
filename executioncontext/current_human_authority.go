@@ -28,10 +28,6 @@ var (
 	ErrCurrentHumanAuthorityUnavailable = errors.New("current human authority unavailable")
 )
 
-type currentHumanSessionReader interface {
-	FindCurrentUserSession(context.Context, uuid.UUID) (*auth.CurrentUserSession, error)
-}
-
 type currentHumanUserReader interface {
 	FindOne(context.Context, string) (*user.User, error)
 }
@@ -45,47 +41,39 @@ type currentHumanOrganizationReader interface {
 // current durable state for one operation. It retains no result or
 // session-lifetime Organization authority between calls.
 //
-// Foundation-phase security boundary: Construct independently re-reads the
-// durable session, User, assignment, and Organization state, but public
-// permission metadata (including User ID, AuthProvider source, and session ID)
-// is not unforgeable proof that a signed session credential was presented and
-// verified. This constructor therefore MUST NOT be wired into a runtime or
-// business request path until centralized authenticated request composition
-// closes that provenance boundary. Closure is required before the first such
-// consumer and no later than HTTP Intake / Composition. The intended flow is
-// canonical credential authentication, then current-authority construction,
-// then delivery of the typed ExecutionContext to runtime code.
+// Construct consumes the identity-only authenticated-human Requester installed
+// by canonical request-entry authentication. It then independently reads the
+// current User, assignment, and Organization state. It does not repeat the
+// request-entry Session lookup and does not claim that the Session remains
+// current at a later protected boundary; that is the responsibility of the
+// future Complete Operation Guard.
 //
 // Its zero value is invalid. The public constructor accepts only the canonical
 // Core stores; the interface-backed seam remains package-private for focused
-// tests and prevents arbitrary packages from supplying authority assertions.
+// tests.
 type CurrentHumanAuthorityConstructor struct {
-	sessions      currentHumanSessionReader
 	users         currentHumanUserReader
 	organizations currentHumanOrganizationReader
 }
 
 // NewCurrentHumanAuthorityConstructor composes current ordinary-human
-// authority construction from the canonical Auth, User, and Organization
-// stores. It performs no durable lookup until Construct is called.
+// authority construction from the canonical User and Organization stores. It
+// performs no durable lookup until Construct is called.
 func NewCurrentHumanAuthorityConstructor(
-	sessions *auth.Handler,
 	users *user.Store,
 	organizations *organization.Store,
 ) (*CurrentHumanAuthorityConstructor, error) {
-	return newCurrentHumanAuthorityConstructor(sessions, users, organizations)
+	return newCurrentHumanAuthorityConstructor(users, organizations)
 }
 
 func newCurrentHumanAuthorityConstructor(
-	sessions currentHumanSessionReader,
 	users currentHumanUserReader,
 	organizations currentHumanOrganizationReader,
 ) (*CurrentHumanAuthorityConstructor, error) {
-	if nilCurrentAuthorityDependency(sessions) || nilCurrentAuthorityDependency(users) || nilCurrentAuthorityDependency(organizations) {
+	if nilCurrentAuthorityDependency(users) || nilCurrentAuthorityDependency(organizations) {
 		return nil, ErrInvalidCurrentHumanAuthorityConstructor
 	}
 	return &CurrentHumanAuthorityConstructor{
-		sessions:      sessions,
 		users:         users,
 		organizations: organizations,
 	}, nil
@@ -127,39 +115,43 @@ func (a *CurrentHumanAuthority) Observation() *CurrentHumanAuthorityObservation 
 }
 
 // CurrentHumanAuthorityObservation is immutable operation-local evidence of
-// the durable facts used to construct ordinary Organization authority. It is
-// neither persistent session authority nor a concurrency guard. Stage 2 must
-// independently and atomically validate every material mutable predicate at a
-// protected access or effect boundary.
+// the request-entry authenticated identity and current durable facts used to
+// construct ordinary Organization authority. It is neither persistent Session
+// authority nor a concurrency guard. Stage 2 must independently and atomically
+// validate every material mutable predicate at a protected access or effect
+// boundary.
 type CurrentHumanAuthorityObservation struct {
-	valid                      bool
-	sessionCurrent             bool
-	sessionID                  uuid.UUID
-	userID                     uuid.UUID
-	globalUserRole             permission.Role
-	assignmentUserID           uuid.UUID
-	assignmentState            organization.AssignmentState
-	mappingOutcome             organization.MappingOutcome
-	effectiveOrganizationID    uuid.UUID
-	organizationRole           organization.OrganizationRole
-	assignmentGeneration       int64
-	organizationClassification organization.Classification
-	organizationLifecycle      organization.Lifecycle
+	valid                       bool
+	sessionAuthenticatedAtEntry bool
+	sessionID                   uuid.UUID
+	userID                      uuid.UUID
+	globalUserRole              permission.Role
+	assignmentUserID            uuid.UUID
+	assignmentState             organization.AssignmentState
+	mappingOutcome              organization.MappingOutcome
+	effectiveOrganizationID     uuid.UUID
+	organizationRole            organization.OrganizationRole
+	assignmentGeneration        int64
+	organizationClassification  organization.Classification
+	organizationLifecycle       organization.Lifecycle
 }
 
 // Valid reports whether this complete observation was produced as part of an
 // accepted current-authority construction.
 func (o *CurrentHumanAuthorityObservation) Valid() bool {
-	return o != nil && o.valid && o.sessionCurrent
+	return o != nil && o.valid && o.sessionAuthenticatedAtEntry
 }
 
-// SessionCurrent reports that the canonical session row and its global User
-// relationship existed when Stage 1 performed this operation's lookup. It
-// does not promise that the session remains current after construction.
-func (o *CurrentHumanAuthorityObservation) SessionCurrent() bool { return o.Valid() }
+// SessionAuthenticatedAtRequestEntry reports that canonical authentication
+// established the typed Requester's Session/User identity before immediate
+// authority composition. Composition does not reread the Session, and this
+// evidence does not promise that the Session remains current afterward.
+func (o *CurrentHumanAuthorityObservation) SessionAuthenticatedAtRequestEntry() bool {
+	return o.Valid()
+}
 
-// SessionID returns the currently observed authenticated session identity, or
-// uuid.Nil for an invalid observation.
+// SessionID returns the Session identity established by canonical request-entry
+// authentication, or uuid.Nil for an invalid observation.
 func (o *CurrentHumanAuthorityObservation) SessionID() uuid.UUID {
 	if !o.Valid() {
 		return uuid.Nil
@@ -167,8 +159,8 @@ func (o *CurrentHumanAuthorityObservation) SessionID() uuid.UUID {
 	return o.sessionID
 }
 
-// UserID returns the currently observed stable global User identity, or
-// uuid.Nil for an invalid observation.
+// UserID returns the authenticated stable global User identity supplied by the
+// request-entry Requester, or uuid.Nil for an invalid observation.
 func (o *CurrentHumanAuthorityObservation) UserID() uuid.UUID {
 	if !o.Valid() {
 		return uuid.Nil
@@ -255,13 +247,14 @@ func (o *CurrentHumanAuthorityObservation) OrganizationLifecycle() organization.
 	return o.organizationLifecycle
 }
 
-// Construct loads current durable state for the authenticated human in ctx and
-// constructs ordinary Organization-operational authority. Every call performs
-// fresh session, User, assignment, and NormalOrganization reads. It neither
-// caches results nor implements the later Complete Operation Guard.
+// Construct consumes the authenticated-human Requester in ctx and constructs
+// ordinary Organization-operational authority. Every call performs fresh User,
+// assignment, and NormalOrganization reads without repeating authentication's
+// Session lookup. It neither caches results nor implements the later Complete
+// Operation Guard.
 func (c *CurrentHumanAuthorityConstructor) Construct(ctx context.Context) (CurrentHumanAuthority, error) {
 	var zero CurrentHumanAuthority
-	if c == nil || nilCurrentAuthorityDependency(c.sessions) || nilCurrentAuthorityDependency(c.users) || nilCurrentAuthorityDependency(c.organizations) {
+	if c == nil || nilCurrentAuthorityDependency(c.users) || nilCurrentAuthorityDependency(c.organizations) {
 		return zero, ErrInvalidCurrentHumanAuthorityConstructor
 	}
 	if ctx == nil {
@@ -271,25 +264,20 @@ func (c *CurrentHumanAuthorityConstructor) Construct(ctx context.Context) (Curre
 		return zero, currentHumanAuthorityLookupFailure("operation context is not current", err)
 	}
 
-	source := permission.Source(ctx)
-	if source == nil || source.Type != permission.SourceTypeAuthProvider {
-		return zero, currentHumanAuthorityFailure("authenticated human session source is required")
+	requester := auth.RequesterFromContext(ctx)
+	if requester == nil || !requester.Valid() {
+		return zero, currentHumanAuthorityFailure("authenticated-human Requester is required")
 	}
-	sessionID, ok := parseCanonicalAuthorityUUID(source.ID)
-	if !ok {
-		return zero, currentHumanAuthorityFailure("authenticated session identity is invalid")
-	}
-	authenticatedUserID, ok := parseCanonicalAuthorityUUID(permission.UserID(ctx))
-	if !ok {
-		return zero, currentHumanAuthorityFailure("authenticated global User identity is invalid")
-	}
+	authenticatedUserID := requester.UserID()
+	sessionID := requester.SessionID()
 
-	session, err := c.sessions.FindCurrentUserSession(ctx, sessionID)
-	if err != nil {
-		return zero, currentHumanAuthorityLookupFailure("read current authenticated session", err)
-	}
-	if session == nil || session.ID != sessionID || session.UserID == uuid.Nil || session.UserID != authenticatedUserID {
-		return zero, currentHumanAuthorityFailure("current session state is inconsistent")
+	// Legacy permission metadata remains installed for existing GoAlert Stores,
+	// logging, and compatibility. It is checked only for consistency with the
+	// typed Requester and is never the semantic source of human identity.
+	source := permission.Source(ctx)
+	if permission.UserID(ctx) != authenticatedUserID.String() || source == nil ||
+		source.Type != permission.SourceTypeAuthProvider || source.ID != sessionID.String() {
+		return zero, currentHumanAuthorityFailure("legacy authentication metadata is inconsistent with Requester")
 	}
 
 	currentUser, err := c.users.FindOne(ctx, authenticatedUserID.String())
@@ -306,11 +294,11 @@ func (c *CurrentHumanAuthorityConstructor) Construct(ctx context.Context) (Curre
 	if _, err := currentUser.Normalize(); err != nil {
 		return zero, currentHumanAuthorityLookupFailure("validate current global User", err)
 	}
-	if currentUser.Role != session.UserRole {
-		return zero, currentHumanAuthorityFailure("current session and global User roles are inconsistent")
-	}
 	if currentUser.Role != permission.RoleUser && currentUser.Role != permission.RoleAdmin {
 		return zero, currentHumanAuthorityFailure("current global User role is invalid")
+	}
+	if permission.Admin(ctx) != (currentUser.Role == permission.RoleAdmin) {
+		return zero, currentHumanAuthorityFailure("legacy and current global User roles are inconsistent")
 	}
 
 	assignment, err := c.organizations.FindUserOrganizationAssignment(ctx, authenticatedUserID)
@@ -336,8 +324,8 @@ func (c *CurrentHumanAuthorityConstructor) Construct(ctx context.Context) (Curre
 		principalKind:            PrincipalKindHuman,
 		principalID:              currentUser.ID,
 		actualActorID:            currentUser.ID,
-		authenticationSourceType: source.Type.String(),
-		authenticationSourceID:   source.ID,
+		authenticationSourceType: permission.SourceTypeAuthProvider.String(),
+		authenticationSourceID:   sessionID.String(),
 		organizationRole:         assignment.Role,
 		platformAdmin:            false,
 		authorityMode:            AuthorityModeOrganizationScoped,
@@ -352,19 +340,19 @@ func (c *CurrentHumanAuthorityConstructor) Construct(ctx context.Context) (Curre
 	}
 
 	observation := CurrentHumanAuthorityObservation{
-		valid:                      true,
-		sessionCurrent:             true,
-		sessionID:                  sessionID,
-		userID:                     authenticatedUserID,
-		globalUserRole:             currentUser.Role,
-		assignmentUserID:           assignment.UserID,
-		assignmentState:            assignment.State,
-		mappingOutcome:             assignment.MappingOutcome,
-		effectiveOrganizationID:    assignment.EffectiveOrganizationID,
-		organizationRole:           assignment.Role,
-		assignmentGeneration:       assignment.AssignmentGeneration,
-		organizationClassification: normal.Classification,
-		organizationLifecycle:      normal.Lifecycle,
+		valid:                       true,
+		sessionAuthenticatedAtEntry: true,
+		sessionID:                   sessionID,
+		userID:                      authenticatedUserID,
+		globalUserRole:              currentUser.Role,
+		assignmentUserID:            assignment.UserID,
+		assignmentState:             assignment.State,
+		mappingOutcome:              assignment.MappingOutcome,
+		effectiveOrganizationID:     assignment.EffectiveOrganizationID,
+		organizationRole:            assignment.Role,
+		assignmentGeneration:        assignment.AssignmentGeneration,
+		organizationClassification:  normal.Classification,
+		organizationLifecycle:       normal.Lifecycle,
 	}
 	result := CurrentHumanAuthority{
 		valid:       true,
@@ -443,7 +431,6 @@ func currentHumanAuthorityLookupFailure(operation string, err error) error {
 }
 
 var (
-	_ currentHumanSessionReader      = (*auth.Handler)(nil)
 	_ currentHumanUserReader         = (*user.Store)(nil)
 	_ currentHumanOrganizationReader = (*organization.Store)(nil)
 )

@@ -2,9 +2,10 @@
 // narrowly composed current-authority construction boundary.
 //
 // This package does not authenticate credentials, authorize business
-// operations, install values in a context.Context, or guard protected data and
-// effects. Its human construction path consumes an already authenticated
-// session source and re-reads current durable authority for one operation.
+// operations, or guard protected data and effects. Its HTTP composition path
+// consumes an authenticated-human Requester, re-reads current durable User and
+// Organization authority for one operation, and installs only a validated
+// operation-local result in context.Context.
 package executioncontext
 
 import (
