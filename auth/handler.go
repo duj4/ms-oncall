@@ -156,9 +156,9 @@ type UserSession struct {
 	UserID       string
 }
 
-// CurrentUserSession is the minimal current durable session state used by the
-// separately constructed operation-local human authority context. It carries
-// no Organization authority or session-lifetime authority snapshot.
+// CurrentUserSession is the minimal current durable Session/User state used by
+// canonical human request-entry authentication. It carries no Organization
+// authority or session-lifetime authority snapshot.
 type CurrentUserSession struct {
 	ID       uuid.UUID
 	UserID   uuid.UUID
@@ -646,14 +646,26 @@ func (h *Handler) authWithToken(w http.ResponseWriter, req *http.Request, next h
 
 func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *http.Request, tokenStr string, isCookie bool) (context.Context, error) {
 	tok, isOld, err := authtoken.Parse(tokenStr, func(t authtoken.Type, p, sig []byte) (bool, bool) {
-		// only session tokens are supported for cookies
+		// only Session tokens are supported by the human authentication path
+		if t != authtoken.TypeSession {
+			return false, false
+		}
 		return h.cfg.SessionKeyring.Verify(p, sig)
 	})
 	if err != nil {
 		return nil, err
 	}
-
+	if tok.Type != authtoken.TypeSession {
+		return nil, validation.NewGenericError("invalid human authentication token type")
+	}
 	session, err := h.FindCurrentUserSession(ctx, tok.ID)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil || session.ID != tok.ID || session.UserID == uuid.Nil {
+		return nil, validation.NewGenericError("invalid current human Session state")
+	}
+	requester, err := NewRequester(session.UserID.String(), session.ID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -672,7 +684,7 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 		}
 	}
 
-	return permission.UserSourceContext(
+	ctx = permission.UserSourceContext(
 		ctx,
 		session.UserID.String(),
 		session.UserRole,
@@ -680,7 +692,8 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 			Type: permission.SourceTypeAuthProvider,
 			ID:   tok.ID.String(),
 		},
-	), nil
+	)
+	return WithRequester(ctx, requester), nil
 }
 
 // WrapHandler will wrap an existing http.Handler so the Context of the request

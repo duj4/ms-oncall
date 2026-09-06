@@ -15,29 +15,16 @@ import (
 	"github.com/target/goalert/user"
 )
 
-type fakeCurrentHumanSessionReader struct {
-	session *auth.CurrentUserSession
-	err     error
-	calls   int
-}
-
-func (r *fakeCurrentHumanSessionReader) FindCurrentUserSession(context.Context, uuid.UUID) (*auth.CurrentUserSession, error) {
-	r.calls++
-	if r.session == nil {
-		return nil, r.err
-	}
-	value := *r.session
-	return &value, r.err
-}
-
 type fakeCurrentHumanUserReader struct {
-	user  *user.User
-	err   error
-	calls int
+	user   *user.User
+	err    error
+	calls  int
+	lastID string
 }
 
-func (r *fakeCurrentHumanUserReader) FindOne(context.Context, string) (*user.User, error) {
+func (r *fakeCurrentHumanUserReader) FindOne(_ context.Context, id string) (*user.User, error) {
 	r.calls++
+	r.lastID = id
 	if r.user == nil {
 		return nil, r.err
 	}
@@ -52,10 +39,13 @@ type fakeCurrentHumanOrganizationReader struct {
 	normalErr       error
 	assignmentCalls int
 	normalCalls     int
+	assignmentID    uuid.UUID
+	normalID        uuid.UUID
 }
 
-func (r *fakeCurrentHumanOrganizationReader) FindUserOrganizationAssignment(context.Context, uuid.UUID) (*organization.UserOrganizationAssignment, error) {
+func (r *fakeCurrentHumanOrganizationReader) FindUserOrganizationAssignment(_ context.Context, id uuid.UUID) (*organization.UserOrganizationAssignment, error) {
 	r.assignmentCalls++
+	r.assignmentID = id
 	if r.assignment == nil {
 		return nil, r.assignmentErr
 	}
@@ -67,8 +57,9 @@ func (r *fakeCurrentHumanOrganizationReader) FindUserOrganizationAssignment(cont
 	return &value, r.assignmentErr
 }
 
-func (r *fakeCurrentHumanOrganizationReader) FindNormalByID(context.Context, uuid.UUID) (*organization.NormalOrganization, error) {
+func (r *fakeCurrentHumanOrganizationReader) FindNormalByID(_ context.Context, id uuid.UUID) (*organization.NormalOrganization, error) {
 	r.normalCalls++
+	r.normalID = id
 	if r.normal == nil {
 		return nil, r.normalErr
 	}
@@ -81,7 +72,6 @@ type currentHumanAuthorityFixture struct {
 	userID    uuid.UUID
 	orgID     uuid.UUID
 	ctx       context.Context
-	sessions  *fakeCurrentHumanSessionReader
 	users     *fakeCurrentHumanUserReader
 	orgs      *fakeCurrentHumanOrganizationReader
 }
@@ -100,16 +90,16 @@ func newCurrentHumanAuthorityFixture(t *testing.T) *currentHumanAuthorityFixture
 		permission.RoleUser,
 		&permission.SourceInfo{Type: permission.SourceTypeAuthProvider, ID: sessionID.String()},
 	)
+	requester, err := auth.NewRequester(userID.String(), sessionID.String())
+	if err != nil {
+		t.Fatalf("NewRequester: %v", err)
+	}
+	ctx = auth.WithRequester(ctx, requester)
 	return &currentHumanAuthorityFixture{
 		sessionID: sessionID,
 		userID:    userID,
 		orgID:     orgID,
 		ctx:       ctx,
-		sessions: &fakeCurrentHumanSessionReader{session: &auth.CurrentUserSession{
-			ID:       sessionID,
-			UserID:   userID,
-			UserRole: permission.RoleUser,
-		}},
 		users: &fakeCurrentHumanUserReader{user: &user.User{
 			ID:   userID.String(),
 			Name: "Current Authority User",
@@ -150,11 +140,38 @@ func newCurrentHumanAuthorityFixture(t *testing.T) *currentHumanAuthorityFixture
 
 func (f *currentHumanAuthorityFixture) constructor(t *testing.T) *CurrentHumanAuthorityConstructor {
 	t.Helper()
-	constructor, err := newCurrentHumanAuthorityConstructor(f.sessions, f.users, f.orgs)
+	constructor, err := newCurrentHumanAuthorityConstructor(f.users, f.orgs)
 	if err != nil {
 		t.Fatalf("newCurrentHumanAuthorityConstructor: %v", err)
 	}
 	return constructor
+}
+
+func (f *currentHumanAuthorityFixture) setLegacyRole(role permission.Role) {
+	requester := auth.RequesterFromContext(f.ctx)
+	f.ctx = permission.UserSourceContext(context.Background(), f.userID.String(), role, &permission.SourceInfo{
+		Type: permission.SourceTypeAuthProvider,
+		ID:   f.sessionID.String(),
+	})
+	if requester != nil {
+		f.ctx = auth.WithRequester(f.ctx, *requester)
+	}
+}
+
+func (f *currentHumanAuthorityFixture) replaceLegacy(userID string, role permission.Role, source *permission.SourceInfo) {
+	requester := auth.RequesterFromContext(f.ctx)
+	f.ctx = permission.UserSourceContext(context.Background(), userID, role, source)
+	if requester != nil {
+		f.ctx = auth.WithRequester(f.ctx, *requester)
+	}
+}
+
+func (f *currentHumanAuthorityFixture) replaceRequester(userID, sessionID string) {
+	requester, err := auth.NewRequester(userID, sessionID)
+	if err != nil {
+		panic(err)
+	}
+	f.ctx = auth.WithRequester(f.ctx, requester)
 }
 
 func TestCurrentHumanAuthorityAcceptedOrdinaryRoles(t *testing.T) {
@@ -169,8 +186,8 @@ func TestCurrentHumanAuthorityAcceptedOrdinaryRoles(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newCurrentHumanAuthorityFixture(t)
-			fixture.sessions.session.UserRole = test.globalRole
 			fixture.users.user.Role = test.globalRole
+			fixture.setLegacyRole(test.globalRole)
 			fixture.orgs.assignment.Role = test.orgRole
 			result, err := fixture.constructor(t).Construct(fixture.ctx)
 			if err != nil {
@@ -208,7 +225,7 @@ func TestCurrentHumanAuthorityAcceptedOrdinaryRoles(t *testing.T) {
 			}
 
 			observation := result.Observation()
-			if observation == nil || !observation.Valid() || !observation.SessionCurrent() ||
+			if observation == nil || !observation.Valid() || !observation.SessionAuthenticatedAtRequestEntry() ||
 				observation.SessionID() != fixture.sessionID || observation.UserID() != fixture.userID ||
 				observation.GlobalUserRole() != test.globalRole || observation.AssignmentUserID() != fixture.userID ||
 				observation.AssignmentState() != organization.AssignmentStateActive ||
@@ -219,9 +236,13 @@ func TestCurrentHumanAuthorityAcceptedOrdinaryRoles(t *testing.T) {
 				observation.OrganizationLifecycle() != organization.LifecycleActive {
 				t.Fatalf("unexpected current-authority observation: %#v", observation)
 			}
-			if fixture.sessions.calls != 1 || fixture.users.calls != 1 || fixture.orgs.assignmentCalls != 1 || fixture.orgs.normalCalls != 1 {
-				t.Fatalf("durable read calls = session:%d user:%d assignment:%d Organization:%d, want one each",
-					fixture.sessions.calls, fixture.users.calls, fixture.orgs.assignmentCalls, fixture.orgs.normalCalls)
+			if fixture.users.calls != 1 || fixture.orgs.assignmentCalls != 1 || fixture.orgs.normalCalls != 1 {
+				t.Fatalf("durable read calls = user:%d assignment:%d Organization:%d, want one each",
+					fixture.users.calls, fixture.orgs.assignmentCalls, fixture.orgs.normalCalls)
+			}
+			if fixture.users.lastID != fixture.userID.String() || fixture.orgs.assignmentID != fixture.userID || fixture.orgs.normalID != fixture.orgID {
+				t.Fatalf("durable lookup identities = User:%q assignment:%s Organization:%s, want Requester User %s and assigned Organization %s",
+					fixture.users.lastID, fixture.orgs.assignmentID, fixture.orgs.normalID, fixture.userID, fixture.orgID)
 			}
 		})
 	}
@@ -236,36 +257,39 @@ func TestCurrentHumanAuthorityFailsClosed(t *testing.T) {
 		name   string
 		mutate func(*currentHumanAuthorityFixture)
 	}{
-		{name: "missing authentication source", mutate: func(f *currentHumanAuthorityFixture) { f.ctx = context.Background() }},
-		{name: "non-human authentication source", mutate: func(f *currentHumanAuthorityFixture) {
+		{name: "missing Requester", mutate: func(f *currentHumanAuthorityFixture) { f.ctx = context.Background() }},
+		{name: "legacy permission metadata alone", mutate: func(f *currentHumanAuthorityFixture) {
 			f.ctx = permission.UserSourceContext(context.Background(), f.userID.String(), permission.RoleUser,
-				&permission.SourceInfo{Type: permission.SourceTypeGQLAPIKey, ID: f.sessionID.String()})
-		}},
-		{name: "malformed session identity", mutate: func(f *currentHumanAuthorityFixture) {
-			f.ctx = permission.UserSourceContext(context.Background(), f.userID.String(), permission.RoleUser,
-				&permission.SourceInfo{Type: permission.SourceTypeAuthProvider, ID: "not-a-session"})
-		}},
-		{name: "malformed authenticated User identity", mutate: func(f *currentHumanAuthorityFixture) {
-			f.ctx = permission.UserSourceContext(context.Background(), "not-a-user", permission.RoleUser,
 				&permission.SourceInfo{Type: permission.SourceTypeAuthProvider, ID: f.sessionID.String()})
 		}},
-		{name: "missing or revoked session", mutate: func(f *currentHumanAuthorityFixture) {
-			f.sessions.session = nil
-			f.sessions.err = auth.ErrCurrentUserSessionNotFound
+		{name: "Requester without legacy compatibility metadata", mutate: func(f *currentHumanAuthorityFixture) {
+			requester := auth.RequesterFromContext(f.ctx)
+			f.ctx = auth.WithRequester(context.Background(), *requester)
 		}},
-		{name: "session lookup failure", mutate: func(f *currentHumanAuthorityFixture) { f.sessions.err = lookupFailure }},
-		{name: "nil session result", mutate: func(f *currentHumanAuthorityFixture) { f.sessions.session = nil }},
-		{name: "session identity mismatch", mutate: func(f *currentHumanAuthorityFixture) { f.sessions.session.ID = uuid.New() }},
-		{name: "session User mismatch", mutate: func(f *currentHumanAuthorityFixture) { f.sessions.session.UserID = uuid.New() }},
+		{name: "non-human authentication source", mutate: func(f *currentHumanAuthorityFixture) {
+			f.replaceLegacy(f.userID.String(), permission.RoleUser,
+				&permission.SourceInfo{Type: permission.SourceTypeGQLAPIKey, ID: f.sessionID.String()})
+		}},
+		{name: "legacy Session mismatch", mutate: func(f *currentHumanAuthorityFixture) {
+			f.replaceLegacy(f.userID.String(), permission.RoleUser,
+				&permission.SourceInfo{Type: permission.SourceTypeAuthProvider, ID: uuid.NewString()})
+		}},
+		{name: "legacy User mismatch", mutate: func(f *currentHumanAuthorityFixture) {
+			f.replaceLegacy(uuid.NewString(), permission.RoleUser,
+				&permission.SourceInfo{Type: permission.SourceTypeAuthProvider, ID: f.sessionID.String()})
+		}},
+		{name: "Requester User mismatch with legacy metadata", mutate: func(f *currentHumanAuthorityFixture) {
+			f.replaceRequester(uuid.NewString(), f.sessionID.String())
+		}},
+		{name: "Requester Session mismatch with legacy metadata", mutate: func(f *currentHumanAuthorityFixture) {
+			f.replaceRequester(f.userID.String(), uuid.NewString())
+		}},
 		{name: "missing User", mutate: func(f *currentHumanAuthorityFixture) { f.users.user = nil; f.users.err = sql.ErrNoRows }},
 		{name: "User lookup failure", mutate: func(f *currentHumanAuthorityFixture) { f.users.err = lookupFailure }},
 		{name: "nil User result", mutate: func(f *currentHumanAuthorityFixture) { f.users.user = nil }},
-		{name: "malformed User", mutate: func(f *currentHumanAuthorityFixture) {
-			f.users.user.Role = permission.RoleUnknown
-			f.sessions.session.UserRole = permission.RoleUnknown
-		}},
+		{name: "malformed User", mutate: func(f *currentHumanAuthorityFixture) { f.users.user.Role = permission.RoleUnknown }},
 		{name: "User identity mismatch", mutate: func(f *currentHumanAuthorityFixture) { f.users.user.ID = uuid.NewString() }},
-		{name: "session User role mismatch", mutate: func(f *currentHumanAuthorityFixture) { f.sessions.session.UserRole = permission.RoleAdmin }},
+		{name: "legacy User role mismatch", mutate: func(f *currentHumanAuthorityFixture) { f.users.user.Role = permission.RoleAdmin }},
 		{name: "missing assignment", mutate: func(f *currentHumanAuthorityFixture) {
 			f.orgs.assignment = nil
 			f.orgs.assignmentErr = organization.ErrUserAssignmentNotFound
@@ -395,16 +419,17 @@ func TestCurrentHumanAuthorityConstructionReobservesCurrentState(t *testing.T) {
 	assertNoCurrentHumanAuthority(t, &third)
 
 	fixture.orgs.normal.Lifecycle = organization.LifecycleActive
-	fixture.sessions.session = nil
-	fixture.sessions.err = auth.ErrCurrentUserSessionNotFound
+	currentUser := *fixture.users.user
+	fixture.users.user = nil
+	fixture.users.err = sql.ErrNoRows
 	fourth, err := constructor.Construct(fixture.ctx)
 	if !errors.Is(err, ErrCurrentHumanAuthorityUnavailable) {
-		t.Fatalf("fourth Construct error = %v, want fail-closed current revoked session", err)
+		t.Fatalf("fourth Construct error = %v, want fail-closed missing current User", err)
 	}
 	assertNoCurrentHumanAuthority(t, &fourth)
 
-	fixture.sessions.session = &auth.CurrentUserSession{ID: fixture.sessionID, UserID: fixture.userID, UserRole: permission.RoleUser}
-	fixture.sessions.err = nil
+	fixture.users.user = &currentUser
+	fixture.users.err = nil
 	fifth, err := constructor.Construct(fixture.ctx)
 	if err != nil {
 		t.Fatalf("fifth Construct: %v", err)
@@ -412,33 +437,29 @@ func TestCurrentHumanAuthorityConstructionReobservesCurrentState(t *testing.T) {
 	if fifth.Observation().AssignmentGeneration() != 8 {
 		t.Fatalf("fifth generation = %d, want freshly observed 8", fifth.Observation().AssignmentGeneration())
 	}
-	if fixture.sessions.calls != 5 || fixture.users.calls != 4 || fixture.orgs.assignmentCalls != 4 || fixture.orgs.normalCalls != 3 {
-		t.Fatalf("durable lookup counts = session:%d user:%d assignment:%d Organization:%d, want 5/4/4/3",
-			fixture.sessions.calls, fixture.users.calls, fixture.orgs.assignmentCalls, fixture.orgs.normalCalls)
+	if fixture.users.calls != 5 || fixture.orgs.assignmentCalls != 4 || fixture.orgs.normalCalls != 3 {
+		t.Fatalf("durable lookup counts = user:%d assignment:%d Organization:%d, want 5/4/3",
+			fixture.users.calls, fixture.orgs.assignmentCalls, fixture.orgs.normalCalls)
 	}
 }
 
 func TestCurrentHumanAuthorityConstructorAndZeroValuesFailClosed(t *testing.T) {
 	fixture := newCurrentHumanAuthorityFixture(t)
-	var nilSessions *fakeCurrentHumanSessionReader
 	var nilUsers *fakeCurrentHumanUserReader
 	var nilOrganizations *fakeCurrentHumanOrganizationReader
 
 	for _, test := range []struct {
-		name     string
-		sessions currentHumanSessionReader
-		users    currentHumanUserReader
-		orgs     currentHumanOrganizationReader
+		name  string
+		users currentHumanUserReader
+		orgs  currentHumanOrganizationReader
 	}{
-		{name: "nil sessions", users: fixture.users, orgs: fixture.orgs},
-		{name: "typed nil sessions", sessions: nilSessions, users: fixture.users, orgs: fixture.orgs},
-		{name: "nil users", sessions: fixture.sessions, orgs: fixture.orgs},
-		{name: "typed nil users", sessions: fixture.sessions, users: nilUsers, orgs: fixture.orgs},
-		{name: "nil Organizations", sessions: fixture.sessions, users: fixture.users},
-		{name: "typed nil Organizations", sessions: fixture.sessions, users: fixture.users, orgs: nilOrganizations},
+		{name: "nil users", orgs: fixture.orgs},
+		{name: "typed nil users", users: nilUsers, orgs: fixture.orgs},
+		{name: "nil Organizations", users: fixture.users},
+		{name: "typed nil Organizations", users: fixture.users, orgs: nilOrganizations},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			constructor, err := newCurrentHumanAuthorityConstructor(test.sessions, test.users, test.orgs)
+			constructor, err := newCurrentHumanAuthorityConstructor(test.users, test.orgs)
 			if !errors.Is(err, ErrInvalidCurrentHumanAuthorityConstructor) || constructor != nil {
 				t.Fatalf("constructor, error = (%#v, %v), want nil and invalid-constructor error", constructor, err)
 			}
@@ -498,7 +519,7 @@ func assertNoCurrentHumanAuthority(t *testing.T, value *CurrentHumanAuthority) {
 
 func assertZeroCurrentHumanAuthorityObservation(t *testing.T, value *CurrentHumanAuthorityObservation) {
 	t.Helper()
-	if value.Valid() || value.SessionCurrent() || value.SessionID() != uuid.Nil || value.UserID() != uuid.Nil ||
+	if value.Valid() || value.SessionAuthenticatedAtRequestEntry() || value.SessionID() != uuid.Nil || value.UserID() != uuid.Nil ||
 		value.GlobalUserRole() != "" || value.AssignmentUserID() != uuid.Nil || value.AssignmentState() != "" ||
 		value.MappingOutcome() != "" || value.EffectiveOrganizationID() != uuid.Nil || value.OrganizationRole() != "" ||
 		value.AssignmentGeneration() != 0 || value.OrganizationClassification() != "" || value.OrganizationLifecycle() != "" {

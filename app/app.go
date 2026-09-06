@@ -42,6 +42,7 @@ import (
 	"github.com/target/goalert/notification/twilio"
 	"github.com/target/goalert/notificationchannel"
 	"github.com/target/goalert/oncall"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/override"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
@@ -109,6 +110,7 @@ type App struct {
 
 	AuthBasicStore        *basic.Store
 	UserStore             *user.Store
+	OrganizationStore     *organization.Store
 	ContactMethodStore    *contactmethod.Store
 	NotificationRuleStore *notificationrule.Store
 	FavoriteStore         *favorite.Store

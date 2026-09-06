@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/target/goalert/auth"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/user"
@@ -79,7 +78,7 @@ func TestExternalNilPointerAccessorsFailClosed(t *testing.T) {
 	if authority.Valid() || authority.ExecutionContext() != nil || authority.Observation() != nil {
 		t.Fatal("nil CurrentHumanAuthority exposed evidence")
 	}
-	if observation.Valid() || observation.SessionCurrent() || observation.SessionID() != uuid.Nil ||
+	if observation.Valid() || observation.SessionAuthenticatedAtRequestEntry() || observation.SessionID() != uuid.Nil ||
 		observation.UserID() != uuid.Nil || observation.GlobalUserRole() != "" ||
 		observation.AssignmentUserID() != uuid.Nil || observation.AssignmentState() != "" ||
 		observation.MappingOutcome() != "" || observation.EffectiveOrganizationID() != uuid.Nil ||
@@ -141,7 +140,7 @@ func TestExecutionContextReadOnlyMethodSurface(t *testing.T) {
 		"OrganizationClassification",
 		"OrganizationLifecycle",
 		"OrganizationRole",
-		"SessionCurrent",
+		"SessionAuthenticatedAtRequestEntry",
 		"SessionID",
 		"UserID",
 		"Valid",
@@ -189,7 +188,7 @@ func TestTrustBearingTypesImplementNoUnmarshaler(t *testing.T) {
 	}
 }
 
-func TestPackageExportsNoTrustBearingConstructor(t *testing.T) {
+func TestPackageExportsNoGenericTrustBearingConstructor(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller could not locate test source")
@@ -213,6 +212,9 @@ func TestPackageExportsNoTrustBearingConstructor(t *testing.T) {
 			}
 			for _, result := range function.Type.Results.List {
 				if trustBearingType, ok := returnedTrustBearingType(result.Type); ok {
+					if function.Name.Name == "CurrentHumanAuthorityFromContext" && trustBearingType == "CurrentHumanAuthority" {
+						continue
+					}
 					t.Fatalf("exported package function %s can construct a %s", function.Name.Name, trustBearingType)
 				}
 			}
@@ -220,9 +222,8 @@ func TestPackageExportsNoTrustBearingConstructor(t *testing.T) {
 	}
 }
 
-func TestCurrentHumanAuthorityConstructorRequiresCanonicalStores(t *testing.T) {
+func TestCurrentHumanAuthorityConstructorRequiresCanonicalStoresWithoutSessionReader(t *testing.T) {
 	type constructorSignature func(
-		*auth.Handler,
 		*user.Store,
 		*organization.Store,
 	) (*executioncontext.CurrentHumanAuthorityConstructor, error)
@@ -230,6 +231,29 @@ func TestCurrentHumanAuthorityConstructorRequiresCanonicalStores(t *testing.T) {
 	var constructor constructorSignature = executioncontext.NewCurrentHumanAuthorityConstructor
 	if constructor == nil {
 		t.Fatal("current human authority constructor is nil")
+	}
+}
+
+func TestCurrentHumanAuthorityPackageHasNoImmediateSessionLookup(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller could not locate test source")
+	}
+	directory := filepath.Dir(filename)
+	packages, err := parser.ParseDir(token.NewFileSet(), directory, func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse executioncontext package: %v", err)
+	}
+	for _, file := range packages["executioncontext"].Files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			selector, ok := node.(*ast.SelectorExpr)
+			if ok && selector.Sel.Name == "FindCurrentUserSession" {
+				t.Fatalf("executioncontext retains immediate Session lookup dependency in %s", file.Name.Name)
+			}
+			return true
+		})
 	}
 }
 
