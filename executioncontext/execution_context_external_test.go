@@ -16,7 +16,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/target/goalert/auth"
 	"github.com/target/goalert/executioncontext"
+	"github.com/target/goalert/organization"
+	"github.com/target/goalert/user"
 )
 
 func TestExternalZeroValueHasNoAuthority(t *testing.T) {
@@ -46,6 +49,8 @@ func TestExternalNilPointerAccessorsFailClosed(t *testing.T) {
 	var context *executioncontext.ExecutionContext
 	var source *executioncontext.AuthenticationSource
 	var privileges *executioncontext.PrivilegeMetadata
+	var authority *executioncontext.CurrentHumanAuthority
+	var observation *executioncontext.CurrentHumanAuthorityObservation
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			t.Fatalf("nil-pointer accessor panicked: %v", recovered)
@@ -71,6 +76,17 @@ func TestExternalNilPointerAccessorsFailClosed(t *testing.T) {
 	if privileges.OrganizationRole() != "" || privileges.PlatformAdmin() {
 		t.Fatal("nil PrivilegeMetadata exposed evidence")
 	}
+	if authority.Valid() || authority.ExecutionContext() != nil || authority.Observation() != nil {
+		t.Fatal("nil CurrentHumanAuthority exposed evidence")
+	}
+	if observation.Valid() || observation.SessionCurrent() || observation.SessionID() != uuid.Nil ||
+		observation.UserID() != uuid.Nil || observation.GlobalUserRole() != "" ||
+		observation.AssignmentUserID() != uuid.Nil || observation.AssignmentState() != "" ||
+		observation.MappingOutcome() != "" || observation.EffectiveOrganizationID() != uuid.Nil ||
+		observation.OrganizationRole() != "" || observation.AssignmentGeneration() != 0 ||
+		observation.OrganizationClassification() != "" || observation.OrganizationLifecycle() != "" {
+		t.Fatal("nil CurrentHumanAuthorityObservation exposed evidence")
+	}
 }
 
 func TestTrustBearingRepresentationsHaveNoExportedFields(t *testing.T) {
@@ -78,6 +94,8 @@ func TestTrustBearingRepresentationsHaveNoExportedFields(t *testing.T) {
 		reflect.TypeOf(executioncontext.ExecutionContext{}),
 		reflect.TypeOf(executioncontext.AuthenticationSource{}),
 		reflect.TypeOf(executioncontext.PrivilegeMetadata{}),
+		reflect.TypeOf(executioncontext.CurrentHumanAuthority{}),
+		reflect.TypeOf(executioncontext.CurrentHumanAuthorityObservation{}),
 	}
 	for _, typ := range types {
 		t.Run(typ.Name(), func(t *testing.T) {
@@ -112,9 +130,27 @@ func TestExecutionContextReadOnlyMethodSurface(t *testing.T) {
 	})
 	assertMethodSurface(t, reflect.TypeOf((*executioncontext.AuthenticationSource)(nil)), []string{"ID", "Type"})
 	assertMethodSurface(t, reflect.TypeOf((*executioncontext.PrivilegeMetadata)(nil)), []string{"OrganizationRole", "PlatformAdmin"})
+	assertMethodSurface(t, reflect.TypeOf((*executioncontext.CurrentHumanAuthority)(nil)), []string{"ExecutionContext", "Observation", "Valid"})
+	assertMethodSurface(t, reflect.TypeOf((*executioncontext.CurrentHumanAuthorityObservation)(nil)), []string{
+		"AssignmentGeneration",
+		"AssignmentState",
+		"AssignmentUserID",
+		"EffectiveOrganizationID",
+		"GlobalUserRole",
+		"MappingOutcome",
+		"OrganizationClassification",
+		"OrganizationLifecycle",
+		"OrganizationRole",
+		"SessionCurrent",
+		"SessionID",
+		"UserID",
+		"Valid",
+	})
 	assertMethodSurface(t, reflect.TypeOf(executioncontext.ExecutionContext{}), []string{})
 	assertMethodSurface(t, reflect.TypeOf(executioncontext.AuthenticationSource{}), []string{})
 	assertMethodSurface(t, reflect.TypeOf(executioncontext.PrivilegeMetadata{}), []string{})
+	assertMethodSurface(t, reflect.TypeOf(executioncontext.CurrentHumanAuthority{}), []string{})
+	assertMethodSurface(t, reflect.TypeOf(executioncontext.CurrentHumanAuthorityObservation{}), []string{})
 }
 
 func assertMethodSurface(t *testing.T, typ reflect.Type, want []string) {
@@ -132,9 +168,11 @@ func assertMethodSurface(t *testing.T, typ reflect.Type, want []string) {
 
 func TestTrustBearingTypesImplementNoUnmarshaler(t *testing.T) {
 	values := map[string]any{
-		"ExecutionContext":     (*executioncontext.ExecutionContext)(nil),
-		"AuthenticationSource": (*executioncontext.AuthenticationSource)(nil),
-		"PrivilegeMetadata":    (*executioncontext.PrivilegeMetadata)(nil),
+		"ExecutionContext":                 (*executioncontext.ExecutionContext)(nil),
+		"AuthenticationSource":             (*executioncontext.AuthenticationSource)(nil),
+		"PrivilegeMetadata":                (*executioncontext.PrivilegeMetadata)(nil),
+		"CurrentHumanAuthority":            (*executioncontext.CurrentHumanAuthority)(nil),
+		"CurrentHumanAuthorityObservation": (*executioncontext.CurrentHumanAuthorityObservation)(nil),
 	}
 	for name, value := range values {
 		t.Run(name, func(t *testing.T) {
@@ -182,11 +220,24 @@ func TestPackageExportsNoTrustBearingConstructor(t *testing.T) {
 	}
 }
 
+func TestCurrentHumanAuthorityConstructorRequiresCanonicalStores(t *testing.T) {
+	type constructorSignature func(
+		*auth.Handler,
+		*user.Store,
+		*organization.Store,
+	) (*executioncontext.CurrentHumanAuthorityConstructor, error)
+
+	var constructor constructorSignature = executioncontext.NewCurrentHumanAuthorityConstructor
+	if constructor == nil {
+		t.Fatal("current human authority constructor is nil")
+	}
+}
+
 func returnedTrustBearingType(expression ast.Expr) (string, bool) {
 	switch value := expression.(type) {
 	case *ast.Ident:
 		switch value.Name {
-		case "ExecutionContext":
+		case "ExecutionContext", "CurrentHumanAuthority", "CurrentHumanAuthorityObservation":
 			return value.Name, true
 		default:
 			return "", false

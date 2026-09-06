@@ -1,8 +1,10 @@
-// Package executioncontext defines the inert, immutable trust-context value
-// contract used by later, separately authorized identity foundations.
+// Package executioncontext defines immutable trust-context values and the
+// narrowly composed current-authority construction boundary.
 //
-// This package does not authenticate, authorize, install values in a
-// context.Context, or provide any runtime construction path.
+// This package does not authenticate credentials, authorize business
+// operations, install values in a context.Context, or guard protected data and
+// effects. Its human construction path consumes an already authenticated
+// session source and re-reads current durable authority for one operation.
 package executioncontext
 
 import (
@@ -208,8 +210,7 @@ func (c *ExecutionContext) PlatformAdminAssumptionID() (string, bool) {
 }
 
 // executionContextSpec is private because its fields carry trust declarations.
-// Later checkpoints may add narrowly scoped trusted factories; this checkpoint
-// deliberately provides no runtime producer.
+// Only narrowly scoped constructors in this package may produce it.
 type executionContextSpec struct {
 	principalKind             PrincipalKind
 	principalID               string
@@ -225,7 +226,8 @@ type executionContextSpec struct {
 }
 
 // newExecutionContext is the package-private validation seam used by contract
-// tests only. It returns the invalid zero value on every validation failure.
+// tests and narrowly scoped trusted constructors. It returns the invalid zero
+// value on every validation failure.
 func newExecutionContext(spec executionContextSpec) (ExecutionContext, error) {
 	var zero ExecutionContext
 
