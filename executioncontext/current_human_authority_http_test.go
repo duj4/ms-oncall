@@ -166,6 +166,61 @@ func TestCurrentHumanAuthorityHTTPComposition(t *testing.T) {
 	}
 }
 
+func TestAuthenticationBoundaryClearsInheritedRequesterBeforeCurrentHumanAuthority(t *testing.T) {
+	fixture := newCurrentHumanAuthorityFixture(t)
+	constructor := fixture.constructor(t)
+	precondition, err := constructor.Construct(fixture.ctx)
+	if err != nil || !precondition.Valid() || precondition.ExecutionContext() == nil {
+		t.Fatalf("exploit precondition authority = (%#v, %v), want valid inherited identity state", precondition, err)
+	}
+	fixture.users.calls = 0
+	fixture.users.lastID = ""
+	fixture.orgs.assignmentCalls = 0
+	fixture.orgs.normalCalls = 0
+	fixture.orgs.assignmentID = uuid.Nil
+	fixture.orgs.normalID = uuid.Nil
+
+	var requesterAfterAuthentication *auth.Requester
+	var deliveredAuthority *CurrentHumanAuthority
+	var deliveredExecutionContext *ExecutionContext
+	var deliveredLegacyUserID string
+	nextCalled := false
+	authorityMiddleware := constructor.WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		nextCalled = true
+		deliveredAuthority = CurrentHumanAuthorityFromContext(req.Context())
+		if deliveredAuthority != nil {
+			deliveredExecutionContext = deliveredAuthority.ExecutionContext()
+		}
+		deliveredLegacyUserID = permission.UserID(req.Context())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	afterAuthentication := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requesterAfterAuthentication = auth.RequesterFromContext(req.Context())
+		authorityMiddleware.ServeHTTP(w, req)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/", nil).WithContext(fixture.ctx)
+	response := httptest.NewRecorder()
+	new(auth.Handler).WrapHandler(afterAuthentication).ServeHTTP(response, req)
+
+	if !nextCalled || response.Code != http.StatusNoContent {
+		t.Fatalf("downstream = (called:%t status:%d), want unchanged anonymous continuation with 204", nextCalled, response.Code)
+	}
+	if requesterAfterAuthentication != nil {
+		t.Fatalf("Requester after authentication = %#v, want inherited identity cleared", requesterAfterAuthentication)
+	}
+	if deliveredAuthority != nil || deliveredExecutionContext != nil {
+		t.Fatalf("downstream authority = (%#v, %#v), want no trusted inherited human authority", deliveredAuthority, deliveredExecutionContext)
+	}
+	if fixture.users.calls != 0 || fixture.orgs.assignmentCalls != 0 || fixture.orgs.normalCalls != 0 {
+		t.Fatalf("inherited identity triggered durable authority reads = User:%d assignment:%d Organization:%d, want 0/0/0",
+			fixture.users.calls, fixture.orgs.assignmentCalls, fixture.orgs.normalCalls)
+	}
+	if deliveredLegacyUserID != fixture.userID.String() {
+		t.Fatalf("legacy User compatibility identity = %q, want preserved %q without typed authority", deliveredLegacyUserID, fixture.userID)
+	}
+}
+
 func TestCurrentHumanAuthorityHTTPCompositionDoesNotReusePriorAuthority(t *testing.T) {
 	validFixture := newCurrentHumanAuthorityFixture(t)
 	prior, err := validFixture.constructor(t).Construct(validFixture.ctx)

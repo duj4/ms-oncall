@@ -69,6 +69,17 @@ func WithRequester(ctx context.Context, requester Requester) context.Context {
 	return context.WithValue(ctx, requesterContextKey{}, requester)
 }
 
+// withoutRequester returns a context that shadows any inherited Requester.
+// Canonical HTTP authentication uses it before selecting an authentication
+// branch so only successful authentication for the current request can install
+// an authenticated-human Requester.
+func withoutRequester(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, requesterContextKey{}, Requester{})
+}
+
 // RequesterFromContext returns a defensive copy of the authenticated-human
 // Requester in ctx. Missing, invalid, and nil contexts return nil.
 func RequesterFromContext(ctx context.Context) *Requester {

@@ -702,6 +702,11 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 // Updating and clearing the session cookie is automatically handled.
 func (h *Handler) WrapHandler(wrapped http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// Treat inherited human identity as untrusted input. Every authentication
+		// branch below receives this sanitized request and only this request's
+		// successful canonical human Session flow may install a new Requester.
+		req = req.WithContext(withoutRequester(req.Context()))
+
 		if strings.HasPrefix(req.URL.Path, "/api/v2/slack") {
 			wrapped.ServeHTTP(w, req)
 			return

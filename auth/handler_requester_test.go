@@ -17,19 +17,23 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/target/goalert/auth/authtoken"
+	"github.com/target/goalert/integrationkey"
 	"github.com/target/goalert/keyring"
 	"github.com/target/goalert/permission"
 )
 
 type requesterSessionState struct {
-	mu      sync.Mutex
-	present bool
-	userID  uuid.UUID
-	role    permission.Role
-	lookups int
+	mu                   sync.Mutex
+	present              bool
+	userID               uuid.UUID
+	role                 permission.Role
+	lookups              int
+	integrationPresent   bool
+	integrationServiceID uuid.UUID
+	integrationLookups   int
 }
 
-func (s *requesterSessionState) result() (bool, uuid.UUID, permission.Role) {
+func (s *requesterSessionState) sessionResult() (bool, uuid.UUID, permission.Role) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lookups++
@@ -40,6 +44,19 @@ func (s *requesterSessionState) lookupCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lookups
+}
+
+func (s *requesterSessionState) integrationResult() (bool, uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.integrationLookups++
+	return s.integrationPresent, s.integrationServiceID
+}
+
+func (s *requesterSessionState) integrationLookupCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.integrationLookups
 }
 
 type requesterSessionConnector struct{ state *requesterSessionState }
@@ -97,15 +114,24 @@ func (s *requesterSessionStmt) QueryContext(context.Context, []driver.NamedValue
 }
 
 func (s *requesterSessionStmt) queryRows() (driver.Rows, error) {
-	if !strings.Contains(s.query, "from auth_user_sessions sess") {
-		return nil, errors.New("unexpected query in requester Session test driver")
+	normalizedQuery := strings.ToLower(s.query)
+	if strings.Contains(normalizedQuery, "from auth_user_sessions sess") {
+		present, userID, role := s.state.sessionResult()
+		rows := &requesterSessionRows{columns: []string{"user_id", "role"}}
+		if present {
+			rows.values = [][]driver.Value{{userID.String(), string(role)}}
+		}
+		return rows, nil
 	}
-	present, userID, role := s.state.result()
-	rows := &requesterSessionRows{columns: []string{"user_id", "role"}}
-	if present {
-		rows.values = [][]driver.Value{{userID.String(), string(role)}}
+	if strings.Contains(normalizedQuery, "integration_keys") {
+		present, serviceID := s.state.integrationResult()
+		rows := &requesterSessionRows{columns: []string{"service_id"}}
+		if present {
+			rows.values = [][]driver.Value{{serviceID.String()}}
+		}
+		return rows, nil
 	}
-	return rows, nil
+	return nil, errors.New("unexpected query in requester authentication test driver")
 }
 
 type requesterSessionRows struct {
@@ -153,12 +179,21 @@ func (*requesterTestKeyring) Shutdown(context.Context) error { return nil }
 
 var _ keyring.Keyring = (*requesterTestKeyring)(nil)
 
-func newRequesterAuthHandler(t *testing.T, state *requesterSessionState, sessionKeyring keyring.Keyring) *Handler {
+func newRequesterAuthHandler(
+	t *testing.T,
+	state *requesterSessionState,
+	sessionKeyring keyring.Keyring,
+	configure ...func(*sql.DB, *HandlerConfig),
+) *Handler {
 	t.Helper()
 	db := sql.OpenDB(requesterSessionConnector{state: state})
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	handler, err := NewHandler(context.Background(), db, HandlerConfig{SessionKeyring: sessionKeyring})
+	cfg := HandlerConfig{SessionKeyring: sessionKeyring}
+	for _, configureHandler := range configure {
+		configureHandler(db, &cfg)
+	}
+	handler, err := NewHandler(context.Background(), db, cfg)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -172,6 +207,20 @@ func signedRequesterTestToken(t *testing.T, signer *requesterTestKeyring, token 
 		t.Fatalf("encode token: %v", err)
 	}
 	return encoded
+}
+
+func requestWithInheritedRequester(t *testing.T, path string, userID, sessionID uuid.UUID) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "http://example.test"+path, nil)
+	ctx := permission.UserSourceContext(req.Context(), userID.String(), permission.RoleUser, &permission.SourceInfo{
+		Type: permission.SourceTypeAuthProvider,
+		ID:   sessionID.String(),
+	})
+	requester, err := NewRequester(userID.String(), sessionID.String())
+	if err != nil {
+		t.Fatalf("NewRequester: %v", err)
+	}
+	return req.WithContext(WithRequester(ctx, requester))
 }
 
 func requesterFromWrappedRequest(t *testing.T, handler *Handler, req *http.Request) (*Requester, *permission.SourceInfo, string) {
@@ -204,6 +253,153 @@ func TestWrapHandlerCanonicalSessionInstallsRequester(t *testing.T) {
 	}
 	if source == nil || source.Type != permission.SourceTypeAuthProvider || source.ID != sessionID.String() || legacyUserID != userID.String() {
 		t.Fatalf("legacy auth = (%#v, %q), want preserved canonical Session/User", source, legacyUserID)
+	}
+	if state.lookupCount() != 1 {
+		t.Fatalf("FindCurrentUserSession query count = %d, want exactly 1", state.lookupCount())
+	}
+}
+
+func TestWrapHandlerClearsInheritedRequesterBeforeAuthenticationBranches(t *testing.T) {
+	oldUserID := uuid.MustParse("afc9097f-b88d-4895-9cc7-4a643e70bd76")
+	oldSessionID := uuid.MustParse("ef4f827b-83ca-4c8f-a725-e95e94f9b1d6")
+
+	tests := []struct {
+		name        string
+		path        string
+		present     bool
+		cookie      func(*testing.T, *requesterTestKeyring) string
+		wantLookups int
+	}{
+		{name: "anonymous", path: "/", present: true},
+		{
+			name:        "forged Session",
+			path:        "/",
+			present:     true,
+			wantLookups: 0,
+			cookie: func(t *testing.T, _ *requesterTestKeyring) string {
+				forgedKeyring := &requesterTestKeyring{key: []byte("forged-inherited-requester-test-key")}
+				return signedRequesterTestToken(t, forgedKeyring, authtoken.Token{Version: 1, Type: authtoken.TypeSession, ID: oldSessionID})
+			},
+		},
+		{
+			name:        "deleted Session",
+			path:        "/",
+			present:     false,
+			wantLookups: 1,
+			cookie: func(t *testing.T, sessionKeyring *requesterTestKeyring) string {
+				return signedRequesterTestToken(t, sessionKeyring, authtoken.Token{Version: 1, Type: authtoken.TypeSession, ID: oldSessionID})
+			},
+		},
+		{
+			name:        "Slack bypass",
+			path:        "/api/v2/slack/events",
+			present:     true,
+			wantLookups: 0,
+			cookie: func(t *testing.T, sessionKeyring *requesterTestKeyring) string {
+				return signedRequesterTestToken(t, sessionKeyring, authtoken.Token{Version: 1, Type: authtoken.TypeSession, ID: oldSessionID})
+			},
+		},
+		{
+			name:        "Mailgun v2 bypass",
+			path:        "/api/v2/mailgun/incoming",
+			present:     true,
+			wantLookups: 0,
+			cookie: func(t *testing.T, sessionKeyring *requesterTestKeyring) string {
+				return signedRequesterTestToken(t, sessionKeyring, authtoken.Token{Version: 1, Type: authtoken.TypeSession, ID: oldSessionID})
+			},
+		},
+		{
+			name:        "Mailgun v1 bypass",
+			path:        "/v1/webhooks/mailgun",
+			present:     true,
+			wantLookups: 0,
+			cookie: func(t *testing.T, sessionKeyring *requesterTestKeyring) string {
+				return signedRequesterTestToken(t, sessionKeyring, authtoken.Token{Version: 1, Type: authtoken.TypeSession, ID: oldSessionID})
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := &requesterSessionState{present: test.present, userID: oldUserID, role: permission.RoleUser}
+			sessionKeyring := &requesterTestKeyring{key: []byte("inherited-requester-session-test-key")}
+			handler := newRequesterAuthHandler(t, state, sessionKeyring)
+			req := requestWithInheritedRequester(t, test.path, oldUserID, oldSessionID)
+			if test.cookie != nil {
+				req.AddCookie(&http.Cookie{Name: CookieName, Value: test.cookie(t, sessionKeyring)})
+			}
+
+			requester, source, legacyUserID := requesterFromWrappedRequest(t, handler, req)
+			if requester != nil {
+				t.Fatalf("inherited Requester = %#v, want absent downstream", requester)
+			}
+			if source == nil || source.Type != permission.SourceTypeAuthProvider || source.ID != oldSessionID.String() || legacyUserID != oldUserID.String() {
+				t.Fatalf("legacy compatibility context = (%#v, %q), want inherited metadata preserved without typed Requester", source, legacyUserID)
+			}
+			if state.lookupCount() != test.wantLookups {
+				t.Fatalf("FindCurrentUserSession query count = %d, want %d", state.lookupCount(), test.wantLookups)
+			}
+		})
+	}
+}
+
+func TestWrapHandlerClearsInheritedRequesterOnIntegrationAuthentication(t *testing.T) {
+	oldUserID := uuid.MustParse("afc9097f-b88d-4895-9cc7-4a643e70bd76")
+	oldSessionID := uuid.MustParse("ef4f827b-83ca-4c8f-a725-e95e94f9b1d6")
+	integrationKeyID := uuid.MustParse("da3530ff-1d99-42f2-9ac0-f8f1ef7f3eb9")
+	serviceID := uuid.MustParse("886131d7-1f0c-496f-a05a-b4ab16d86fca")
+	state := &requesterSessionState{
+		integrationPresent:   true,
+		integrationServiceID: serviceID,
+	}
+	sessionKeyring := &requesterTestKeyring{key: []byte("integration-requester-session-test-key")}
+	handler := newRequesterAuthHandler(t, state, sessionKeyring, func(db *sql.DB, cfg *HandlerConfig) {
+		cfg.IntKeyStore = integrationkey.NewStore(context.Background(), db, nil, nil, nil)
+	})
+	req := requestWithInheritedRequester(t, "/api/v2/generic/incoming", oldUserID, oldSessionID)
+	req.Header.Set("Authorization", "Bearer "+integrationKeyID.String())
+
+	var requester *Requester
+	var source *permission.SourceInfo
+	var deliveredServiceID string
+	handler.WrapHandler(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		requester = RequesterFromContext(req.Context())
+		source = permission.Source(req.Context())
+		deliveredServiceID = permission.ServiceID(req.Context())
+	})).ServeHTTP(httptest.NewRecorder(), req)
+
+	if requester != nil {
+		t.Fatalf("inherited Requester = %#v, want absent after integration authentication", requester)
+	}
+	if source == nil || source.Type != permission.SourceTypeIntegrationKey || source.ID != integrationKeyID.String() || deliveredServiceID != serviceID.String() {
+		t.Fatalf("integration context = (%#v, %q), want current IntegrationKey service", source, deliveredServiceID)
+	}
+	if state.lookupCount() != 0 || state.integrationLookupCount() != 1 {
+		t.Fatalf("authentication lookup counts = Session:%d Integration:%d, want 0/1", state.lookupCount(), state.integrationLookupCount())
+	}
+}
+
+func TestWrapHandlerReplacesInheritedRequesterAfterCanonicalSessionAuthentication(t *testing.T) {
+	oldUserID := uuid.MustParse("afc9097f-b88d-4895-9cc7-4a643e70bd76")
+	oldSessionID := uuid.MustParse("ef4f827b-83ca-4c8f-a725-e95e94f9b1d6")
+	newUserID := uuid.MustParse("8fdd88e8-6633-4e2f-87e2-5b6ac594830a")
+	newSessionID := uuid.MustParse("bcd5cc51-36d5-4340-aa65-395e15dd3a24")
+	state := &requesterSessionState{present: true, userID: newUserID, role: permission.RoleUser}
+	sessionKeyring := &requesterTestKeyring{key: []byte("replacement-requester-session-test-key")}
+	handler := newRequesterAuthHandler(t, state, sessionKeyring)
+	token := signedRequesterTestToken(t, sessionKeyring, authtoken.Token{Version: 1, Type: authtoken.TypeSession, ID: newSessionID})
+	req := requestWithInheritedRequester(t, "/", oldUserID, oldSessionID)
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+
+	requester, source, legacyUserID := requesterFromWrappedRequest(t, handler, req)
+	if requester == nil || !requester.Valid() || requester.UserID() != newUserID || requester.SessionID() != newSessionID {
+		t.Fatalf("replacement Requester = %#v, want newly authenticated User/Session", requester)
+	}
+	if requester.UserID() == oldUserID || requester.SessionID() == oldSessionID {
+		t.Fatal("inherited Requester identity survived successful replacement")
+	}
+	if source == nil || source.Type != permission.SourceTypeAuthProvider || source.ID != newSessionID.String() || legacyUserID != newUserID.String() {
+		t.Fatalf("legacy replacement context = (%#v, %q), want newly authenticated Session/User", source, legacyUserID)
 	}
 	if state.lookupCount() != 1 {
 		t.Fatalf("FindCurrentUserSession query count = %d, want exactly 1", state.lookupCount())
