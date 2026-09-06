@@ -644,7 +644,12 @@ func (h *Handler) authWithToken(w http.ResponseWriter, req *http.Request, next h
 	return true
 }
 
-func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *http.Request, tokenStr string, isCookie bool) (context.Context, error) {
+type humanSessionCredential struct {
+	token            *authtoken.Token
+	signedWithOldKey bool
+}
+
+func (h *Handler) parseHumanSessionCredential(tokenStr string) (humanSessionCredential, error) {
 	tok, isOld, err := authtoken.Parse(tokenStr, func(t authtoken.Type, p, sig []byte) (bool, bool) {
 		// only Session tokens are supported by the human authentication path
 		if t != authtoken.TypeSession {
@@ -653,11 +658,49 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 		return h.cfg.SessionKeyring.Verify(p, sig)
 	})
 	if err != nil {
-		return nil, err
+		return humanSessionCredential{}, err
 	}
 	if tok.Type != authtoken.TypeSession {
-		return nil, validation.NewGenericError("invalid human authentication token type")
+		return humanSessionCredential{}, validation.NewGenericError("invalid human authentication token type")
 	}
+	return humanSessionCredential{token: tok, signedWithOldKey: isOld}, nil
+}
+
+func (h *Handler) selectHumanSessionCookie(req *http.Request) (humanSessionCredential, bool) {
+	var current, legacy humanSessionCredential
+	var hasCurrent, hasLegacy bool
+
+	// Validate cookie candidates without consulting durable Session state. The
+	// current cookie wins over the legacy name regardless of header order.
+	for _, cookie := range req.Cookies() {
+		switch cookie.Name {
+		case CookieName:
+			if hasCurrent {
+				continue
+			}
+			credential, err := h.parseHumanSessionCredential(cookie.Value)
+			if err == nil {
+				current, hasCurrent = credential, true
+			}
+		case v1CookieName:
+			if hasLegacy {
+				continue
+			}
+			credential, err := h.parseHumanSessionCredential(cookie.Value)
+			if err == nil {
+				legacy, hasLegacy = credential, true
+			}
+		}
+	}
+
+	if hasCurrent {
+		return current, true
+	}
+	return legacy, hasLegacy
+}
+
+func (h *Handler) authUserWithCredential(ctx context.Context, w http.ResponseWriter, req *http.Request, credential humanSessionCredential, isCookie bool) (context.Context, error) {
+	tok := credential.token
 	session, err := h.FindCurrentUserSession(ctx, tok.ID)
 	if err != nil {
 		return nil, err
@@ -670,7 +713,7 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 		return nil, err
 	}
 
-	if isCookie && isOld {
+	if isCookie && credential.signedWithOldKey {
 		// send new signature back if it was signed with an old key
 		newSignedToken, err := tok.Encode(h.cfg.SessionKeyring.Sign)
 		if err != nil {
@@ -694,6 +737,14 @@ func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *h
 		},
 	)
 	return WithRequester(ctx, requester), nil
+}
+
+func (h *Handler) tryAuthUser(ctx context.Context, w http.ResponseWriter, req *http.Request, tokenStr string, isCookie bool) (context.Context, error) {
+	credential, err := h.parseHumanSessionCredential(tokenStr)
+	if err != nil {
+		return nil, err
+	}
+	return h.authUserWithCredential(ctx, w, req, credential, isCookie)
 }
 
 // WrapHandler will wrap an existing http.Handler so the Context of the request
@@ -737,21 +788,13 @@ func (h *Handler) WrapHandler(wrapped http.Handler) http.Handler {
 			return
 		}
 
-		for _, c := range req.Cookies() {
-			switch c.Name {
-			case CookieName, v1CookieName:
-			default:
-				// only interested in cookies with one of the names above
-				continue
+		credential, ok := h.selectHumanSessionCookie(req)
+		if ok {
+			ctx, err := h.authUserWithCredential(req.Context(), w, req, credential, true)
+			if err == nil {
+				wrapped.ServeHTTP(w, req.WithContext(ctx))
+				return
 			}
-
-			ctx, err := h.tryAuthUser(req.Context(), w, req, c.Value, true)
-			if err != nil {
-				continue
-			}
-
-			wrapped.ServeHTTP(w, req.WithContext(ctx))
-			return
 		}
 
 		wrapped.ServeHTTP(w, req)
