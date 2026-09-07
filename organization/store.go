@@ -29,17 +29,16 @@ type rowQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-const organizationColumns = `id, classification, display_name, canonical_name, lifecycle, created_at, updated_at`
+const organizationColumns = `id, classification, display_name, canonical_name, created_at, updated_at`
 
 func scanOrganization(row rowScanner) (*Organization, error) {
 	var org Organization
-	var classification, lifecycle string
+	var classification string
 	err := row.Scan(
 		&org.ID,
 		&classification,
 		&org.DisplayName,
 		&org.CanonicalName,
-		&lifecycle,
 		&org.CreatedAt,
 		&org.UpdatedAt,
 	)
@@ -47,7 +46,6 @@ func scanOrganization(row rowScanner) (*Organization, error) {
 		return nil, err
 	}
 	org.Classification = Classification(classification)
-	org.Lifecycle = Lifecycle(lifecycle)
 	if err := validateLoadedOrganization(&org); err != nil {
 		return nil, err
 	}
@@ -56,13 +54,12 @@ func scanOrganization(row rowScanner) (*Organization, error) {
 
 func scanNormalOrganization(row rowScanner) (*NormalOrganization, error) {
 	var normal NormalOrganization
-	var classification, lifecycle string
+	var classification string
 	err := row.Scan(
 		&normal.ID,
 		&classification,
 		&normal.DisplayName,
 		&normal.CanonicalName,
-		&lifecycle,
 		&normal.CreatedAt,
 		&normal.UpdatedAt,
 		&normal.CorporateMappingKey,
@@ -72,7 +69,6 @@ func scanNormalOrganization(row rowScanner) (*NormalOrganization, error) {
 		return nil, err
 	}
 	normal.Classification = Classification(classification)
-	normal.Lifecycle = Lifecycle(lifecycle)
 	if err := validateLoadedOrganization(&normal.Organization); err != nil {
 		return nil, err
 	}
@@ -107,7 +103,7 @@ func findOrganization(ctx context.Context, db rowQueryer, id uuid.UUID, lock boo
 func findNormalOrganization(ctx context.Context, db rowQueryer, predicate string, value any) (*NormalOrganization, error) {
 	query := `
 		SELECT o.id, o.classification, o.display_name, o.canonical_name,
-			o.lifecycle, o.created_at, o.updated_at,
+			o.created_at, o.updated_at,
 			n.corporate_mapping_key, n.iana_time_zone
 		FROM normal_organizations n
 		JOIN organizations o
@@ -125,7 +121,7 @@ func findNormalOrganization(ctx context.Context, db rowQueryer, predicate string
 }
 
 // CreateNormal creates the base and NORMAL subtype in one transaction. The
-// initial lifecycle is always ACTIVE and the stable UUID is generated here.
+// stable UUID is generated here.
 func (s *Store) CreateNormal(ctx context.Context, input CreateNormalOrganizationInput) (*NormalOrganization, error) {
 	input, err := validateCreateInput(input)
 	if err != nil {
@@ -144,8 +140,8 @@ func (s *Store) CreateNormal(ctx context.Context, input CreateNormalOrganization
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO organizations (
-			id, classification, display_name, canonical_name, lifecycle
-		) VALUES ($1, 'NORMAL', $2, $3, 'ACTIVE')
+			id, classification, display_name, canonical_name
+		) VALUES ($1, 'NORMAL', $2, $3)
 	`, id, input.DisplayName, input.CanonicalName)
 	if err != nil {
 		return nil, mapWriteError("create Organization base", err)
@@ -328,58 +324,6 @@ func (s *Store) UpdateTimeZone(ctx context.Context, id uuid.UUID, timeZone strin
 	return normal, nil
 }
 
-// TransitionLifecycle applies the explicit lifecycle policy to a normal
-// Organization. A same-state request is a successful no-op and leaves the
-// audit timestamp unchanged. RETIRED is terminal.
-func (s *Store) TransitionLifecycle(ctx context.Context, id uuid.UUID, target Lifecycle) (*Organization, error) {
-	if id == uuid.Nil {
-		return nil, fmt.Errorf("%w: Organization ID is required", ErrInvalidInput)
-	}
-	if err := validateMutableLifecycleTarget(target); err != nil {
-		return nil, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin Organization lifecycle transition: %w", err)
-	}
-	defer sqlutil.Rollback(ctx, "organization: lifecycle transition", tx)
-
-	org, err := findOrganization(ctx, tx, id, true)
-	if err != nil {
-		return nil, err
-	}
-	if org.Classification != ClassificationNormal {
-		return nil, fmt.Errorf("%w: Default Organization lifecycle is not mutable through the normal store", ErrInvalidInput)
-	}
-	if !lifecycleTransitionAllowed(org.Lifecycle, target) {
-		return nil, fmt.Errorf("%w: %s to %s", ErrInvalidLifecycleTransition, org.Lifecycle, target)
-	}
-	if org.Lifecycle == target {
-		if err := tx.Commit(); err != nil {
-			return nil, mapWriteError("commit same-state lifecycle transition", err)
-		}
-		return org, nil
-	}
-
-	updated, err := scanOrganization(tx.QueryRowContext(ctx, `
-		UPDATE organizations
-		SET lifecycle = $2
-		WHERE id = $1 AND classification = 'NORMAL' AND lifecycle = $3
-		RETURNING `+organizationColumns,
-		id, target, org.Lifecycle,
-	))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("%w: lifecycle changed concurrently", ErrInvariantViolation)
-	}
-	if err != nil {
-		return nil, mapWriteError("transition Organization lifecycle", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, mapWriteError("commit Organization lifecycle transition", err)
-	}
-	return updated, nil
-}
-
 func mapWriteError(operation string, err error) error {
 	if err == nil {
 		return nil
@@ -406,10 +350,6 @@ func mapWriteError(operation string, err error) error {
 		}
 	case "23514":
 		switch dbErr.ConstraintName {
-		case "organizations_lifecycle_transition":
-			if dbErr.SchemaName == "public" && dbErr.TableName == "organizations" && dbErr.ColumnName == "lifecycle" {
-				target = ErrInvalidLifecycleTransition
-			}
 		case "organizations_display_name_not_blank",
 			"organizations_canonical_name_not_blank",
 			"organizations_audit_timestamp_order",
@@ -417,8 +357,7 @@ func mapWriteError(operation string, err error) error {
 			"organizations_id_immutable",
 			"organizations_classification_immutable",
 			"organizations_canonical_name_immutable",
-			"organizations_created_at_immutable",
-			"organizations_default_lifecycle_immutable":
+			"organizations_created_at_immutable":
 			if dbErr.SchemaName == "public" && dbErr.TableName == "organizations" {
 				target = ErrInvariantViolation
 			}
@@ -452,7 +391,6 @@ func mapWriteError(operation string, err error) error {
 				"organizations.classification",
 				"organizations.display_name",
 				"organizations.canonical_name",
-				"organizations.lifecycle",
 				"organizations.created_at",
 				"organizations.updated_at",
 				"normal_organizations.organization_id",

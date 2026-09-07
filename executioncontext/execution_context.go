@@ -1,11 +1,11 @@
-// Package executioncontext defines immutable trust-context values and the
-// narrowly composed current-authority construction boundary.
+// Package executioncontext defines immutable request-bound authority values
+// and the narrowly composed human request-admission boundary.
 //
-// This package does not authenticate credentials, authorize business
-// operations, or guard protected data and effects. Its HTTP composition path
-// consumes an authenticated-human Requester, re-reads current durable User and
-// Organization authority for one operation, and installs only a validated
-// operation-local result in context.Context.
+// This package does not authenticate credentials or authorize business
+// operations. Its HTTP composition path consumes an authenticated-human
+// Requester, re-reads current local User and Organization authority at request
+// admission, and installs one validated ExecutionContext for that finite
+// request.
 package executioncontext
 
 import (
@@ -100,23 +100,20 @@ func (p *PrivilegeMetadata) PlatformAdmin() bool {
 	return p != nil && p.platformAdmin
 }
 
-// ExecutionContext is an immutable value carrying validated identity and
-// authority-mode evidence. All trust-bearing fields are private, the zero value
-// is invalid, and this checkpoint intentionally exposes no public constructor.
+// ExecutionContext is an immutable value carrying validated request-bound
+// identity and authority scope. Its zero value is invalid. Private fields and
+// the package construction seam provide ordinary Go encapsulation; trusted
+// compiled Core code remains inside the TCB.
 type ExecutionContext struct {
-	valid                      bool
-	principalKind              PrincipalKind
-	principalID                string
-	actualActorID              string
-	authenticationSource       AuthenticationSource
-	privileges                 PrivilegeMetadata
-	authorityMode              AuthorityMode
-	effectiveOrganizationID    uuid.UUID
-	hasEffectiveOrganization   bool
-	assignmentGeneration       int64
-	hasAssignmentGeneration    bool
-	platformAdminAssumptionID  string
-	hasPlatformAdminAssumption bool
+	valid                    bool
+	principalKind            PrincipalKind
+	principalID              string
+	actualActorID            string
+	authenticationSource     AuthenticationSource
+	privileges               PrivilegeMetadata
+	authorityMode            AuthorityMode
+	effectiveOrganizationID  uuid.UUID
+	hasEffectiveOrganization bool
 }
 
 // Valid reports whether the value was completely validated by the private
@@ -191,39 +188,18 @@ func (c *ExecutionContext) EffectiveOrganizationID() (uuid.UUID, bool) {
 	return c.effectiveOrganizationID, true
 }
 
-// AssignmentGeneration returns optional positive assignment-generation
-// evidence. It does not load, compare, or enforce generation state.
-func (c *ExecutionContext) AssignmentGeneration() (int64, bool) {
-	if !c.Valid() || !c.hasAssignmentGeneration {
-		return 0, false
-	}
-	return c.assignmentGeneration, true
-}
-
-// PlatformAdminAssumptionID returns optional structurally validated assumption
-// identity evidence. It does not create, validate, activate, or revoke an
-// assumption.
-func (c *ExecutionContext) PlatformAdminAssumptionID() (string, bool) {
-	if !c.Valid() || !c.hasPlatformAdminAssumption {
-		return "", false
-	}
-	return c.platformAdminAssumptionID, true
-}
-
-// executionContextSpec is private because its fields carry trust declarations.
-// Only narrowly scoped constructors in this package may produce it.
+// executionContextSpec is the package construction input. Production
+// constructors must derive it from their principal-specific trusted inputs.
 type executionContextSpec struct {
-	principalKind             PrincipalKind
-	principalID               string
-	actualActorID             string
-	authenticationSourceType  string
-	authenticationSourceID    string
-	organizationRole          organization.OrganizationRole
-	platformAdmin             bool
-	authorityMode             AuthorityMode
-	effectiveOrganizationID   *uuid.UUID
-	assignmentGeneration      *int64
-	platformAdminAssumptionID *string
+	principalKind            PrincipalKind
+	principalID              string
+	actualActorID            string
+	authenticationSourceType string
+	authenticationSourceID   string
+	organizationRole         organization.OrganizationRole
+	platformAdmin            bool
+	authorityMode            AuthorityMode
+	effectiveOrganizationID  *uuid.UUID
 }
 
 // newExecutionContext is the package-private validation seam used by contract
@@ -277,24 +253,7 @@ func newExecutionContext(spec executionContextSpec) (ExecutionContext, error) {
 		}
 	}
 
-	var assignmentGeneration int64
-	hasAssignmentGeneration := spec.assignmentGeneration != nil
-	if hasAssignmentGeneration {
-		assignmentGeneration = *spec.assignmentGeneration
-		if assignmentGeneration <= 0 {
-			return zero, invalidContextError("assignment generation")
-		}
-	}
-
-	var platformAdminAssumptionID string
-	hasPlatformAdminAssumption := spec.platformAdminAssumptionID != nil
-	if hasPlatformAdminAssumption {
-		platformAdminAssumptionID = *spec.platformAdminAssumptionID
-		if err := validateStableIdentity(platformAdminAssumptionID); err != nil {
-			return zero, invalidContextError("PlatformAdmin assumption identity")
-		}
-	}
-	if !validPrincipalAuthorityCombination(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) {
+	if !validPrincipalAuthorityCombination(spec) {
 		return zero, invalidContextError("principal privilege and authority-mode combination")
 	}
 
@@ -311,51 +270,43 @@ func newExecutionContext(spec executionContextSpec) (ExecutionContext, error) {
 			organizationRole: spec.organizationRole,
 			platformAdmin:    spec.platformAdmin,
 		},
-		authorityMode:              spec.authorityMode,
-		effectiveOrganizationID:    effectiveOrganizationID,
-		hasEffectiveOrganization:   hasEffectiveOrganization,
-		assignmentGeneration:       assignmentGeneration,
-		hasAssignmentGeneration:    hasAssignmentGeneration,
-		platformAdminAssumptionID:  platformAdminAssumptionID,
-		hasPlatformAdminAssumption: hasPlatformAdminAssumption,
+		authorityMode:            spec.authorityMode,
+		effectiveOrganizationID:  effectiveOrganizationID,
+		hasEffectiveOrganization: hasEffectiveOrganization,
 	}, nil
 }
 
 // validPrincipalAuthorityCombination is the structural principal/privilege
 // matrix. It deliberately makes no operation or capability decision.
-func validPrincipalAuthorityCombination(spec executionContextSpec, hasAssignmentGeneration, hasPlatformAdminAssumption bool) bool {
+func validPrincipalAuthorityCombination(spec executionContextSpec) bool {
 	switch spec.principalKind {
 	case PrincipalKindHuman:
-		return validHumanAuthorityCombination(spec, hasPlatformAdminAssumption)
+		return validHumanAuthorityCombination(spec)
 	case PrincipalKindIntegration:
-		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+		return validNonHumanMetadata(spec) &&
 			spec.authorityMode == AuthorityModeOrganizationScoped
 	case PrincipalKindOrganizationSystem:
-		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+		return validNonHumanMetadata(spec) &&
 			spec.authorityMode == AuthorityModeOrganizationScoped
 	case PrincipalKindMachine:
-		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+		return validNonHumanMetadata(spec) &&
 			(spec.authorityMode == AuthorityModeOrganizationScoped || spec.authorityMode == AuthorityModePlatformGlobal)
 	case PrincipalKindPlatformSystem:
-		return validNonHumanMetadata(spec, hasAssignmentGeneration, hasPlatformAdminAssumption) &&
+		return validNonHumanMetadata(spec) &&
 			spec.authorityMode == AuthorityModePlatformGlobal
 	default:
 		return false
 	}
 }
 
-func validHumanAuthorityCombination(spec executionContextSpec, hasPlatformAdminAssumption bool) bool {
+func validHumanAuthorityCombination(spec executionContextSpec) bool {
 	switch spec.authorityMode {
 	case AuthorityModeDefaultRestricted:
-		return spec.organizationRole == organization.OrganizationRoleNone && !hasPlatformAdminAssumption
+		return spec.organizationRole == organization.OrganizationRoleNone
 	case AuthorityModePlatformGlobal:
 		return spec.platformAdmin &&
-			spec.organizationRole == organization.OrganizationRoleNone &&
-			!hasPlatformAdminAssumption
+			spec.organizationRole == organization.OrganizationRoleNone
 	case AuthorityModeOrganizationScoped:
-		if hasPlatformAdminAssumption {
-			return spec.platformAdmin && spec.organizationRole == organization.OrganizationRoleNone
-		}
 		return !spec.platformAdmin &&
 			(spec.organizationRole == organization.OrganizationRoleMember || spec.organizationRole == organization.OrganizationRoleAdmin)
 	default:
@@ -363,11 +314,9 @@ func validHumanAuthorityCombination(spec executionContextSpec, hasPlatformAdminA
 	}
 }
 
-func validNonHumanMetadata(spec executionContextSpec, hasAssignmentGeneration, hasPlatformAdminAssumption bool) bool {
+func validNonHumanMetadata(spec executionContextSpec) bool {
 	return spec.organizationRole == organization.OrganizationRoleNone &&
-		!spec.platformAdmin &&
-		!hasPlatformAdminAssumption &&
-		!hasAssignmentGeneration
+		!spec.platformAdmin
 }
 
 func validPrincipalKind(value PrincipalKind) bool {

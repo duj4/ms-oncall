@@ -130,11 +130,7 @@ func (r *OrganizationAssignmentResolver) Resolve(ctx context.Context, enterprise
 	}
 	sort.Strings(sortedCorporateKeys)
 
-	type observedState struct {
-		lifecycle Lifecycle
-	}
-	observedByID := make(map[uuid.UUID]observedState, len(sortedCorporateKeys))
-	activeByID := make(map[uuid.UUID]struct{}, len(sortedCorporateKeys))
+	matchedByID := make(map[uuid.UUID]struct{}, len(sortedCorporateKeys))
 	for _, key := range sortedCorporateKeys {
 		normal, err := r.reader.FindNormalByCorporateMappingKey(ctx, key)
 		if errors.Is(err, ErrNotFound) {
@@ -146,23 +142,16 @@ func (r *OrganizationAssignmentResolver) Resolve(ctx context.Context, enterprise
 		if err := validateResolvedNormalOrganization(key, normal); err != nil {
 			return zero, err
 		}
-		state := observedState{lifecycle: normal.Lifecycle}
-		if previous, ok := observedByID[normal.ID]; ok && previous != state {
-			return zero, fmt.Errorf("%w: inconsistent repeated Normal Organization identity", ErrInvariantViolation)
-		}
-		observedByID[normal.ID] = state
-		if normal.Lifecycle == LifecycleActive {
-			activeByID[normal.ID] = struct{}{}
-		}
+		matchedByID[normal.ID] = struct{}{}
 	}
 
-	matchedCount := len(activeByID)
+	matchedCount := len(matchedByID)
 	decision := OrganizationAssignmentDecision{
 		MatchedCount:        matchedCount,
 		SourceConfigVersion: r.sourceConfigVersion,
 	}
 	if matchedCount == 1 {
-		for id := range activeByID {
+		for id := range matchedByID {
 			decision.MappingOutcome = MappingOutcomeExactlyOne
 			decision.EffectiveOrganizationID = id
 			decision.EffectiveOrganizationClassification = ClassificationNormal
@@ -224,17 +213,13 @@ func validateResolvedNormalOrganization(expectedCorporateKey string, normal *Nor
 		normal.Classification != ClassificationNormal || normal.CorporateMappingKey != expectedCorporateKey {
 		return fmt.Errorf("%w: contradictory Normal Organization lookup result", ErrInvariantViolation)
 	}
-	if err := validateLifecycle(normal.Lifecycle); err != nil {
-		return err
-	}
 	return nil
 }
 
 func validateResolvedDefaultOrganization(org *Organization) error {
 	if org == nil || org.ID.String() != DefaultOrganizationID ||
 		org.Classification != ClassificationDefault ||
-		org.CanonicalName != DefaultOrganizationCanonicalName ||
-		org.Lifecycle != LifecycleActive {
+		org.CanonicalName != DefaultOrganizationCanonicalName {
 		return fmt.Errorf("%w: contradictory distinguished Default Organization", ErrInvariantViolation)
 	}
 	return nil

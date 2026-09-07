@@ -40,12 +40,11 @@ func (r *fakeOrganizationAssignmentReader) FindDefault(context.Context) (*Organi
 	return r.defaultOrg, nil
 }
 
-func testNormalOrganization(id uuid.UUID, key string, lifecycle Lifecycle) *NormalOrganization {
+func testNormalOrganization(id uuid.UUID, key string) *NormalOrganization {
 	return &NormalOrganization{
 		Organization: Organization{
 			ID:             id,
 			Classification: ClassificationNormal,
-			Lifecycle:      lifecycle,
 		},
 		CorporateMappingKey: key,
 	}
@@ -56,7 +55,6 @@ func testDefaultOrganization() *Organization {
 		ID:             uuid.MustParse(DefaultOrganizationID),
 		Classification: ClassificationDefault,
 		CanonicalName:  DefaultOrganizationCanonicalName,
-		Lifecycle:      LifecycleActive,
 	}
 }
 
@@ -228,7 +226,7 @@ func TestOrganizationAssignmentResolverConfigurationValidation(t *testing.T) {
 	t.Run("duplicate equivalent same target accepted and deduplicated", func(t *testing.T) {
 		reader := newFakeOrganizationAssignmentReader()
 		id := uuid.New()
-		reader.normalByKey["corp:key-a"] = testNormalOrganization(id, "corp:key-a", LifecycleActive)
+		reader.normalByKey["corp:key-a"] = testNormalOrganization(id, "corp:key-a")
 		resolver := newTestOrganizationAssignmentResolver(t, reader, []OrganizationAssignmentMappingRule{
 			{EnterpriseMappingIdentifier: "\u3000enterprise:a", CorporateMappingKey: "corp:key-a"},
 			{EnterpriseMappingIdentifier: "enterprise:a\u00a0", CorporateMappingKey: "corp:key-a"},
@@ -303,7 +301,7 @@ func TestOrganizationAssignmentResolverConfigurationValidation(t *testing.T) {
 	t.Run("accepted snapshot is immutable", func(t *testing.T) {
 		reader := newFakeOrganizationAssignmentReader()
 		id := uuid.New()
-		reader.normalByKey["corp:key-a"] = testNormalOrganization(id, "corp:key-a", LifecycleActive)
+		reader.normalByKey["corp:key-a"] = testNormalOrganization(id, "corp:key-a")
 		config := OrganizationAssignmentResolverConfig{
 			SourceConfigVersion: "config-v1",
 			Rules: []OrganizationAssignmentMappingRule{{
@@ -327,13 +325,13 @@ func TestOrganizationAssignmentResolverConfigurationValidation(t *testing.T) {
 	})
 }
 
-func TestOrganizationAssignmentResolverCardinalityAndLifecycle(t *testing.T) {
+func TestOrganizationAssignmentResolverCardinality(t *testing.T) {
 	defaultID := uuid.MustParse(DefaultOrganizationID)
 	activeA := uuid.New()
 	activeB := uuid.New()
 	activeC := uuid.New()
-	suspended := uuid.New()
-	retired := uuid.New()
+	normalD := uuid.New()
+	normalE := uuid.New()
 	sameIdentity := uuid.New()
 
 	rules := []OrganizationAssignmentMappingRule{
@@ -360,12 +358,12 @@ func TestOrganizationAssignmentResolverCardinalityAndLifecycle(t *testing.T) {
 	}{
 		{name: "no identifiers", wantOutcome: MappingOutcomeZero, wantID: defaultID, wantClass: ClassificationDefault},
 		{name: "unknown identifiers only", inputs: []string{"enterprise:unknown"}, wantOutcome: MappingOutcomeZero, wantID: defaultID, wantClass: ClassificationDefault},
-		{name: "suspended only", inputs: []string{"enterprise:suspended"}, wantOutcome: MappingOutcomeZero, wantID: defaultID, wantClass: ClassificationDefault, wantNormalKeys: []string{"corp:suspended"}},
-		{name: "retired only", inputs: []string{"enterprise:retired"}, wantOutcome: MappingOutcomeZero, wantID: defaultID, wantClass: ClassificationDefault, wantNormalKeys: []string{"corp:retired"}},
+		{name: "one additional normal target", inputs: []string{"enterprise:suspended"}, wantOutcome: MappingOutcomeExactlyOne, wantCount: 1, wantID: normalD, wantClass: ClassificationNormal, wantNormalKeys: []string{"corp:suspended"}},
+		{name: "another normal target", inputs: []string{"enterprise:retired"}, wantOutcome: MappingOutcomeExactlyOne, wantCount: 1, wantID: normalE, wantClass: ClassificationNormal, wantNormalKeys: []string{"corp:retired"}},
 		{name: "one active", inputs: []string{"enterprise:active-a"}, wantOutcome: MappingOutcomeExactlyOne, wantCount: 1, wantID: activeA, wantClass: ClassificationNormal, wantNormalKeys: []string{"corp:active-a"}},
 		{name: "repeated same input", inputs: []string{"enterprise:active-a", " enterprise:active-a ", "enterprise:active-a"}, wantOutcome: MappingOutcomeExactlyOne, wantCount: 1, wantID: activeA, wantClass: ClassificationNormal, wantNormalKeys: []string{"corp:active-a"}},
 		{name: "two aliases same target", inputs: []string{"enterprise:alias-a", "enterprise:active-a"}, wantOutcome: MappingOutcomeExactlyOne, wantCount: 1, wantID: activeA, wantClass: ClassificationNormal, wantNormalKeys: []string{"corp:active-a"}},
-		{name: "active plus suspended", inputs: []string{"enterprise:suspended", "enterprise:active-a"}, wantOutcome: MappingOutcomeExactlyOne, wantCount: 1, wantID: activeA, wantClass: ClassificationNormal, wantNormalKeys: []string{"corp:active-a", "corp:suspended"}},
+		{name: "two distinct normal targets", inputs: []string{"enterprise:suspended", "enterprise:active-a"}, wantOutcome: MappingOutcomeMultiple, wantCount: 2, wantID: defaultID, wantClass: ClassificationDefault, wantNormalKeys: []string{"corp:active-a", "corp:suspended"}},
 		{name: "different keys same Organization identity", inputs: []string{"enterprise:same-two", "enterprise:same-one"}, wantOutcome: MappingOutcomeExactlyOne, wantCount: 1, wantID: sameIdentity, wantClass: ClassificationNormal, wantNormalKeys: []string{"corp:same-one", "corp:same-two"}},
 		{name: "two distinct active", inputs: []string{"enterprise:active-b", "enterprise:active-a"}, wantOutcome: MappingOutcomeMultiple, wantCount: 2, wantID: defaultID, wantClass: ClassificationDefault, wantNormalKeys: []string{"corp:active-a", "corp:active-b"}},
 		{name: "three distinct active", inputs: []string{"enterprise:active-c", "enterprise:active-a", "enterprise:active-b"}, wantOutcome: MappingOutcomeMultiple, wantCount: 3, wantID: defaultID, wantClass: ClassificationDefault, wantNormalKeys: []string{"corp:active-a", "corp:active-b", "corp:active-c"}},
@@ -377,15 +375,15 @@ func TestOrganizationAssignmentResolverCardinalityAndLifecycle(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			reader := newFakeOrganizationAssignmentReader()
 			reader.normalByKey = map[string]*NormalOrganization{
-				"corp:active-a":  testNormalOrganization(activeA, "corp:active-a", LifecycleActive),
-				"corp:active-b":  testNormalOrganization(activeB, "corp:active-b", LifecycleActive),
-				"corp:active-c":  testNormalOrganization(activeC, "corp:active-c", LifecycleActive),
-				"corp:suspended": testNormalOrganization(suspended, "corp:suspended", LifecycleSuspended),
-				"corp:retired":   testNormalOrganization(retired, "corp:retired", LifecycleRetired),
-				"corp:same-one":  testNormalOrganization(sameIdentity, "corp:same-one", LifecycleActive),
-				"corp:same-two":  testNormalOrganization(sameIdentity, "corp:same-two", LifecycleActive),
-				"corp:case":      testNormalOrganization(uuid.New(), "corp:case", LifecycleActive),
-				"corp:internal":  testNormalOrganization(uuid.New(), "corp:internal", LifecycleActive),
+				"corp:active-a":  testNormalOrganization(activeA, "corp:active-a"),
+				"corp:active-b":  testNormalOrganization(activeB, "corp:active-b"),
+				"corp:active-c":  testNormalOrganization(activeC, "corp:active-c"),
+				"corp:suspended": testNormalOrganization(normalD, "corp:suspended"),
+				"corp:retired":   testNormalOrganization(normalE, "corp:retired"),
+				"corp:same-one":  testNormalOrganization(sameIdentity, "corp:same-one"),
+				"corp:same-two":  testNormalOrganization(sameIdentity, "corp:same-two"),
+				"corp:case":      testNormalOrganization(uuid.New(), "corp:case"),
+				"corp:internal":  testNormalOrganization(uuid.New(), "corp:internal"),
 			}
 			resolver := newTestOrganizationAssignmentResolver(t, reader, rules)
 			decision, err := resolver.Resolve(context.Background(), test.inputs)
@@ -419,8 +417,8 @@ func TestOrganizationAssignmentResolverRuleAndInputPermutations(t *testing.T) {
 	for ruleIndex, rulePermutation := range resolverRulePermutations(rules) {
 		for inputIndex, inputPermutation := range resolverStringPermutations(inputs) {
 			reader := newFakeOrganizationAssignmentReader()
-			reader.normalByKey["corp:a"] = testNormalOrganization(idA, "corp:a", LifecycleActive)
-			reader.normalByKey["corp:b"] = testNormalOrganization(idB, "corp:b", LifecycleActive)
+			reader.normalByKey["corp:a"] = testNormalOrganization(idA, "corp:a")
+			reader.normalByKey["corp:b"] = testNormalOrganization(idB, "corp:b")
 			resolver := newTestOrganizationAssignmentResolver(t, reader, rulePermutation)
 			decision, err := resolver.Resolve(context.Background(), inputPermutation)
 			if err != nil {
@@ -535,8 +533,8 @@ func TestOrganizationAssignmentResolverFailurePaths(t *testing.T) {
 			defaultErr := errors.New("Default read failed")
 			reader := newFakeOrganizationAssignmentReader()
 			reader.defaultErr = defaultErr
-			reader.normalByKey["corp:a"] = testNormalOrganization(uuid.New(), "corp:a", LifecycleActive)
-			reader.normalByKey["corp:b"] = testNormalOrganization(uuid.New(), "corp:b", LifecycleActive)
+			reader.normalByKey["corp:a"] = testNormalOrganization(uuid.New(), "corp:a")
+			reader.normalByKey["corp:b"] = testNormalOrganization(uuid.New(), "corp:b")
 			resolver := newTestOrganizationAssignmentResolver(t, reader, test.rules)
 			_, err := resolver.Resolve(context.Background(), test.inputs)
 			if !errors.Is(err, defaultErr) {
@@ -548,15 +546,14 @@ func TestOrganizationAssignmentResolverFailurePaths(t *testing.T) {
 	t.Run("contradictory Normal lookup results fail closed", func(t *testing.T) {
 		invalidResults := map[string]*NormalOrganization{
 			"nil":              nil,
-			"missing identity": testNormalOrganization(uuid.Nil, "corp:target", LifecycleActive),
-			"Default identity": testNormalOrganization(uuid.MustParse(DefaultOrganizationID), "corp:target", LifecycleActive),
+			"missing identity": testNormalOrganization(uuid.Nil, "corp:target"),
+			"Default identity": testNormalOrganization(uuid.MustParse(DefaultOrganizationID), "corp:target"),
 			"wrong classification": func() *NormalOrganization {
-				org := testNormalOrganization(uuid.New(), "corp:target", LifecycleActive)
+				org := testNormalOrganization(uuid.New(), "corp:target")
 				org.Classification = ClassificationDefault
 				return org
 			}(),
-			"wrong key":         testNormalOrganization(uuid.New(), "corp:other", LifecycleActive),
-			"unknown lifecycle": testNormalOrganization(uuid.New(), "corp:target", "UNKNOWN"),
+			"wrong key": testNormalOrganization(uuid.New(), "corp:other"),
 		}
 		names := make([]string, 0, len(invalidResults))
 		for name := range invalidResults {
@@ -576,21 +573,6 @@ func TestOrganizationAssignmentResolverFailurePaths(t *testing.T) {
 		}
 	})
 
-	t.Run("same identity with inconsistent lifecycle fails closed", func(t *testing.T) {
-		id := uuid.New()
-		reader := newFakeOrganizationAssignmentReader()
-		reader.normalByKey["corp:a"] = testNormalOrganization(id, "corp:a", LifecycleActive)
-		reader.normalByKey["corp:b"] = testNormalOrganization(id, "corp:b", LifecycleSuspended)
-		resolver := newTestOrganizationAssignmentResolver(t, reader, []OrganizationAssignmentMappingRule{
-			{EnterpriseMappingIdentifier: "enterprise:a", CorporateMappingKey: "corp:a"},
-			{EnterpriseMappingIdentifier: "enterprise:b", CorporateMappingKey: "corp:b"},
-		})
-		_, err := resolver.Resolve(context.Background(), []string{"enterprise:a", "enterprise:b"})
-		if !errors.Is(err, ErrInvariantViolation) {
-			t.Fatalf("Resolve error = %v, want invariant violation", err)
-		}
-	})
-
 	t.Run("contradictory Default lookup result fails closed", func(t *testing.T) {
 		invalidDefaults := map[string]*Organization{
 			"nil": nil,
@@ -598,25 +580,16 @@ func TestOrganizationAssignmentResolverFailurePaths(t *testing.T) {
 				ID:             uuid.New(),
 				Classification: ClassificationDefault,
 				CanonicalName:  DefaultOrganizationCanonicalName,
-				Lifecycle:      LifecycleActive,
 			},
 			"wrong classification": {
 				ID:             uuid.MustParse(DefaultOrganizationID),
 				Classification: ClassificationNormal,
 				CanonicalName:  DefaultOrganizationCanonicalName,
-				Lifecycle:      LifecycleActive,
 			},
 			"wrong canonical identity": {
 				ID:             uuid.MustParse(DefaultOrganizationID),
 				Classification: ClassificationDefault,
 				CanonicalName:  "wrong.default",
-				Lifecycle:      LifecycleActive,
-			},
-			"inactive": {
-				ID:             uuid.MustParse(DefaultOrganizationID),
-				Classification: ClassificationDefault,
-				CanonicalName:  DefaultOrganizationCanonicalName,
-				Lifecycle:      LifecycleSuspended,
 			},
 		}
 		names := make([]string, 0, len(invalidDefaults))

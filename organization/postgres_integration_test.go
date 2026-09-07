@@ -22,7 +22,7 @@ import (
 
 const organizationPostgresIntegrationEnableEnv = "MS_ONCALL_CORE_MIGRATION_TEST_POSTGRES_ENABLE"
 
-func TestPostgresStorePersistenceAndLifecycle(t *testing.T) {
+func TestPostgresStorePersistence(t *testing.T) {
 	db := newOrganizationPostgresDatabase(t)
 	store := NewStore(db)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -35,8 +35,7 @@ func TestPostgresStorePersistenceAndLifecycle(t *testing.T) {
 	if defaultOrg.ID.String() != DefaultOrganizationID ||
 		defaultOrg.CanonicalName != DefaultOrganizationCanonicalName ||
 		defaultOrg.Classification != ClassificationDefault ||
-		defaultOrg.DisplayName != "Default Organization" ||
-		defaultOrg.Lifecycle != LifecycleActive {
+		defaultOrg.DisplayName != "Default Organization" {
 		t.Fatalf("unexpected distinguished Default Organization: %#v", defaultOrg)
 	}
 	if _, err := store.FindNormalByID(ctx, defaultOrg.ID); !errors.Is(err, ErrNotFound) {
@@ -52,7 +51,7 @@ func TestPostgresStorePersistenceAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if normal.ID == uuid.Nil || normal.Classification != ClassificationNormal || normal.Lifecycle != LifecycleActive {
+	if normal.ID == uuid.Nil || normal.Classification != ClassificationNormal {
 		t.Fatalf("unexpected created Normal Organization: %#v", normal)
 	}
 	if normal.TimeZone != "Asia/Shanghai" {
@@ -96,42 +95,6 @@ func TestPostgresStorePersistenceAndLifecycle(t *testing.T) {
 	if updatedZone.TimeZone != "Etc/UTC" || !updatedZone.UpdatedAt.After(displayUpdatedAt) {
 		t.Fatalf("time-zone update did not canonicalize and advance base audit timestamp: %#v", updatedZone)
 	}
-	zoneUpdatedAt := updatedZone.UpdatedAt
-
-	suspended, err := store.TransitionLifecycle(ctx, stableID, LifecycleSuspended)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if suspended.Lifecycle != LifecycleSuspended || !suspended.UpdatedAt.After(zoneUpdatedAt) {
-		t.Fatalf("ACTIVE -> SUSPENDED did not persist and advance audit timestamp: %#v", suspended)
-	}
-	active, err := store.TransitionLifecycle(ctx, stableID, LifecycleActive)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if active.Lifecycle != LifecycleActive || !active.UpdatedAt.After(suspended.UpdatedAt) {
-		t.Fatalf("SUSPENDED -> ACTIVE did not persist and advance audit timestamp: %#v", active)
-	}
-	retired, err := store.TransitionLifecycle(ctx, stableID, LifecycleRetired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retired.Lifecycle != LifecycleRetired || !retired.UpdatedAt.After(active.UpdatedAt) {
-		t.Fatalf("ACTIVE -> RETIRED did not persist and advance audit timestamp: %#v", retired)
-	}
-	same, err := store.TransitionLifecycle(ctx, stableID, LifecycleRetired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !same.UpdatedAt.Equal(retired.UpdatedAt) {
-		t.Fatalf("same-state RETIRED transition changed audit timestamp from %s to %s", retired.UpdatedAt, same.UpdatedAt)
-	}
-	if _, err := store.TransitionLifecycle(ctx, stableID, LifecycleActive); !errors.Is(err, ErrInvalidLifecycleTransition) {
-		t.Fatalf("RETIRED -> ACTIVE error = %v, want ErrInvalidLifecycleTransition", err)
-	}
-	if _, err := store.TransitionLifecycle(ctx, stableID, "UNKNOWN"); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("unknown lifecycle error = %v, want ErrInvalidInput", err)
-	}
 
 	final, err := store.FindNormalByID(ctx, stableID)
 	if err != nil {
@@ -161,9 +124,6 @@ func TestPostgresStorePersistenceAndLifecycle(t *testing.T) {
 	}
 	if _, err := store.UpdateTimeZone(ctx, defaultOrg.ID, "Etc/UTC"); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("Default time-zone update error = %v, want ErrInvalidInput", err)
-	}
-	if _, err := store.TransitionLifecycle(ctx, defaultOrg.ID, LifecycleSuspended); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("Default lifecycle update error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -409,22 +369,10 @@ func TestPostgresStoreErrorMappingUsesExactConstraintIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.TransitionLifecycle(ctx, normal.ID, LifecycleRetired); err != nil {
-		t.Fatal(err)
-	}
-
-	_, rawLifecycleErr := db.ExecContext(ctx, `UPDATE public.organizations SET lifecycle = 'ACTIVE' WHERE id = $1`, normal.ID)
-	assertPGError(t, rawLifecycleErr, pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_lifecycle_transition", SchemaName: "public", TableName: "organizations", ColumnName: "lifecycle"})
-	mappedLifecycleErr := mapWriteError("integration lifecycle transition", rawLifecycleErr)
-	if !errors.Is(mappedLifecycleErr, ErrInvalidLifecycleTransition) || errors.Is(mappedLifecycleErr, ErrConflict) || errors.Is(mappedLifecycleErr, ErrInvariantViolation) {
-		t.Fatalf("lifecycle mapping = %v", mappedLifecycleErr)
-	}
-	assertPGError(t, mappedLifecycleErr, pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_lifecycle_transition", SchemaName: "public", TableName: "organizations", ColumnName: "lifecycle"})
-
 	_, rawInvariantErr := db.ExecContext(ctx, `UPDATE public.organizations SET canonical_name = 'changed.store-mapping-test' WHERE id = $1`, normal.ID)
 	assertPGError(t, rawInvariantErr, pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_canonical_name_immutable", SchemaName: "public", TableName: "organizations", ColumnName: "canonical_name"})
 	mappedInvariantErr := mapWriteError("integration immutable identity", rawInvariantErr)
-	if !errors.Is(mappedInvariantErr, ErrInvariantViolation) || errors.Is(mappedInvariantErr, ErrConflict) || errors.Is(mappedInvariantErr, ErrInvalidLifecycleTransition) {
+	if !errors.Is(mappedInvariantErr, ErrInvariantViolation) || errors.Is(mappedInvariantErr, ErrConflict) {
 		t.Fatalf("trigger invariant mapping = %v", mappedInvariantErr)
 	}
 	assertPGError(t, mappedInvariantErr, pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_canonical_name_immutable", SchemaName: "public", TableName: "organizations", ColumnName: "canonical_name"})
@@ -439,7 +387,7 @@ func TestPostgresStoreErrorMappingUsesExactConstraintIdentity(t *testing.T) {
 	if unknownUniqueErr == nil {
 		t.Fatal("unknown unique constraint unexpectedly allowed the Store update")
 	}
-	for _, semantic := range []error{ErrConflict, ErrInvalidLifecycleTransition, ErrInvariantViolation} {
+	for _, semantic := range []error{ErrConflict, ErrInvariantViolation} {
 		if errors.Is(unknownUniqueErr, semantic) {
 			t.Fatalf("unknown unique constraint mapped to %v: %v", semantic, unknownUniqueErr)
 		}
@@ -456,7 +404,7 @@ func TestPostgresStoreErrorMappingUsesExactConstraintIdentity(t *testing.T) {
 	if unknownCheckErr == nil {
 		t.Fatal("unknown check constraint unexpectedly allowed the Store update")
 	}
-	for _, semantic := range []error{ErrConflict, ErrInvalidLifecycleTransition, ErrInvariantViolation} {
+	for _, semantic := range []error{ErrConflict, ErrInvariantViolation} {
 		if errors.Is(unknownCheckErr, semantic) {
 			t.Fatalf("unknown check constraint mapped to %v: %v", semantic, unknownCheckErr)
 		}
@@ -475,7 +423,7 @@ func TestPostgresStoreErrorMappingUsesExactConstraintIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unchanged.DisplayName != normal.DisplayName || unchanged.CanonicalName != normal.CanonicalName || unchanged.Lifecycle != LifecycleRetired {
+	if unchanged.DisplayName != normal.DisplayName || unchanged.CanonicalName != normal.CanonicalName {
 		t.Fatalf("failed Store writes changed durable state: %#v", unchanged)
 	}
 }
@@ -554,12 +502,6 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retired, err := store.TransitionLifecycle(ctx, normal.ID, LifecycleRetired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	normal.Organization = *retired
-
 	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE public.organization_owner_fk_test (
 			id uuid PRIMARY KEY,
@@ -577,8 +519,8 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 	insertBase := func(id uuid.UUID, canonicalName string) {
 		t.Helper()
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-			VALUES ($1, 'NORMAL', 'Invariant Setup', $2, 'ACTIVE')
+			INSERT INTO public.organizations (id, classification, display_name, canonical_name)
+			VALUES ($1, 'NORMAL', 'Invariant Setup', $2)
 		`, id, canonicalName); err != nil {
 			t.Fatal(err)
 		}
@@ -643,7 +585,6 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 	secondDefaultID := uuid.New()
 	duplicateCanonicalID := uuid.New()
 	invalidClassificationID := uuid.New()
-	invalidLifecycleID := uuid.New()
 	nullDisplayID := uuid.New()
 	blankDisplayID := uuid.New()
 	blankCanonicalID := uuid.New()
@@ -663,8 +604,8 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 	tests := []invariantCase{
 		{
 			name: "second Default exact partial unique index",
-			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-				VALUES ($1, 'DEFAULT', 'Another Default', 'ms-oncall.another-default', 'ACTIVE')`,
+			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name)
+				VALUES ($1, 'DEFAULT', 'Another Default', 'ms-oncall.another-default')`,
 			args:         []any{secondDefaultID},
 			expected:     pgErrorExpectation{SQLState: "23505", ConstraintName: "organizations_single_default_idx", SchemaName: "public", TableName: "organizations"},
 			durableState: "second Default absent and distinguished Default unchanged", transactionMustRollback: true,
@@ -699,8 +640,8 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 		},
 		{
 			name: "duplicate canonical identity exact unique constraint",
-			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-				VALUES ($1, 'NORMAL', 'Duplicate Canonical', $2, 'ACTIVE')`,
+			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name)
+				VALUES ($1, 'NORMAL', 'Duplicate Canonical', $2)`,
 			args:         []any{duplicateCanonicalID, normal.CanonicalName},
 			expected:     pgErrorExpectation{SQLState: "23505", ConstraintName: "organizations_canonical_name_key", SchemaName: "public", TableName: "organizations"},
 			durableState: "duplicate row absent", transactionMustRollback: true,
@@ -708,26 +649,17 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 		},
 		{
 			name: "invalid classification enum input",
-			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-				VALUES ($1, 'UNKNOWN', 'Invalid', 'normal.invalid-classification', 'ACTIVE')`,
+			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name)
+				VALUES ($1, 'UNKNOWN', 'Invalid', 'normal.invalid-classification')`,
 			args:         []any{invalidClassificationID},
 			expected:     pgErrorExpectation{SQLState: "22P02"},
 			durableState: "invalid row absent", transactionMustRollback: true,
 			assertState: assertOrganizationAbsent(invalidClassificationID),
 		},
 		{
-			name: "invalid lifecycle enum input",
-			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-				VALUES ($1, 'NORMAL', 'Invalid', 'normal.invalid-lifecycle', 'UNKNOWN')`,
-			args:         []any{invalidLifecycleID},
-			expected:     pgErrorExpectation{SQLState: "22P02"},
-			durableState: "invalid row absent", transactionMustRollback: true,
-			assertState: assertOrganizationAbsent(invalidLifecycleID),
-		},
-		{
 			name: "display name not null native metadata",
-			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-				VALUES ($1, 'NORMAL', NULL, 'normal.null-display', 'ACTIVE')`,
+			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name)
+				VALUES ($1, 'NORMAL', NULL, 'normal.null-display')`,
 			args:         []any{nullDisplayID},
 			expected:     pgErrorExpectation{SQLState: "23502", SchemaName: "public", TableName: "organizations", ColumnName: "display_name"},
 			durableState: "null-domain row absent", transactionMustRollback: true,
@@ -735,8 +667,8 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 		},
 		{
 			name: "display name nonblank check",
-			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-				VALUES ($1, 'NORMAL', ' ', 'normal.blank-display', 'ACTIVE')`,
+			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name)
+				VALUES ($1, 'NORMAL', ' ', 'normal.blank-display')`,
 			args:         []any{blankDisplayID},
 			expected:     pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_display_name_not_blank", SchemaName: "public", TableName: "organizations"},
 			durableState: "blank-domain row absent", transactionMustRollback: true,
@@ -744,8 +676,8 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 		},
 		{
 			name: "canonical identity nonblank check",
-			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name, lifecycle)
-				VALUES ($1, 'NORMAL', 'Blank Canonical', '', 'ACTIVE')`,
+			query: `INSERT INTO public.organizations (id, classification, display_name, canonical_name)
+				VALUES ($1, 'NORMAL', 'Blank Canonical', '')`,
 			args:         []any{blankCanonicalID},
 			expected:     pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_canonical_name_not_blank", SchemaName: "public", TableName: "organizations"},
 			durableState: "blank-domain row absent", transactionMustRollback: true,
@@ -797,12 +729,6 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 			durableState: "Default canonical identity unchanged", transactionMustRollback: true, assertState: assertDefaultStable,
 		},
 		{
-			name:  "Default lifecycle immutable",
-			query: `UPDATE public.organizations SET lifecycle = 'SUSPENDED' WHERE id = $1`, args: []any{defaultID},
-			expected:     pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_default_lifecycle_immutable", SchemaName: "public", TableName: "organizations", ColumnName: "lifecycle"},
-			durableState: "Default lifecycle unchanged", transactionMustRollback: true, assertState: assertDefaultStable,
-		},
-		{
 			name:  "Default delete prohibited",
 			query: `DELETE FROM public.organizations WHERE id = $1`, args: []any{defaultID},
 			expected:     pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_default_delete_forbidden", SchemaName: "public", TableName: "organizations", ColumnName: "classification"},
@@ -831,12 +757,6 @@ func TestPostgresRelationalAndImmutableInvariants(t *testing.T) {
 			query: `UPDATE public.organizations SET created_at = created_at + interval '1 second' WHERE id = $1`, args: []any{normal.ID},
 			expected:     pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_created_at_immutable", SchemaName: "public", TableName: "organizations", ColumnName: "created_at"},
 			durableState: "creation timestamp unchanged", transactionMustRollback: true, assertState: assertNormalStable,
-		},
-		{
-			name:  "invalid lifecycle transition",
-			query: `UPDATE public.organizations SET lifecycle = 'ACTIVE' WHERE id = $1`, args: []any{normal.ID},
-			expected:     pgErrorExpectation{SQLState: "23514", ConstraintName: "organizations_lifecycle_transition", SchemaName: "public", TableName: "organizations", ColumnName: "lifecycle"},
-			durableState: "RETIRED lifecycle unchanged", transactionMustRollback: true, assertState: assertNormalStable,
 		},
 		{
 			name:  "Normal subtype Organization ID immutable",

@@ -800,91 +800,6 @@ func (ns NullMsOncallOrganizationClassification) Value() (driver.Value, error) {
 	return string(ns.MsOncallOrganizationClassification), nil
 }
 
-type MsOncallOrganizationLifecycle string
-
-const (
-	MsOncallOrganizationLifecycleACTIVE    MsOncallOrganizationLifecycle = "ACTIVE"
-	MsOncallOrganizationLifecycleRETIRED   MsOncallOrganizationLifecycle = "RETIRED"
-	MsOncallOrganizationLifecycleSUSPENDED MsOncallOrganizationLifecycle = "SUSPENDED"
-)
-
-func (e *MsOncallOrganizationLifecycle) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = MsOncallOrganizationLifecycle(s)
-	case string:
-		*e = MsOncallOrganizationLifecycle(s)
-	default:
-		return fmt.Errorf("unsupported scan type for MsOncallOrganizationLifecycle: %T", src)
-	}
-	return nil
-}
-
-type NullMsOncallOrganizationLifecycle struct {
-	MsOncallOrganizationLifecycle MsOncallOrganizationLifecycle
-	Valid                         bool // Valid is true if MsOncallOrganizationLifecycle is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullMsOncallOrganizationLifecycle) Scan(value interface{}) error {
-	if value == nil {
-		ns.MsOncallOrganizationLifecycle, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.MsOncallOrganizationLifecycle.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullMsOncallOrganizationLifecycle) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.MsOncallOrganizationLifecycle), nil
-}
-
-type MsOncallUserOrganizationAssignmentState string
-
-const (
-	MsOncallUserOrganizationAssignmentStateACTIVE        MsOncallUserOrganizationAssignmentState = "ACTIVE"
-	MsOncallUserOrganizationAssignmentStateTRANSITIONING MsOncallUserOrganizationAssignmentState = "TRANSITIONING"
-)
-
-func (e *MsOncallUserOrganizationAssignmentState) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = MsOncallUserOrganizationAssignmentState(s)
-	case string:
-		*e = MsOncallUserOrganizationAssignmentState(s)
-	default:
-		return fmt.Errorf("unsupported scan type for MsOncallUserOrganizationAssignmentState: %T", src)
-	}
-	return nil
-}
-
-type NullMsOncallUserOrganizationAssignmentState struct {
-	MsOncallUserOrganizationAssignmentState MsOncallUserOrganizationAssignmentState
-	Valid                                   bool // Valid is true if MsOncallUserOrganizationAssignmentState is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullMsOncallUserOrganizationAssignmentState) Scan(value interface{}) error {
-	if value == nil {
-		ns.MsOncallUserOrganizationAssignmentState, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.MsOncallUserOrganizationAssignmentState.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullMsOncallUserOrganizationAssignmentState) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.MsOncallUserOrganizationAssignmentState), nil
-}
-
 type MsOncallUserOrganizationMappingOutcome string
 
 const (
@@ -1319,7 +1234,6 @@ type Organization struct {
 	CreatedAt      time.Time
 	DisplayName    string
 	ID             uuid.UUID
-	Lifecycle      MsOncallOrganizationLifecycle
 	UpdatedAt      time.Time
 }
 
@@ -1608,18 +1522,14 @@ type UserNotificationRule struct {
 }
 
 type UserOrganizationAssignment struct {
-	AssignmentGeneration                int64
 	AuthoritativeEvaluatedAt            time.Time
 	EffectiveNormalOrganizationID       uuid.NullUUID
 	EffectiveOrganizationClassification MsOncallOrganizationClassification
 	EffectiveOrganizationID             uuid.UUID
-	EvidenceDigest                      []byte
 	MappingOutcome                      MsOncallUserOrganizationMappingOutcome
 	MatchedCount                        int32
 	OrganizationRole                    MsOncallUserOrganizationRole
-	PendingTransferID                   uuid.NullUUID
 	SourceConfigVersion                 string
-	State                               MsOncallUserOrganizationAssignmentState
 	UserID                              uuid.UUID
 }
 

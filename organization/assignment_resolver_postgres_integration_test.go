@@ -2,7 +2,6 @@ package organization
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"reflect"
 	"testing"
@@ -31,21 +30,10 @@ func TestPostgresOrganizationAssignmentResolverDeterministicMappingAndNoMutation
 		return org
 	}
 
-	activeA := createNormal("Resolver Active A", "resolver.active-a", "resolver:active-a")
-	activeB := createNormal("Resolver Active B", "resolver.active-b", "resolver:active-b")
-	suspended := createNormal("Resolver Suspended", "resolver.suspended", "resolver:suspended")
-	retired := createNormal("Resolver Retired", "resolver.retired", "resolver:retired")
-
-	updatedSuspended, err := store.TransitionLifecycle(ctx, suspended.ID, LifecycleSuspended)
-	if err != nil {
-		t.Fatal(err)
-	}
-	suspended.Organization = *updatedSuspended
-	updatedRetired, err := store.TransitionLifecycle(ctx, retired.ID, LifecycleRetired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	retired.Organization = *updatedRetired
+	normalA := createNormal("Resolver Normal A", "resolver.normal-a", "resolver:normal-a")
+	normalB := createNormal("Resolver Normal B", "resolver.normal-b", "resolver:normal-b")
+	normalC := createNormal("Resolver Normal C", "resolver.normal-c", "resolver:normal-c")
+	normalD := createNormal("Resolver Normal D", "resolver.normal-d", "resolver:normal-d")
 
 	defaultOrg, err := store.FindDefault(ctx)
 	if err != nil {
@@ -57,16 +45,14 @@ func TestPostgresOrganizationAssignmentResolverDeterministicMappingAndNoMutation
 	userID := insertAssignmentTestUser(t, ctx, db, "Resolver Non-Mutation User")
 	evaluatedAt := time.Date(2026, time.September, 2, 15, 0, 0, 0, time.UTC)
 	assignmentValues := createAssignmentTestValues(
-		activeA.ID,
+		normalA.ID,
 		ClassificationNormal,
-		AssignmentStateActive,
 		OrganizationRoleMember,
 		MappingOutcomeExactlyOne,
 		1,
 		evaluatedAt,
 		"preexisting-assignment-v1",
 	)
-	assignmentValues.Evaluation.EvidenceDigest = sha256.Sum256([]byte("preexisting assignment evidence"))
 	assignmentBefore, err := store.CreateUserOrganizationAssignment(ctx, CreateUserOrganizationAssignmentInput{
 		UserID:                           userID,
 		UserOrganizationAssignmentValues: assignmentValues,
@@ -79,7 +65,7 @@ func TestPostgresOrganizationAssignmentResolverDeterministicMappingAndNoMutation
 		t.Fatal(err)
 	}
 
-	organizationIDs := []uuid.UUID{activeA.ID, activeB.ID, suspended.ID, retired.ID}
+	organizationIDs := []uuid.UUID{normalA.ID, normalB.ID, normalC.ID, normalD.ID}
 	organizationsBefore := make(map[uuid.UUID]*NormalOrganization, len(organizationIDs))
 	for _, id := range organizationIDs {
 		org, err := store.FindNormalByID(ctx, id)
@@ -92,11 +78,11 @@ func TestPostgresOrganizationAssignmentResolverDeterministicMappingAndNoMutation
 	resolver, err := NewOrganizationAssignmentResolver(store, OrganizationAssignmentResolverConfig{
 		SourceConfigVersion: "postgres-resolver-config-v1",
 		Rules: []OrganizationAssignmentMappingRule{
-			{EnterpriseMappingIdentifier: "verified:active-a", CorporateMappingKey: "resolver:active-a"},
-			{EnterpriseMappingIdentifier: "verified:alias-a", CorporateMappingKey: "resolver:active-a"},
-			{EnterpriseMappingIdentifier: "verified:active-b", CorporateMappingKey: "resolver:active-b"},
-			{EnterpriseMappingIdentifier: "verified:suspended", CorporateMappingKey: "resolver:suspended"},
-			{EnterpriseMappingIdentifier: "verified:retired", CorporateMappingKey: "resolver:retired"},
+			{EnterpriseMappingIdentifier: "verified:normal-a", CorporateMappingKey: "resolver:normal-a"},
+			{EnterpriseMappingIdentifier: "verified:alias-a", CorporateMappingKey: "resolver:normal-a"},
+			{EnterpriseMappingIdentifier: "verified:normal-b", CorporateMappingKey: "resolver:normal-b"},
+			{EnterpriseMappingIdentifier: "verified:normal-c", CorporateMappingKey: "resolver:normal-c"},
+			{EnterpriseMappingIdentifier: "verified:normal-d", CorporateMappingKey: "resolver:normal-d"},
 		},
 	})
 	if err != nil {
@@ -118,13 +104,13 @@ func TestPostgresOrganizationAssignmentResolverDeterministicMappingAndNoMutation
 		}
 	}
 
-	assertDecision([]string{"verified:active-a"}, MappingOutcomeExactlyOne, 1, activeA.ID, ClassificationNormal)
-	assertDecision([]string{"verified:alias-a", "verified:active-a"}, MappingOutcomeExactlyOne, 1, activeA.ID, ClassificationNormal)
-	assertDecision([]string{"verified:active-b", "verified:active-a"}, MappingOutcomeMultiple, 2, defaultOrg.ID, ClassificationDefault)
+	assertDecision([]string{"verified:normal-a"}, MappingOutcomeExactlyOne, 1, normalA.ID, ClassificationNormal)
+	assertDecision([]string{"verified:alias-a", "verified:normal-a"}, MappingOutcomeExactlyOne, 1, normalA.ID, ClassificationNormal)
+	assertDecision([]string{"verified:normal-b", "verified:normal-a"}, MappingOutcomeMultiple, 2, defaultOrg.ID, ClassificationDefault)
 	assertDecision([]string{"verified:unknown"}, MappingOutcomeZero, 0, defaultOrg.ID, ClassificationDefault)
-	assertDecision([]string{"verified:suspended"}, MappingOutcomeZero, 0, defaultOrg.ID, ClassificationDefault)
-	assertDecision([]string{"verified:retired"}, MappingOutcomeZero, 0, defaultOrg.ID, ClassificationDefault)
-	assertDecision([]string{"verified:suspended", "verified:active-a"}, MappingOutcomeExactlyOne, 1, activeA.ID, ClassificationNormal)
+	assertDecision([]string{"verified:normal-c"}, MappingOutcomeExactlyOne, 1, normalC.ID, ClassificationNormal)
+	assertDecision([]string{"verified:normal-d"}, MappingOutcomeExactlyOne, 1, normalD.ID, ClassificationNormal)
+	assertDecision([]string{"verified:normal-c", "verified:normal-a"}, MappingOutcomeMultiple, 2, defaultOrg.ID, ClassificationDefault)
 
 	missingResolver, err := NewOrganizationAssignmentResolver(store, OrganizationAssignmentResolverConfig{
 		SourceConfigVersion: "postgres-missing-target-v1",
