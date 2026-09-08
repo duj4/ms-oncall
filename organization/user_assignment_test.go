@@ -4,12 +4,40 @@ import (
 	"errors"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func TestCurrentUserOrganizationQueryIsOneBoundedRelationalStatement(t *testing.T) {
+	query := strings.ToLower(findCurrentUserOrganizationQuery)
+	if strings.Contains(query, ";") || strings.Count(query, "select") != 1 {
+		t.Fatalf("current User Organization query is not one statement: %q", findCurrentUserOrganizationQuery)
+	}
+	for _, required := range []string{
+		"from public.users",
+		"join public.user_organization_assignments",
+		"join public.organizations",
+		"join public.normal_organizations",
+		"mapping_outcome = 'exactly_one'",
+		"matched_count = 1",
+		"effective_organization_classification = 'normal'",
+		"effective_organization_id <> $2",
+		"organization_role in ('org_member', 'org_admin')",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("current User Organization query lacks %q", required)
+		}
+	}
+	for _, excluded := range []string{"display_name", "iana_time_zone", "corporate_mapping_key", "source_config_version", "authoritative_evaluated_at"} {
+		if strings.Contains(query, excluded) {
+			t.Fatalf("current User Organization query projects unrelated field %q", excluded)
+		}
+	}
+}
 
 func validUserOrganizationAssignmentValues() UserOrganizationAssignmentValues {
 	return UserOrganizationAssignmentValues{

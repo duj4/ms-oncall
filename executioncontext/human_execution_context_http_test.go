@@ -58,7 +58,7 @@ func TestHumanExecutionContextHTTPComposition(t *testing.T) {
 			delivered = ExecutionContextFromContext(req.Context())
 		}))
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-		if delivered != nil || fixture.users.calls != 0 || fixture.orgs.assignmentCalls != 0 || fixture.orgs.normalCalls != 0 {
+		if delivered != nil || fixture.reader.calls != 0 {
 			t.Fatalf("unauthenticated request received authority or caused reads: %#v", delivered)
 		}
 	})
@@ -69,11 +69,8 @@ func TestHumanExecutionContextHTTPComposition(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fixture.orgs.assignment.MappingOutcome = organization.MappingOutcomeZero
-		fixture.orgs.assignment.EffectiveOrganizationID = uuid.MustParse(organization.DefaultOrganizationID)
-		fixture.orgs.assignment.EffectiveOrganizationClassification = organization.ClassificationDefault
-		fixture.orgs.assignment.Role = organization.OrganizationRoleNone
-		fixture.orgs.assignment.Evaluation.MatchedCount = 0
+		fixture.reader.value = nil
+		fixture.reader.err = organization.ErrNotFound
 		ctx := WithExecutionContext(fixture.ctx, prior)
 		var delivered *ExecutionContext
 		handler := fixture.constructor(t).WrapHandler(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
@@ -82,6 +79,28 @@ func TestHumanExecutionContextHTTPComposition(t *testing.T) {
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx))
 		if delivered != nil {
 			t.Fatalf("failed reconstruction reused inherited authority: %#v", delivered)
+		}
+	})
+
+	t.Run("current observation replaces stale inherited Organization", func(t *testing.T) {
+		fixture := newHumanExecutionContextFixture(t)
+		prior, err := fixture.constructor(t).Construct(fixture.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		currentID := uuid.MustParse("037159a2-0061-4570-976d-9313352c70f5")
+		fixture.reader.value.OrganizationID = currentID
+		ctx := WithExecutionContext(fixture.ctx, prior)
+		var delivered *ExecutionContext
+		handler := fixture.constructor(t).WrapHandler(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+			delivered = ExecutionContextFromContext(req.Context())
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx))
+		if delivered == nil {
+			t.Fatal("current admission did not replace inherited ExecutionContext")
+		}
+		if id, present := delivered.EffectiveOrganizationID(); !present || id != currentID {
+			t.Fatalf("delivered Organization = (%s, %t), want current %s", id, present, currentID)
 		}
 	})
 }

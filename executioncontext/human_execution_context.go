@@ -10,7 +10,6 @@ import (
 	"github.com/target/goalert/auth"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
-	"github.com/target/goalert/user"
 )
 
 var (
@@ -23,49 +22,42 @@ var (
 	ErrHumanExecutionContextUnavailable = errors.New("human execution context unavailable")
 )
 
-type humanExecutionContextUserReader interface {
-	FindOne(context.Context, string) (*user.User, error)
-}
-
-type humanExecutionContextOrganizationReader interface {
-	FindUserOrganizationAssignment(context.Context, uuid.UUID) (*organization.UserOrganizationAssignment, error)
-	FindNormalByID(context.Context, uuid.UUID) (*organization.NormalOrganization, error)
+type humanExecutionContextReader interface {
+	FindCurrentUserOrganization(context.Context, uuid.UUID) (*organization.CurrentUserOrganization, error)
 }
 
 // HumanExecutionContextConstructor reconstructs ordinary human authority from
 // current local durable state at request admission. It retains no result and
 // does not reread the Session already resolved by canonical authentication.
 type HumanExecutionContextConstructor struct {
-	users         humanExecutionContextUserReader
-	organizations humanExecutionContextOrganizationReader
+	organizations humanExecutionContextReader
 }
 
 // NewHumanExecutionContextConstructor composes request-admission authority
-// construction from the canonical User and Organization stores.
+// construction from the canonical Organization store.
 func NewHumanExecutionContextConstructor(
-	users *user.Store,
 	organizations *organization.Store,
 ) (*HumanExecutionContextConstructor, error) {
-	return newHumanExecutionContextConstructor(users, organizations)
+	return newHumanExecutionContextConstructor(organizations)
 }
 
 func newHumanExecutionContextConstructor(
-	users humanExecutionContextUserReader,
-	organizations humanExecutionContextOrganizationReader,
+	organizations humanExecutionContextReader,
 ) (*HumanExecutionContextConstructor, error) {
-	if nilHumanExecutionContextDependency(users) || nilHumanExecutionContextDependency(organizations) {
+	if nilHumanExecutionContextDependency(organizations) {
 		return nil, ErrInvalidHumanExecutionContextConstructor
 	}
-	return &HumanExecutionContextConstructor{users: users, organizations: organizations}, nil
+	return &HumanExecutionContextConstructor{organizations: organizations}, nil
 }
 
 // Construct consumes the identity-only authenticated-human Requester and
-// returns the single downstream authority carrier. Every call re-reads the
-// current User, assignment, and effective NormalOrganization. Mapping audit
-// provenance is deliberately not an admission credential.
+// returns the single downstream authority carrier. Every call observes the
+// current User, assignment, base Organization, and NormalOrganization in one
+// SQL statement. Mapping audit provenance is deliberately not an admission
+// credential.
 func (c *HumanExecutionContextConstructor) Construct(ctx context.Context) (ExecutionContext, error) {
 	var zero ExecutionContext
-	if c == nil || nilHumanExecutionContextDependency(c.users) || nilHumanExecutionContextDependency(c.organizations) {
+	if c == nil || nilHumanExecutionContextDependency(c.organizations) {
 		return zero, ErrInvalidHumanExecutionContextConstructor
 	}
 	if ctx == nil {
@@ -91,52 +83,35 @@ func (c *HumanExecutionContextConstructor) Construct(ctx context.Context) (Execu
 		return zero, humanExecutionContextFailure("legacy authentication metadata is inconsistent with Requester")
 	}
 
-	currentUser, err := c.users.FindOne(ctx, authenticatedUserID.String())
+	current, err := c.organizations.FindCurrentUserOrganization(ctx, authenticatedUserID)
 	if err != nil {
-		return zero, humanExecutionContextLookupFailure("read current global User", err)
+		return zero, humanExecutionContextLookupFailure("read current User Organization", err)
 	}
-	if currentUser == nil {
-		return zero, humanExecutionContextFailure("current global User is missing")
+	if current == nil {
+		return zero, humanExecutionContextFailure("current User Organization is missing")
 	}
-	loadedUserID, ok := parseCanonicalAuthorityUUID(currentUser.ID)
-	if !ok || loadedUserID != authenticatedUserID {
+	if current.UserID != authenticatedUserID {
 		return zero, humanExecutionContextFailure("current global User state is inconsistent")
 	}
-	if _, err := currentUser.Normalize(); err != nil {
-		return zero, humanExecutionContextLookupFailure("validate current global User", err)
-	}
-	if currentUser.Role != permission.RoleUser && currentUser.Role != permission.RoleAdmin {
+	if current.UserRole != permission.RoleUser && current.UserRole != permission.RoleAdmin {
 		return zero, humanExecutionContextFailure("current global User role is invalid")
 	}
-	if permission.Admin(ctx) != (currentUser.Role == permission.RoleAdmin) {
+	if permission.Admin(ctx) != (current.UserRole == permission.RoleAdmin) {
 		return zero, humanExecutionContextFailure("legacy and current global User roles are inconsistent")
 	}
-
-	assignment, err := c.organizations.FindUserOrganizationAssignment(ctx, authenticatedUserID)
-	if err != nil {
-		return zero, humanExecutionContextLookupFailure("read current UserOrganizationAssignment", err)
-	}
-	if !validCurrentOrdinaryAssignment(assignment, authenticatedUserID) {
-		return zero, humanExecutionContextFailure("current UserOrganizationAssignment is not Organization-operational")
+	if current.OrganizationID == uuid.Nil || current.OrganizationID.String() == organization.DefaultOrganizationID ||
+		(current.Role != organization.OrganizationRoleMember && current.Role != organization.OrganizationRoleAdmin) {
+		return zero, humanExecutionContextFailure("current User Organization is not operational")
 	}
 
-	normal, err := c.organizations.FindNormalByID(ctx, assignment.EffectiveOrganizationID)
-	if err != nil {
-		return zero, humanExecutionContextLookupFailure("read current effective NormalOrganization", err)
-	}
-	if !validCurrentNormalOrganization(normal, assignment.EffectiveOrganizationID) ||
-		assignment.EffectiveOrganizationClassification != normal.Classification {
-		return zero, humanExecutionContextFailure("current assignment and Organization state is inconsistent")
-	}
-
-	effectiveOrganizationID := assignment.EffectiveOrganizationID
+	effectiveOrganizationID := current.OrganizationID
 	typedContext, err := newExecutionContext(executionContextSpec{
 		principalKind:            PrincipalKindHuman,
-		principalID:              currentUser.ID,
-		actualActorID:            currentUser.ID,
+		principalID:              current.UserID.String(),
+		actualActorID:            current.UserID.String(),
 		authenticationSourceType: permission.SourceTypeAuthProvider.String(),
 		authenticationSourceID:   sessionID.String(),
-		organizationRole:         assignment.Role,
+		organizationRole:         current.Role,
 		platformAdmin:            false,
 		authorityMode:            AuthorityModeOrganizationScoped,
 		effectiveOrganizationID:  &effectiveOrganizationID,
@@ -148,26 +123,6 @@ func (c *HumanExecutionContextConstructor) Construct(ctx context.Context) (Execu
 		return zero, humanExecutionContextLookupFailure("construct typed ExecutionContext", err)
 	}
 	return typedContext, nil
-}
-
-func validCurrentOrdinaryAssignment(value *organization.UserOrganizationAssignment, userID uuid.UUID) bool {
-	return value != nil && userID != uuid.Nil && value.UserID == userID &&
-		value.MappingOutcome == organization.MappingOutcomeExactlyOne &&
-		value.EffectiveOrganizationID != uuid.Nil &&
-		value.EffectiveOrganizationClassification == organization.ClassificationNormal &&
-		(value.Role == organization.OrganizationRoleMember || value.Role == organization.OrganizationRoleAdmin) &&
-		value.Evaluation.MatchedCount == 1
-}
-
-func validCurrentNormalOrganization(value *organization.NormalOrganization, expectedID uuid.UUID) bool {
-	return value != nil && expectedID != uuid.Nil && value.ID == expectedID &&
-		value.ID.String() != organization.DefaultOrganizationID &&
-		value.Classification == organization.ClassificationNormal
-}
-
-func parseCanonicalAuthorityUUID(value string) (uuid.UUID, bool) {
-	id, err := uuid.Parse(value)
-	return id, err == nil && id != uuid.Nil && id.String() == value
 }
 
 func nilHumanExecutionContextDependency(value any) bool {
@@ -194,7 +149,4 @@ func humanExecutionContextLookupFailure(operation string, err error) error {
 	return fmt.Errorf("%w: %s: %w", ErrHumanExecutionContextUnavailable, operation, err)
 }
 
-var (
-	_ humanExecutionContextUserReader         = (*user.Store)(nil)
-	_ humanExecutionContextOrganizationReader = (*organization.Store)(nil)
-)
+var _ humanExecutionContextReader = (*organization.Store)(nil)

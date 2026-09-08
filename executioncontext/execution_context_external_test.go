@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/organization"
-	"github.com/target/goalert/user"
 )
 
 func TestExternalZeroAndNilValuesExposeNoAuthority(t *testing.T) {
@@ -79,10 +78,22 @@ func assertMethodSurface(t *testing.T, typ reflect.Type, want []string) {
 }
 
 func TestHumanExecutionContextConstructorRequiresCanonicalStores(t *testing.T) {
-	type constructorSignature func(*user.Store, *organization.Store) (*executioncontext.HumanExecutionContextConstructor, error)
+	type constructorSignature func(*organization.Store) (*executioncontext.HumanExecutionContextConstructor, error)
 	var constructor constructorSignature = executioncontext.NewHumanExecutionContextConstructor
 	if constructor == nil {
 		t.Fatal("human ExecutionContext constructor is nil")
+	}
+}
+
+func TestCurrentUserOrganizationProjectionIsBounded(t *testing.T) {
+	typ := reflect.TypeOf(organization.CurrentUserOrganization{})
+	got := make([]string, typ.NumField())
+	for index := 0; index < typ.NumField(); index++ {
+		got[index] = typ.Field(index).Name
+	}
+	want := []string{"UserID", "UserRole", "OrganizationID", "Role"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CurrentUserOrganization fields = %v, want bounded admission projection %v", got, want)
 	}
 }
 

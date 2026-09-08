@@ -342,7 +342,7 @@ Bundle `ms-oncall-active-foundation-reconciliation-v1` appends one MS OnCall
 migration at canonical position 280:
 `20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql`, exact
 SHA-256
-`448003afda1d9dcd30667ce86eeb1b3b973230d2e20d7e8022ebec6f92ae3219`.
+`9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083`.
 It binds to Core base commit
 `ce8c6049bdedb9f99337ef5b8f90428bee0e68ba`, base tree
 `e640f5ce5a448955f76399bc6826f3621f10bba2`, and merged Project
@@ -365,11 +365,15 @@ Organization, NormalOrganization, Default, assignment target, role, exact
 ZERO/EXACTLY_ONE/MULTIPLE truth, evaluated-at, source-version, matched-count,
 foreign-key, and check-constraint data remain in place.
 
-The Down migration restores the removed schema shape for rollback. Existing
-rows receive `ACTIVE`, generation `1`, a fixed non-zero 32-byte compatibility
-digest, and no pending transfer because removed historical values cannot be
-reconstructed. It then restores the position-276 lifecycle trigger semantics
-and the position-277 assignment generation/evaluation trigger semantics.
+The Down migration first excludes concurrent writes and refuses rollback before
+schema mutation whenever any assignment, NormalOrganization, or non-canonical
+Default Organization state exists. This prevents discarded lifecycle,
+assignment-state, generation, evidence-digest, or pending-transfer truth from
+being fabricated. Down succeeds only for the canonical Default-only bootstrap
+state: position 276 made that Default lifecycle immutably `ACTIVE`, and the
+empty assignment table requires no synthetic authority-bearing row values. It
+then restores the position-276 lifecycle trigger semantics and the position-277
+assignment generation/evaluation trigger semantics.
 
 The final position-280 schema has no active Organization lifecycle,
 assignment `TRANSITIONING` state, assignment generation/CAS field,

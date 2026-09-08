@@ -112,6 +112,28 @@ CREATE TRIGGER organizations_enforce_invariants
 
 -- +migrate Down
 
+LOCK TABLE public.organizations, public.normal_organizations, public.user_organization_assignments
+    IN ACCESS EXCLUSIVE MODE;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.user_organization_assignments) OR
+        EXISTS (SELECT 1 FROM public.normal_organizations) OR
+        (SELECT count(*) FROM public.organizations) <> 1 OR
+        NOT EXISTS (
+            SELECT 1
+            FROM public.organizations
+            WHERE id = '296e2656-7221-53fe-bd0a-832d24ccfd03'::uuid
+                AND classification = 'DEFAULT'
+                AND canonical_name = 'ms-oncall.default'
+        ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'position-280 downgrade refused: current Organization or assignment rows require discarded authority state';
+    END IF;
+END;
+$$;
+
 DROP TRIGGER organizations_enforce_invariants ON public.organizations;
 DROP FUNCTION public.ms_oncall_enforce_organization_invariants();
 

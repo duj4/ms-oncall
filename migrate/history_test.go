@@ -174,7 +174,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if latest.Provenance != provenanceMSOnCall || latest.BundleID != "ms-oncall-active-foundation-reconciliation-v1" {
 		t.Fatalf("active reconciliation provenance/bundle = %q/%q", latest.Provenance, latest.BundleID)
 	}
-	if latest.OriginalID != latest.ID || latest.SHA256 != "448003afda1d9dcd30667ce86eeb1b3b973230d2e20d7e8022ebec6f92ae3219" {
+	if latest.OriginalID != latest.ID || latest.SHA256 != "9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083" {
 		t.Fatalf("active reconciliation original identity/checksum = %q/%q", latest.OriginalID, latest.SHA256)
 	}
 	if latest.PredecessorID != generationRetirement.ID ||

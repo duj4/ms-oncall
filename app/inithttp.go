@@ -26,7 +26,7 @@ import (
 )
 
 func (app *App) initHTTP(ctx context.Context) error {
-	humanExecutionContext, err := executioncontext.NewHumanExecutionContextConstructor(app.UserStore, app.OrganizationStore)
+	humanExecutionContext, err := executioncontext.NewHumanExecutionContextConstructor(app.OrganizationStore)
 	if err != nil {
 		return errors.Wrap(err, "init human execution context composition")
 	}

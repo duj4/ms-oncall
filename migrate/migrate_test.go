@@ -125,7 +125,7 @@ func TestGenerationRetirementDownRestoresExactPosition278Definition(t *testing.T
 	}
 }
 
-func TestActiveFoundationReconciliationMigrationIsNarrowAndReversible(t *testing.T) {
+func TestActiveFoundationReconciliationMigrationIsNarrowAndGuardsLossyDown(t *testing.T) {
 	history, err := loadEmbeddedHistory()
 	if err != nil {
 		t.Fatal(err)
@@ -147,6 +147,20 @@ func TestActiveFoundationReconciliationMigrationIsNarrowAndReversible(t *testing
 		if !strings.Contains(up, removed) || !strings.Contains(down, removed) {
 			t.Fatalf("position-280 directions do not both account for %q", removed)
 		}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(position280.Down.statements[0]), "LOCK TABLE public.organizations, public.normal_organizations, public.user_organization_assignments") {
+		t.Fatalf("position-280 Down does not acquire its write-excluding table locks first: %q", position280.Down.statements[0])
+	}
+	guard := position280.Down.statements[1]
+	if !strings.Contains(guard, "position-280 downgrade refused: current Organization or assignment rows require discarded authority state") ||
+		!strings.Contains(guard, "FROM public.user_organization_assignments") ||
+		!strings.Contains(guard, "FROM public.normal_organizations") ||
+		!strings.Contains(guard, "FROM public.organizations") {
+		t.Fatalf("position-280 Down lacks the bounded pre-mutation refusal guard: %q", guard)
+	}
+	if strings.Contains(position280.Down.statements[0], "DROP ") || strings.Contains(guard, "DROP ") ||
+		strings.Contains(position280.Down.statements[0], "ALTER ") || strings.Contains(guard, "ALTER ") {
+		t.Fatal("position-280 Down mutates schema before its lossy-downgrade guard")
 	}
 }
 

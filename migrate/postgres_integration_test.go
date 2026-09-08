@@ -985,7 +985,7 @@ func TestPostgresGenerationRetirementFreshUpgradeRollbackReapply(t *testing.T) {
 	assertRetainedOrganizationAssignmentObjects(t, ctx, upgradeURL)
 }
 
-func TestPostgresActiveFoundationReconciliationFreshUpgradeRollbackReapply(t *testing.T) {
+func TestPostgresActiveFoundationReconciliationSafeRollbackAndPopulatedRefusal(t *testing.T) {
 	baseURL := postgresIntegrationURL(t)
 	history, err := loadEmbeddedHistory()
 	if err != nil {
@@ -1006,6 +1006,21 @@ func TestPostgresActiveFoundationReconciliationFreshUpgradeRollbackReapply(t *te
 		t.Fatal(err)
 	} else if count != len(history.entries) {
 		t.Fatalf("fresh install applied %d migrations, want %d", count, len(history.entries))
+	}
+	assertActiveFoundationSchema(t, ctx, freshURL, true)
+	assertActiveFoundationProvenance(t, ctx, freshURL, position280, true)
+	if count, err := Down(ctx, freshURL, position279.Name); err != nil {
+		t.Fatal(err)
+	} else if count != 1 {
+		t.Fatalf("safe position-280 rollback count = %d, want 1", count)
+	}
+	assertActiveFoundationSchema(t, ctx, freshURL, false)
+	assertActiveFoundationSafeRollbackState(t, ctx, freshURL)
+	assertActiveFoundationProvenance(t, ctx, freshURL, position280, false)
+	if count, err := Up(ctx, freshURL, position280.Name); err != nil {
+		t.Fatal(err)
+	} else if count != 1 {
+		t.Fatalf("position-280 reapply after safe rollback count = %d, want 1", count)
 	}
 	assertActiveFoundationSchema(t, ctx, freshURL, true)
 	assertActiveFoundationProvenance(t, ctx, freshURL, position280, true)
@@ -1074,23 +1089,30 @@ func TestPostgresActiveFoundationReconciliationFreshUpgradeRollbackReapply(t *te
 	assertActiveFoundationRows(t, ctx, upgradeURL, userID, organizationID)
 	assertActiveFoundationProvenance(t, ctx, upgradeURL, position280, true)
 
-	if count, err := Down(ctx, upgradeURL, position279.Name); err != nil {
-		t.Fatal(err)
-	} else if count != 1 {
-		t.Fatalf("position-280 rollback count = %d, want 1", count)
+	count, err := Down(ctx, upgradeURL, position279.Name)
+	if count != 0 || err == nil {
+		t.Fatalf("populated position-280 rollback = (%d, %v), want zero applied and refusal", count, err)
 	}
-	assertActiveFoundationSchema(t, ctx, upgradeURL, false)
-	assertActiveFoundationRollbackDefaults(t, ctx, upgradeURL, userID, organizationID)
-	assertActiveFoundationProvenance(t, ctx, upgradeURL, position280, false)
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "55000" ||
+		databaseError.Message != "position-280 downgrade refused: current Organization or assignment rows require discarded authority state" {
+		t.Fatalf("populated position-280 rollback error = %#v / %v", databaseError, err)
+	}
 
-	if count, err := Up(ctx, upgradeURL, position280.Name); err != nil {
-		t.Fatal(err)
-	} else if count != 1 {
-		t.Fatalf("position-280 reapply count = %d, want 1", count)
-	}
+	// The guard is the first Down action and the migration runner wraps every
+	// direction in one transaction, so refusal leaves schema, rows, and both
+	// migration ledgers at position 280.
 	assertActiveFoundationSchema(t, ctx, upgradeURL, true)
 	assertActiveFoundationRows(t, ctx, upgradeURL, userID, organizationID)
 	assertActiveFoundationProvenance(t, ctx, upgradeURL, position280, true)
+	if err := VerifyAll(ctx, upgradeURL); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := Up(ctx, upgradeURL, position280.Name); err != nil {
+		t.Fatal(err)
+	} else if count != 0 {
+		t.Fatalf("position-280 Up after refused rollback applied %d migrations, want 0", count)
+	}
 }
 
 func assertActiveFoundationSchema(t *testing.T, ctx context.Context, testURL string, reconciled bool) {
@@ -1153,31 +1175,31 @@ func assertActiveFoundationRows(t *testing.T, ctx context.Context, testURL strin
 	}
 }
 
-func assertActiveFoundationRollbackDefaults(t *testing.T, ctx context.Context, testURL string, userID, organizationID uuid.UUID) {
+func assertActiveFoundationSafeRollbackState(t *testing.T, ctx context.Context, testURL string) {
 	t.Helper()
 	conn, err := pgx.Connect(ctx, testURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(ctx)
-	var lifecycle, state string
-	var generation int64
-	var digestLength int
-	var digestNonzero, pendingIsNull bool
+	var organizationCount, normalCount, assignmentCount int
+	var id uuid.UUID
+	var classification, canonicalName, lifecycle string
 	if err := conn.QueryRow(ctx, `
-		SELECT o.lifecycle::text, a.state::text, a.assignment_generation,
-			octet_length(a.evidence_digest),
-			encode(a.evidence_digest, 'hex') <> repeat('0', 64),
-			a.pending_transfer_id IS NULL
+		SELECT
+			(SELECT count(*) FROM public.organizations),
+			(SELECT count(*) FROM public.normal_organizations),
+			(SELECT count(*) FROM public.user_organization_assignments),
+			o.id, o.classification::text, o.canonical_name, o.lifecycle::text
 		FROM public.organizations o
-		JOIN public.user_organization_assignments a ON a.effective_organization_id = o.id
-		WHERE o.id = $1 AND a.user_id = $2
-	`, organizationID, userID).Scan(&lifecycle, &state, &generation, &digestLength, &digestNonzero, &pendingIsNull); err != nil {
+	`).Scan(&organizationCount, &normalCount, &assignmentCount, &id, &classification, &canonicalName, &lifecycle); err != nil {
 		t.Fatal(err)
 	}
-	if lifecycle != "ACTIVE" || state != "ACTIVE" || generation != 1 || digestLength != 32 || !digestNonzero || !pendingIsNull {
-		t.Fatalf("rollback compatibility defaults = lifecycle:%q state:%q generation:%d digest:%d/nonzero:%v pending-null:%v",
-			lifecycle, state, generation, digestLength, digestNonzero, pendingIsNull)
+	if organizationCount != 1 || normalCount != 0 || assignmentCount != 0 ||
+		id.String() != "296e2656-7221-53fe-bd0a-832d24ccfd03" || classification != "DEFAULT" ||
+		canonicalName != "ms-oncall.default" || lifecycle != "ACTIVE" {
+		t.Fatalf("safe rollback state = counts %d/%d/%d, Default %s/%q/%q/%q",
+			organizationCount, normalCount, assignmentCount, id, classification, canonicalName, lifecycle)
 	}
 }
 

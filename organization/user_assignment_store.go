@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/target/goalert/permission"
 )
 
 const userOrganizationAssignmentColumns = `
@@ -19,6 +20,79 @@ const userOrganizationAssignmentColumns = `
 	authoritative_evaluated_at,
 	source_config_version,
 	matched_count`
+
+// CurrentUserOrganization is the bounded read projection used when composing
+// one request's current ordinary Organization context. It is not persisted and
+// deliberately excludes mapping provenance and Organization presentation
+// fields.
+type CurrentUserOrganization struct {
+	UserID         uuid.UUID
+	UserRole       permission.Role
+	OrganizationID uuid.UUID
+	Role           OrganizationRole
+}
+
+const findCurrentUserOrganizationQuery = `
+	SELECT
+		u.id,
+		u.role,
+		a.effective_organization_id,
+		a.organization_role
+	FROM public.users AS u
+	INNER JOIN public.user_organization_assignments AS a
+		ON a.user_id = u.id
+	INNER JOIN public.organizations AS o
+		ON o.id = a.effective_organization_id
+		AND o.classification = a.effective_organization_classification
+	INNER JOIN public.normal_organizations AS n
+		ON n.organization_id = o.id
+		AND n.organization_classification = o.classification
+		AND n.organization_id = a.effective_normal_organization_id
+	WHERE u.id = $1
+		AND u.role IN ('user', 'admin')
+		AND a.mapping_outcome = 'EXACTLY_ONE'
+		AND a.matched_count = 1
+		AND a.effective_organization_classification = 'NORMAL'
+		AND a.effective_organization_id <> $2
+		AND a.effective_normal_organization_id = a.effective_organization_id
+		AND a.organization_role IN ('ORG_MEMBER', 'ORG_ADMIN')
+		AND o.classification = 'NORMAL'
+		AND n.organization_classification = 'NORMAL'
+`
+
+// FindCurrentUserOrganization observes the current User, assignment, base
+// Organization, and NormalOrganization relationship in one SQL statement. A
+// non-operational or contradictory combination is indistinguishable from not
+// found so callers cannot repair it into authority.
+func (s *Store) FindCurrentUserOrganization(ctx context.Context, userID uuid.UUID) (*CurrentUserOrganization, error) {
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("%w: User ID is required", ErrInvalidInput)
+	}
+
+	var value CurrentUserOrganization
+	var userRole, organizationRole string
+	err := s.db.QueryRowContext(ctx, findCurrentUserOrganizationQuery, userID, DefaultOrganizationID).Scan(
+		&value.UserID,
+		&userRole,
+		&value.OrganizationID,
+		&organizationRole,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read current User Organization: %w", err)
+	}
+
+	value.UserRole = permission.Role(userRole)
+	value.Role = OrganizationRole(organizationRole)
+	if value.UserID != userID || value.OrganizationID == uuid.Nil || value.OrganizationID.String() == DefaultOrganizationID ||
+		(value.UserRole != permission.RoleUser && value.UserRole != permission.RoleAdmin) ||
+		(value.Role != OrganizationRoleMember && value.Role != OrganizationRoleAdmin) {
+		return nil, fmt.Errorf("%w: invalid current User Organization projection", ErrInvariantViolation)
+	}
+	return &value, nil
+}
 
 func scanUserOrganizationAssignment(row rowScanner) (*UserOrganizationAssignment, error) {
 	var assignment UserOrganizationAssignment
