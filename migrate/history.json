@@ -1530,6 +1530,35 @@
           "sha256": "14b6dc8797bf8a55ccc0d35737dbdafe698c9da601693ac2d651057a7c7aaf5f"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-active-foundation-reconciliation-v1",
+      "first_position": 280,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "Core Enterprise Identity & Organization Isolation Current Authority & Active Foundation Reconciliation V1",
+        "base_commit": "ce8c6049bdedb9f99337ef5b8f90428bee0e68ba",
+        "base_tree": "e640f5ce5a448955f76399bc6826f3621f10bba2",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "5779724705c3bf0df89896157155eeea404a5273",
+        "authorization_tree": "1072b9876f0bbf0401d749fdb0852a32255cc0cd"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1",
+        "migration_id": "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql",
+        "sha256": "14b6dc8797bf8a55ccc0d35737dbdafe698c9da601693ac2d651057a7c7aaf5f",
+        "evidence": "APPEND_AFTER_ACCEPTED_SESSION_GENERATION_BINDING_HUMAN_SECURITY_GENERATION_RETIREMENT_CLEANUP_V1"
+      },
+      "adaptation_evidence": "FORWARD_RECONCILIATION_OF_UNJUSTIFIED_ACTIVE_IDENTITY_ORGANIZATION_FOUNDATION_MECHANISMS",
+      "entries": [
+        {
+          "id": "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql",
+          "original_id": "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql",
+          "sha256": "9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083"
+        }
+      ]
     }
   ]
 }

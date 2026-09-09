@@ -335,3 +335,54 @@ no replacement Current Authority or Complete Operation Guard runtime behavior.
 The highest valid capability claim is: **The superseded session-generation
 binding contract and generic human-security-generation source/current-schema
 capability are retired forward, with exact position-278 rollback restoration.**
+
+## Canonical position 280: Active identity and Organization foundation reconciliation
+
+Bundle `ms-oncall-active-foundation-reconciliation-v1` appends one MS OnCall
+migration at canonical position 280:
+`20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql`, exact
+SHA-256
+`9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083`.
+It binds to Core base commit
+`ce8c6049bdedb9f99337ef5b8f90428bee0e68ba`, base tree
+`e640f5ce5a448955f76399bc6826f3621f10bba2`, and merged Project
+authorization commit `5779724705c3bf0df89896157155eeea404a5273`,
+authorization tree `1072b9876f0bbf0401d749fdb0852a32255cc0cd`.
+
+The bundle depends exactly on immutable accepted bundle
+`ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1`,
+migration
+`20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql`,
+checksum
+`14b6dc8797bf8a55ccc0d35737dbdafe698c9da601693ac2d651057a7c7aaf5f`.
+Positions 1 through 279 and their provenance remain unchanged.
+
+The position-280 Up migration removes Organization lifecycle state and the
+assignment transfer-state, generation/CAS, evidence-digest, and pending-transfer
+columns and enum types. It recreates only the base Organization identity/audit
+trigger and UserOrganizationAssignment User-identity trigger. Existing
+Organization, NormalOrganization, Default, assignment target, role, exact
+ZERO/EXACTLY_ONE/MULTIPLE truth, evaluated-at, source-version, matched-count,
+foreign-key, and check-constraint data remain in place.
+
+The Down migration first excludes concurrent writes and refuses rollback before
+schema mutation whenever any assignment, NormalOrganization, or non-canonical
+Default Organization state exists. This prevents discarded lifecycle,
+assignment-state, generation, evidence-digest, or pending-transfer truth from
+being fabricated. Down succeeds only for the canonical Default-only bootstrap
+state: position 276 made that Default lifecycle immutably `ACTIVE`, and the
+empty assignment table requires no synthetic authority-bearing row values. It
+then restores the position-276 lifecycle trigger semantics and the position-277
+assignment generation/evaluation trigger semantics.
+
+The final position-280 schema has no active Organization lifecycle,
+assignment `TRANSITIONING` state, assignment generation/CAS field,
+evidence-digest gate, or pending-transfer field. Mapping evaluation timestamp,
+source version, and matched count remain bounded audit/source facts, not an
+authorization proof.
+
+The highest valid capability claim is: **The active persistence foundation
+represents stable Organization identity, Normal/Default classification,
+one optional effective assignment, exact mapping cardinality, role, and bounded
+mapping audit facts without unimplemented lifecycle, transfer, CAS, or evidence
+gate machinery.**

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -90,7 +91,7 @@ func TestMSOnCallTailMigrationsUseTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range migrations[len(migrations)-4:] {
+	for _, migration := range migrations[len(migrations)-5:] {
 		if migration.Up.disableTx || migration.Down.disableTx {
 			t.Fatalf("MS OnCall persistence migration %q must use transactions for Up and Down", migration.ID)
 		}
@@ -99,7 +100,7 @@ func TestMSOnCallTailMigrationsUseTransactions(t *testing.T) {
 		}
 	}
 	latest := migrations[len(migrations)-1]
-	if latest.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
+	if latest.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
 		t.Fatalf("latest migration = %q", latest.ID)
 	}
 }
@@ -113,14 +114,53 @@ func TestGenerationRetirementDownRestoresExactPosition278Definition(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	position278 := migrations[len(migrations)-2]
-	position279 := migrations[len(migrations)-1]
+	position278 := migrations[len(migrations)-3]
+	position279 := migrations[len(migrations)-2]
 	if position278.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" ||
 		position279.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
 		t.Fatalf("unexpected retirement boundary: position278=%q position279=%q", position278.ID, position279.ID)
 	}
 	if !slices.Equal(position279.Down.statements, position278.Up.statements) {
 		t.Fatal("position-279 Down does not exactly reproduce the parsed position-278 Up definition")
+	}
+}
+
+func TestActiveFoundationReconciliationMigrationIsNarrowAndGuardsLossyDown(t *testing.T) {
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := parseMigrations(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	position280 := migrations[len(migrations)-1]
+	if position280.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
+		t.Fatalf("position-280 migration = %q", position280.ID)
+	}
+	if position280.Up.disableTx || position280.Down.disableTx || len(position280.Up.statements) == 0 || len(position280.Down.statements) == 0 {
+		t.Fatal("position-280 migration must have transactional, non-empty Up and Down directions")
+	}
+	up := strings.Join(position280.Up.statements, "\n")
+	down := strings.Join(position280.Down.statements, "\n")
+	for _, removed := range []string{"lifecycle", "assignment_generation", "evidence_digest", "pending_transfer_id", "ms_oncall_user_organization_assignment_state"} {
+		if !strings.Contains(up, removed) || !strings.Contains(down, removed) {
+			t.Fatalf("position-280 directions do not both account for %q", removed)
+		}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(position280.Down.statements[0]), "LOCK TABLE public.organizations, public.normal_organizations, public.user_organization_assignments") {
+		t.Fatalf("position-280 Down does not acquire its write-excluding table locks first: %q", position280.Down.statements[0])
+	}
+	guard := position280.Down.statements[1]
+	if !strings.Contains(guard, "position-280 downgrade refused: current Organization or assignment rows require discarded authority state") ||
+		!strings.Contains(guard, "FROM public.user_organization_assignments") ||
+		!strings.Contains(guard, "FROM public.normal_organizations") ||
+		!strings.Contains(guard, "FROM public.organizations") {
+		t.Fatalf("position-280 Down lacks the bounded pre-mutation refusal guard: %q", guard)
+	}
+	if strings.Contains(position280.Down.statements[0], "DROP ") || strings.Contains(guard, "DROP ") ||
+		strings.Contains(position280.Down.statements[0], "ALTER ") || strings.Contains(guard, "ALTER ") {
+		t.Fatal("position-280 Down mutates schema before its lossy-downgrade guard")
 	}
 }
 

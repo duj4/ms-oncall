@@ -26,9 +26,9 @@ import (
 )
 
 func (app *App) initHTTP(ctx context.Context) error {
-	currentHumanAuthority, err := executioncontext.NewCurrentHumanAuthorityConstructor(app.UserStore, app.OrganizationStore)
+	humanExecutionContext, err := executioncontext.NewHumanExecutionContextConstructor(app.OrganizationStore)
 	if err != nil {
-		return errors.Wrap(err, "init current human authority composition")
+		return errors.Wrap(err, "init human execution context composition")
 	}
 
 	middleware := []func(http.Handler) http.Handler{
@@ -105,7 +105,7 @@ func (app *App) initHTTP(ctx context.Context) error {
 		app.AuthHandler.WrapHandler,
 
 		// compose current ordinary-human authority from authenticated identity
-		currentHumanAuthority.WrapHandler,
+		humanExecutionContext.WrapHandler,
 
 		// add auth info to request logs
 		logRequestAuth,

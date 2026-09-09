@@ -1,10 +1,10 @@
 package organization
 
 import (
-	"crypto/sha256"
 	"errors"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,18 +12,43 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+func TestCurrentUserOrganizationQueryIsOneBoundedRelationalStatement(t *testing.T) {
+	query := strings.ToLower(findCurrentUserOrganizationQuery)
+	if strings.Contains(query, ";") || strings.Count(query, "select") != 1 {
+		t.Fatalf("current User Organization query is not one statement: %q", findCurrentUserOrganizationQuery)
+	}
+	for _, required := range []string{
+		"from public.users",
+		"join public.user_organization_assignments",
+		"join public.organizations",
+		"join public.normal_organizations",
+		"mapping_outcome = 'exactly_one'",
+		"matched_count = 1",
+		"effective_organization_classification = 'normal'",
+		"effective_organization_id <> $2",
+		"organization_role in ('org_member', 'org_admin')",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("current User Organization query lacks %q", required)
+		}
+	}
+	for _, excluded := range []string{"display_name", "iana_time_zone", "corporate_mapping_key", "source_config_version", "authoritative_evaluated_at"} {
+		if strings.Contains(query, excluded) {
+			t.Fatalf("current User Organization query projects unrelated field %q", excluded)
+		}
+	}
+}
+
 func validUserOrganizationAssignmentValues() UserOrganizationAssignmentValues {
 	return UserOrganizationAssignmentValues{
 		EffectiveOrganizationID:             uuid.MustParse("608a7f71-b67f-4a77-a32b-86f76449db21"),
 		EffectiveOrganizationClassification: ClassificationNormal,
-		State:                               AssignmentStateActive,
 		Role:                                OrganizationRoleMember,
 		MappingOutcome:                      MappingOutcomeExactlyOne,
 		Evaluation: AssignmentEvaluation{
 			AuthoritativeEvaluatedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
 			SourceConfigVersion:      "mapping-config-v1",
 			MatchedCount:             1,
-			EvidenceDigest:           sha256.Sum256([]byte("non-secret normalized evidence")),
 		},
 	}
 }
@@ -58,13 +83,6 @@ func TestValidateUserOrganizationAssignmentTruthTable(t *testing.T) {
 			value.Evaluation.MatchedCount = 2
 			return value
 		}()},
-		{name: "transitioning pending identity", values: func() UserOrganizationAssignmentValues {
-			value := validUserOrganizationAssignmentValues()
-			value.State = AssignmentStateTransitioning
-			id := uuid.MustParse("a64c1ed2-7f69-4a22-a46b-d73701aecfe9")
-			value.PendingTransferID = &id
-			return value
-		}()},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -83,14 +101,12 @@ func TestValidateUserOrganizationAssignmentRejectsInvalidValues(t *testing.T) {
 	}{
 		{name: "nil effective Organization", mutate: func(v *UserOrganizationAssignmentValues) { v.EffectiveOrganizationID = uuid.Nil }},
 		{name: "unknown classification", mutate: func(v *UserOrganizationAssignmentValues) { v.EffectiveOrganizationClassification = "UNKNOWN" }},
-		{name: "unknown state", mutate: func(v *UserOrganizationAssignmentValues) { v.State = "UNKNOWN" }},
 		{name: "unknown role", mutate: func(v *UserOrganizationAssignmentValues) { v.Role = "UNKNOWN" }},
 		{name: "unknown outcome", mutate: func(v *UserOrganizationAssignmentValues) { v.MappingOutcome = "UNKNOWN" }},
 		{name: "missing evaluation time", mutate: func(v *UserOrganizationAssignmentValues) { v.Evaluation.AuthoritativeEvaluatedAt = time.Time{} }},
 		{name: "blank source version", mutate: func(v *UserOrganizationAssignmentValues) { v.Evaluation.SourceConfigVersion = "" }},
 		{name: "untrimmed source version", mutate: func(v *UserOrganizationAssignmentValues) { v.Evaluation.SourceConfigVersion = " version " }},
 		{name: "negative matched count", mutate: func(v *UserOrganizationAssignmentValues) { v.Evaluation.MatchedCount = -1 }},
-		{name: "missing digest", mutate: func(v *UserOrganizationAssignmentValues) { v.Evaluation.EvidenceDigest = EvidenceDigest{} }},
 		{name: "exactly one Default", mutate: func(v *UserOrganizationAssignmentValues) {
 			v.EffectiveOrganizationID = defaultID
 			v.EffectiveOrganizationClassification = ClassificationDefault
@@ -118,15 +134,6 @@ func TestValidateUserOrganizationAssignmentRejectsInvalidValues(t *testing.T) {
 			v.EffectiveOrganizationID = defaultID
 			v.EffectiveOrganizationClassification = ClassificationDefault
 			v.Role = OrganizationRoleNone
-		}},
-		{name: "pending identity while active", mutate: func(v *UserOrganizationAssignmentValues) {
-			id := uuid.New()
-			v.PendingTransferID = &id
-		}},
-		{name: "nil pending identity", mutate: func(v *UserOrganizationAssignmentValues) {
-			v.State = AssignmentStateTransitioning
-			id := uuid.Nil
-			v.PendingTransferID = &id
 		}},
 	}
 	for _, test := range tests {
@@ -285,50 +292,12 @@ func TestUserOrganizationAssignmentStoreRejectsInvalidUTF8BeforeSQL(t *testing.T
 	values := validUserOrganizationAssignmentValues()
 	values.Evaluation.SourceConfigVersion = string([]byte{0xff})
 
-	tests := []struct {
-		name string
-		run  func() error
-	}{
-		{
-			name: "create",
-			run: func() error {
-				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "guarded update",
-			run: func() error {
-				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					ExpectedGeneration:               InitialAssignmentGeneration,
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "evidence refresh",
-			run: func() error {
-				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
-					UserID:             uuid.New(),
-					ExpectedGeneration: InitialAssignmentGeneration,
-					Evaluation:         values.Evaluation,
-				})
-				return err
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := test.run()
-			if !errors.Is(err, ErrInvalidInput) {
-				t.Fatalf("invalid UTF-8 source/config version error = %v, want ErrInvalidInput", err)
-			}
-		})
+	_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+		UserID:                           uuid.New(),
+		UserOrganizationAssignmentValues: values,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid UTF-8 source/config version error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -337,50 +306,12 @@ func TestUserOrganizationAssignmentStoreRejectsNULBeforeSQL(t *testing.T) {
 	values := validUserOrganizationAssignmentValues()
 	values.Evaluation.SourceConfigVersion = "prefix\x00配置"
 
-	tests := []struct {
-		name string
-		run  func() error
-	}{
-		{
-			name: "create",
-			run: func() error {
-				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "guarded update",
-			run: func() error {
-				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					ExpectedGeneration:               InitialAssignmentGeneration,
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "evidence refresh",
-			run: func() error {
-				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
-					UserID:             uuid.New(),
-					ExpectedGeneration: InitialAssignmentGeneration,
-					Evaluation:         values.Evaluation,
-				})
-				return err
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := test.run()
-			if !errors.Is(err, ErrInvalidInput) {
-				t.Fatalf("U+0000 source/config version error = %v, want ErrInvalidInput", err)
-			}
-		})
+	_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+		UserID:                           uuid.New(),
+		UserOrganizationAssignmentValues: values,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("U+0000 source/config version error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -389,50 +320,12 @@ func TestUserOrganizationAssignmentStoreRejectsOutOfRangeEvaluationTimeBeforeSQL
 	values := validUserOrganizationAssignmentValues()
 	values.Evaluation.AuthoritativeEvaluatedAt = time.Date(300000, time.January, 1, 0, 0, 0, 0, time.UTC)
 
-	tests := []struct {
-		name string
-		run  func() error
-	}{
-		{
-			name: "create",
-			run: func() error {
-				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "guarded update",
-			run: func() error {
-				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					ExpectedGeneration:               InitialAssignmentGeneration,
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "evidence refresh",
-			run: func() error {
-				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
-					UserID:             uuid.New(),
-					ExpectedGeneration: InitialAssignmentGeneration,
-					Evaluation:         values.Evaluation,
-				})
-				return err
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := test.run()
-			if !errors.Is(err, ErrInvalidInput) {
-				t.Fatalf("out-of-range evaluation time error = %v, want ErrInvalidInput", err)
-			}
-		})
+	_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+		UserID:                           uuid.New(),
+		UserOrganizationAssignmentValues: values,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("out-of-range evaluation time error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -456,50 +349,12 @@ func TestValidateAssignmentEvaluationMatchedCountPostgresIntegerRange(t *testing
 	}
 
 	store := NewStore(nil)
-	tests := []struct {
-		name string
-		run  func() error
-	}{
-		{
-			name: "create",
-			run: func() error {
-				_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "guarded update",
-			run: func() error {
-				_, err := store.GuardedUpdateUserOrganizationAssignment(t.Context(), GuardedUpdateUserOrganizationAssignmentInput{
-					UserID:                           uuid.New(),
-					ExpectedGeneration:               InitialAssignmentGeneration,
-					UserOrganizationAssignmentValues: values,
-				})
-				return err
-			},
-		},
-		{
-			name: "evidence refresh",
-			run: func() error {
-				_, err := store.RefreshUserOrganizationAssignmentEvidence(t.Context(), RefreshUserOrganizationAssignmentEvidenceInput{
-					UserID:             uuid.New(),
-					ExpectedGeneration: InitialAssignmentGeneration,
-					Evaluation:         values.Evaluation,
-				})
-				return err
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := test.run()
-			if !errors.Is(err, ErrInvalidInput) {
-				t.Fatalf("matched count above PostgreSQL integer range error = %v, want ErrInvalidInput", err)
-			}
-		})
+	_, err := store.CreateUserOrganizationAssignment(t.Context(), CreateUserOrganizationAssignmentInput{
+		UserID:                           uuid.New(),
+		UserOrganizationAssignmentValues: values,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("matched count above PostgreSQL integer range error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -520,14 +375,8 @@ func TestMapUserAssignmentWriteErrorUsesExactIdentity(t *testing.T) {
 		t.Fatalf("spoofed constraint identity was classified as conflict: %v", err)
 	}
 
-	stale := &pgconn.PgError{
-		Code:           "23514",
-		ConstraintName: "user_organization_assignments_generation_monotonic",
-		SchemaName:     "public",
-		TableName:      "user_organization_assignments",
-		ColumnName:     "assignment_generation",
-	}
-	if err := mapUserAssignmentWriteError("test", stale); !errors.Is(err, ErrStaleAssignmentGeneration) || !errors.Is(err, stale) {
-		t.Fatalf("stale-generation mapping error = %v", err)
+	invalid := &pgconn.PgError{Code: "23514", SchemaName: "public", TableName: "user_organization_assignments"}
+	if err := mapUserAssignmentWriteError("test", invalid); !errors.Is(err, ErrInvalidInput) || !errors.Is(err, invalid) {
+		t.Fatalf("constraint mapping error = %v", err)
 	}
 }
