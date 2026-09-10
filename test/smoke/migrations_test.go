@@ -43,6 +43,8 @@ var rules = migratetest.RuleSet{
 	{MigrationName: "ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
 	{MigrationName: "ms-oncall-active-foundation-reconciliation-v1", TableName: "ms_oncall_migration_provenance", ColumnName: "applied_at"},
 	{MigrationName: "ms-oncall-active-foundation-reconciliation-v1", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
+	{MigrationName: "ms-oncall-resource-root-organization-ownership-persistence-v1", TableName: "ms_oncall_migration_provenance", ColumnName: "applied_at"},
+	{MigrationName: "ms-oncall-resource-root-organization-ownership-persistence-v1", TableName: "ms_oncall_migration_provenance", ColumnName: "recorded_at"},
 	// The deterministic Default identity is recreated with truthful bootstrap audit timestamps.
 	{MigrationName: "ms-oncall-organization-persistence", TableName: "organizations", ColumnName: "created_at"},
 	{MigrationName: "ms-oncall-organization-persistence", TableName: "organizations", ColumnName: "updated_at"},
@@ -197,6 +199,12 @@ var initDatas = []initData{
 			({{uuid "sched1"}}, '{"V1": {"Foo": "Bar", "OnCallNotificationRules": [{ "Extra": "Field", "ChannelID": {{uuidJSON "nc1"}} }] } }'),
 			({{uuid "sched2"}}, '{"V1": {"OnCallNotificationRules": [{ "Extra2": "Field2", "ChannelID": {{uuidJSON "nc2"}} }] } }'),
 			({{uuid "sched3"}}, '{"V1": {"OnCallNotificationRules": [{  "Extra3": "Field3", "ChannelID": {{uuidJSON "nc-invalid"}} }] } }');
+	`},
+	// Position 281 intentionally supports only clean initialization. The
+	// migration test's synthetic business-resource rows are disposable, so
+	// remove them before exercising the strict NOT NULL Up and empty-only Down.
+	{Before: "ms-oncall-resource-root-organization-ownership-persistence-v1", SQL: `
+		TRUNCATE TABLE services, schedules, rotations, escalation_policies CASCADE;
 	`},
 }
 

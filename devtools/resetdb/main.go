@@ -143,6 +143,12 @@ func fillDB(ctx context.Context, dataCfg *datagenConfig, url string) error {
 			log.Printf("inserted %d rows into %s in %s", n, table, time.Since(s).String())
 		}()
 	}
+	copyFrom("organizations", []string{"id", "classification", "display_name", "canonical_name"}, 1, func(int) []interface{} {
+		return []interface{}{data.OrganizationID, "NORMAL", "Reset DB generated Organization", "resetdb.generated"}
+	})
+	copyFrom("normal_organizations", []string{"organization_id", "organization_classification", "corporate_mapping_key", "iana_time_zone"}, 1, func(int) []interface{} {
+		return []interface{}{data.OrganizationID, "NORMAL", "resetdb:generated", "Etc/UTC"}
+	}, "organizations")
 
 	copyFrom("users", []string{"id", "name", "role", "email"}, len(data.Users), func(n int) []interface{} {
 		u := data.Users[n]
@@ -156,19 +162,19 @@ func fillDB(ctx context.Context, dataCfg *datagenConfig, url string) error {
 		nr := data.NotificationRules[n]
 		return []interface{}{asUUID(nr.ID), asUUID(nr.UserID), nr.ContactMethodID, nr.DelayMinutes}
 	}, "user_contact_methods")
-	copyFrom("rotations", []string{"id", "name", "description", "type", "shift_length", "start_time", "time_zone"}, len(data.Rotations), func(n int) []interface{} {
+	copyFrom("rotations", []string{"id", "organization_id", "name", "description", "type", "shift_length", "start_time", "time_zone"}, len(data.Rotations), func(n int) []interface{} {
 		r := data.Rotations[n]
 		zone, _ := r.Start.Zone()
-		return []interface{}{asUUID(r.ID), r.Name, r.Description, r.Type, r.ShiftLength, r.Start, zone}
-	})
+		return []interface{}{asUUID(r.ID), r.OrganizationID, r.Name, r.Description, r.Type, r.ShiftLength, r.Start, zone}
+	}, "normal_organizations")
 	copyFrom("rotation_participants", []string{"id", "rotation_id", "user_id", "position"}, len(data.RotationParts), func(n int) []interface{} {
 		p := data.RotationParts[n]
 		return []interface{}{asUUID(p.ID), asUUID(p.RotationID), asUUID(p.UserID), p.Pos}
 	}, "rotations", "users")
-	copyFrom("schedules", []string{"id", "name", "description", "time_zone"}, len(data.Schedules), func(n int) []interface{} {
+	copyFrom("schedules", []string{"id", "organization_id", "name", "description", "time_zone"}, len(data.Schedules), func(n int) []interface{} {
 		s := data.Schedules[n]
-		return []interface{}{asUUID(s.ID), s.Name, s.Description, s.TimeZone.String()}
-	})
+		return []interface{}{asUUID(s.ID), s.OrganizationID, s.Name, s.Description, s.TimeZone.String()}
+	}, "normal_organizations")
 
 	copyFrom("schedule_rules",
 		[]string{"id", "schedule_id", "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "start_time", "end_time", "tgt_user_id", "tgt_rotation_id"},
@@ -206,10 +212,10 @@ func fillDB(ctx context.Context, dataCfg *datagenConfig, url string) error {
 		return []interface{}{asUUID(o.ID), schedID, o.Start, o.End, addUser, remUser}
 	}, "schedules", "users")
 
-	copyFrom("escalation_policies", []string{"id", "name", "description", "repeat"}, len(data.EscalationPolicies), func(n int) []interface{} {
+	copyFrom("escalation_policies", []string{"id", "organization_id", "name", "description", "repeat"}, len(data.EscalationPolicies), func(n int) []interface{} {
 		ep := data.EscalationPolicies[n]
-		return []interface{}{asUUID(ep.ID), ep.Name, ep.Description, ep.Repeat}
-	})
+		return []interface{}{asUUID(ep.ID), ep.OrganizationID, ep.Name, ep.Description, ep.Repeat}
+	}, "normal_organizations")
 	copyFrom("escalation_policy_steps", []string{"id", "escalation_policy_id", "step_number", "delay"}, len(data.EscalationSteps), func(n int) []interface{} {
 		step := data.EscalationSteps[n]
 		return []interface{}{step.ID, asUUID(step.PolicyID), step.StepNumber, step.DelayMinutes}
@@ -231,10 +237,10 @@ func fillDB(ctx context.Context, dataCfg *datagenConfig, url string) error {
 		}
 		return []interface{}{asUUID(act.ID), asUUID(act.StepID), u, r, s, c}
 	}, "escalation_policy_steps", "users", "schedules", "rotations")
-	copyFrom("services", []string{"id", "name", "description", "escalation_policy_id"}, len(data.Services), func(n int) []interface{} {
+	copyFrom("services", []string{"id", "organization_id", "name", "description", "escalation_policy_id"}, len(data.Services), func(n int) []interface{} {
 		s := data.Services[n]
-		return []interface{}{asUUID(s.ID), s.Name, s.Description, asUUID(s.EscalationPolicyID)}
-	}, "escalation_policies")
+		return []interface{}{asUUID(s.ID), s.OrganizationID, s.Name, s.Description, asUUID(s.EscalationPolicyID)}
+	}, "normal_organizations", "escalation_policies")
 	copyFrom("integration_keys", []string{"id", "service_id", "name", "type"}, len(data.IntKeys), func(n int) []interface{} {
 		key := data.IntKeys[n]
 		return []interface{}{asUUID(key.ID), asUUID(key.ServiceID), key.Name, key.Type}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/target/goalert/internal/executioncontextvalue"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/util/sqlutil"
@@ -32,6 +33,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	s.findOne = p(`
 		SELECT
 			s.id,
+			s.organization_id,
 			s.name,
 			s.description,
 			s.escalation_policy_id,
@@ -48,6 +50,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	s.findOneUp = p(`
 		SELECT
 			s.id,
+			s.organization_id,
 			s.name,
 			s.description,
 			s.escalation_policy_id
@@ -58,6 +61,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	s.findMany = p(`
 		SELECT
 			s.id,
+			s.organization_id,
 			s.name,
 			s.description,
 			s.escalation_policy_id,
@@ -75,6 +79,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	s.findAllByEP = p(`
 		SELECT
 			s.id,
+			s.organization_id,
 			s.name,
 			s.description,
 			s.escalation_policy_id,
@@ -88,7 +93,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			e.id = $1 AND
 			e.id = s.escalation_policy_id
 	`)
-	s.insert = p(`INSERT INTO services (id,name,description,escalation_policy_id) VALUES ($1,$2,$3,$4)`)
+	s.insert = p(`INSERT INTO services (id,organization_id,name,description,escalation_policy_id) VALUES ($1,$2,$3,$4,$5)`)
 	s.update = p(`UPDATE services SET name = $2, description = $3, escalation_policy_id = $4, maintenance_expires_at = $5 WHERE id = $1`)
 	s.delete = p(`DELETE FROM services WHERE id = any($1)`)
 
@@ -105,7 +110,13 @@ func (s *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string) (*S
 		return nil, err
 	}
 	var svc Service
-	err = tx.StmtContext(ctx, s.findOneUp).QueryRowContext(ctx, id).Scan(&svc.ID, &svc.Name, &svc.Description, &svc.EscalationPolicyID)
+	err = tx.StmtContext(ctx, s.findOneUp).QueryRowContext(ctx, id).Scan(
+		&svc.ID,
+		&svc.OrganizationID,
+		&svc.Name,
+		&svc.Description,
+		&svc.EscalationPolicyID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +150,10 @@ func (s *Store) CreateServiceTx(ctx context.Context, tx *sql.Tx, svc *Service) (
 	if err != nil {
 		return nil, err
 	}
+	organizationID, present := executioncontextvalue.EffectiveOrganizationID(ctx)
+	if !present {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
 
 	n, err := svc.Normalize()
 	if err != nil {
@@ -146,11 +161,12 @@ func (s *Store) CreateServiceTx(ctx context.Context, tx *sql.Tx, svc *Service) (
 	}
 
 	n.ID = uuid.New().String()
+	n.OrganizationID = organizationID
 	stmt := s.insert
 	if tx != nil {
 		stmt = tx.Stmt(stmt)
 	}
-	_, err = stmt.ExecContext(ctx, n.ID, n.Name, n.Description, n.EscalationPolicyID)
+	_, err = stmt.ExecContext(ctx, n.ID, n.OrganizationID, n.Name, n.Description, n.EscalationPolicyID)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +264,16 @@ func (s *Store) FindOne(ctx context.Context, id string) (*Service, error) {
 
 func scanFrom(s *Service, f func(args ...interface{}) error) error {
 	var maintExpiresAt sql.NullTime
-	err := f(&s.ID, &s.Name, &s.Description, &s.EscalationPolicyID, &s.epName, &s.isUserFavorite, &maintExpiresAt)
+	err := f(
+		&s.ID,
+		&s.OrganizationID,
+		&s.Name,
+		&s.Description,
+		&s.EscalationPolicyID,
+		&s.epName,
+		&s.isUserFavorite,
+		&maintExpiresAt,
+	)
 	if err != nil {
 		return err
 	}

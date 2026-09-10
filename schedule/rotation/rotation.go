@@ -3,15 +3,17 @@ package rotation
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/util/timeutil"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 )
 
 type Rotation struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID             string    `json:"id"`
+	OrganizationID uuid.UUID `json:"-"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
 
 	Type           Type      `json:"type"`
 	Start          time.Time `json:"start"`

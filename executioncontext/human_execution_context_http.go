@@ -5,9 +5,8 @@ import (
 	"net/http"
 
 	"github.com/target/goalert/auth"
+	"github.com/target/goalert/internal/executioncontextvalue"
 )
-
-type executionContextKey struct{}
 
 // WithExecutionContext returns a context carrying a defensive copy of a valid
 // request-bound ExecutionContext. Invalid values are not installed.
@@ -15,7 +14,7 @@ func WithExecutionContext(ctx context.Context, value ExecutionContext) context.C
 	if ctx == nil || !value.Valid() {
 		return ctx
 	}
-	return context.WithValue(ctx, executionContextKey{}, value)
+	return executioncontextvalue.With(ctx, &value)
 }
 
 // ExecutionContextFromContext returns a defensive copy of the request-bound
@@ -24,10 +23,11 @@ func ExecutionContextFromContext(ctx context.Context) *ExecutionContext {
 	if ctx == nil {
 		return nil
 	}
-	value, ok := ctx.Value(executionContextKey{}).(ExecutionContext)
-	if !ok || !value.Valid() {
+	stored, ok := executioncontextvalue.FromContext(ctx).(*ExecutionContext)
+	if !ok || !stored.Valid() {
 		return nil
 	}
+	value := *stored
 	return &value
 }
 
@@ -38,7 +38,7 @@ func (c *HumanExecutionContextConstructor) WrapHandler(next http.Handler) http.H
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		// This wrapper is the canonical producer for the request. Shadow any
 		// inherited authority before reconstructing current local authority.
-		ctx := context.WithValue(req.Context(), executionContextKey{}, ExecutionContext{})
+		ctx := executioncontextvalue.Without(req.Context())
 		req = req.WithContext(ctx)
 
 		if auth.RequesterFromContext(ctx) == nil {

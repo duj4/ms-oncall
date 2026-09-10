@@ -1,13 +1,16 @@
 package schedule
 
 import (
+	"time"
+
+	"github.com/google/uuid"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
-	"time"
 )
 
 type Schedule struct {
 	ID             string         `json:"id"`
+	OrganizationID uuid.UUID      `json:"-"`
 	Name           string         `json:"name"`
 	Description    string         `json:"description"`
 	TimeZone       *time.Location `json:"time_zone"`

@@ -1559,6 +1559,35 @@
           "sha256": "9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-resource-root-organization-ownership-persistence-v1",
+      "first_position": 281,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "Core Enterprise Identity & Organization Isolation Root Organization Ownership Persistence V1",
+        "base_commit": "0b290707500d9fc8839eb85edbbfce199034f824",
+        "base_tree": "e655da0eeba21749ea6bb702b980fd760c67fa71",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "4a2f520bce942a949a928c7f1b56c426ffcb8c65",
+        "authorization_tree": "71c1abebd0d231b10134e5b1d9c42979cbea4f48"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-active-foundation-reconciliation-v1",
+        "migration_id": "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql",
+        "sha256": "9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083",
+        "evidence": "APPEND_AFTER_ACCEPTED_ACTIVE_FOUNDATION_RECONCILIATION_V1"
+      },
+      "adaptation_evidence": "ADDITIVE_MS_ONCALL_RESOURCE_ROOT_ORGANIZATION_OWNERSHIP_PERSISTENCE_NOT_AN_UPSTREAM_MIGRATION",
+      "entries": [
+        {
+          "id": "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql",
+          "original_id": "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql",
+          "sha256": "a11980ede42e5d9b4d12561f1673865b552d908cb41f6194be37ce6df29e710a"
+        }
+      ]
     }
   ]
 }

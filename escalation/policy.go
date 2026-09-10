@@ -1,14 +1,16 @@
 package escalation
 
 import (
+	"github.com/google/uuid"
 	"github.com/target/goalert/validation/validate"
 )
 
 type Policy struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	Repeat         int    `json:"repeat"`
+	ID             string    `json:"id"`
+	OrganizationID uuid.UUID `json:"-"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	Repeat         int       `json:"repeat"`
 	isUserFavorite bool
 }
 
