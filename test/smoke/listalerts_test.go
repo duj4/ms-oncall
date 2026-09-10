@@ -12,19 +12,19 @@ func TestListAlerts(t *testing.T) {
 	t.Parallel()
 
 	sql := `
-	insert into escalation_policies (id, name)
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 `
 	for i := 0; i < 160; i++ {
 		name := "s" + strconv.Itoa(i)
 		sql += `
-			insert into services (id, name, escalation_policy_id) values ({{uuid "` + name + `"}}, '` + name + `', {{uuid "eid"}});
-			insert into alerts (service_id, description) values ({{uuid "` + name + `"}}, 'hi');
+			insert into services (id, name, escalation_policy_id, organization_id) values ({{uuid "` + name + `"}}, '` + name + `', {{uuid "eid"}}, {{smokeOrganizationID}});
+			insert into alerts (service_id, summary, dedup_key) values ({{uuid "` + name + `"}}, 'hi', 'auto:1:smoke:listalerts:` + name + `');
 		`
 	}
 
-	h := harness.NewHarness(t, sql, "ids-to-uuids")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	resp := h.GraphQLQuery2(`

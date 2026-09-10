@@ -17,9 +17,9 @@ func TestDeleteRotation(t *testing.T) {
 		({{uuid "u1"}}, 'bob', 'joe', 'user'),
 		({{uuid "u2"}}, 'ben', 'josh', 'user');
 	
-	insert into rotations (id, name, description, type, start_time, time_zone)
+	insert into rotations (id, name, description, type, start_time, time_zone, organization_id)
 	values
-		({{uuid "r1"}}, 'test', 'test', 'daily', now(), 'UTC');
+		({{uuid "r1"}}, 'test', 'test', 'daily', now(), 'UTC', {{smokeOrganizationID}});
 	
 	insert into rotation_participants (id, rotation_id, user_id, position)
 	values
@@ -27,7 +27,7 @@ func TestDeleteRotation(t *testing.T) {
 		({{uuid ""}}, {{uuid "r1"}}, {{uuid "u2"}},1);
 `
 
-	h := harness.NewHarness(t, sql, "heartbeats")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(query string) {

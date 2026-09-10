@@ -22,9 +22,9 @@ func TestEscalationGap(t *testing.T) {
 	values
 		({{uuid "user"}}, {{uuid "cm1"}}, 0);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id, step_number) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}}, 1);
@@ -32,16 +32,16 @@ func TestEscalationGap(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
-	insert into alerts (service_id, description) 
+	insert into alerts (service_id, summary, dedup_key)
 	values
-		({{uuid "sid"}}, 'testing');
+		({{uuid "sid"}}, 'testing', 'auto:1:smoke:escalationgap_test:1:1');
 
 `
-	h := harness.NewHarness(t, sql, "add-verification-code")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.Twilio(t).Device(h.Phone("1")).ExpectSMS("testing")

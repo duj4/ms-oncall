@@ -35,8 +35,8 @@ func TestServiceMaintenanceEscalate(t *testing.T) {
 		({{uuid "user1"}}, {{uuid "cm1"}}, 0),
 		({{uuid "user2"}}, {{uuid "cm2"}}, 0);
 	
-	insert into escalation_policies (id, name)
-	values ({{uuid "ep"}}, 'esc policy 1');
+	insert into escalation_policies (id, name, organization_id)
+	values ({{uuid "ep"}}, 'esc policy 1', {{smokeOrganizationID}});
 	
 	insert into escalation_policy_steps (id, escalation_policy_id, delay)
 	values
@@ -48,10 +48,10 @@ func TestServiceMaintenanceEscalate(t *testing.T) {
 		({{uuid "ep_s1"}}, {{uuid "user1"}}),
 		({{uuid "ep_s2"}}, {{uuid "user2"}});
 	
-	insert into services (id, escalation_policy_id, name, maintenance_expires_at)
-	values ({{uuid "sid"}}, {{uuid "ep"}}, 'service', now() + '1 hour'::interval);`
+	insert into services (id, escalation_policy_id, name, maintenance_expires_at, organization_id)
+	values ({{uuid "sid"}}, {{uuid "ep"}}, 'service', now() + '1 hour'::interval, {{smokeOrganizationID}});`
 
-	h := harness.NewHarness(t, initSQL, "add-service-maintenance-expires-at")
+	h := harness.NewHarness(t, initSQL, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	// create alert

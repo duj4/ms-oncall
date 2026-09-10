@@ -91,7 +91,7 @@ func TestMSOnCallTailMigrationsUseTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range migrations[len(migrations)-5:] {
+	for _, migration := range migrations[len(migrations)-6:] {
 		if migration.Up.disableTx || migration.Down.disableTx {
 			t.Fatalf("MS OnCall persistence migration %q must use transactions for Up and Down", migration.ID)
 		}
@@ -100,7 +100,7 @@ func TestMSOnCallTailMigrationsUseTransactions(t *testing.T) {
 		}
 	}
 	latest := migrations[len(migrations)-1]
-	if latest.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
+	if latest.ID != "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql" {
 		t.Fatalf("latest migration = %q", latest.ID)
 	}
 }
@@ -114,8 +114,8 @@ func TestGenerationRetirementDownRestoresExactPosition278Definition(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	position278 := migrations[len(migrations)-3]
-	position279 := migrations[len(migrations)-2]
+	position278 := migrations[len(migrations)-4]
+	position279 := migrations[len(migrations)-3]
 	if position278.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" ||
 		position279.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
 		t.Fatalf("unexpected retirement boundary: position278=%q position279=%q", position278.ID, position279.ID)
@@ -134,7 +134,7 @@ func TestActiveFoundationReconciliationMigrationIsNarrowAndGuardsLossyDown(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	position280 := migrations[len(migrations)-1]
+	position280 := migrations[len(migrations)-2]
 	if position280.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
 		t.Fatalf("position-280 migration = %q", position280.ID)
 	}
@@ -161,6 +161,64 @@ func TestActiveFoundationReconciliationMigrationIsNarrowAndGuardsLossyDown(t *te
 	if strings.Contains(position280.Down.statements[0], "DROP ") || strings.Contains(guard, "DROP ") ||
 		strings.Contains(position280.Down.statements[0], "ALTER ") || strings.Contains(guard, "ALTER ") {
 		t.Fatal("position-280 Down mutates schema before its lossy-downgrade guard")
+	}
+}
+
+func TestResourceRootOrganizationOwnershipMigrationIsNarrowAndGuardsLossyDown(t *testing.T) {
+	history, err := loadEmbeddedHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := parseMigrations(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	position281 := migrations[len(migrations)-1]
+	if position281.ID != "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql" {
+		t.Fatalf("position-281 migration = %q", position281.ID)
+	}
+	if position281.Up.disableTx || position281.Down.disableTx || len(position281.Up.statements) == 0 || len(position281.Down.statements) == 0 {
+		t.Fatal("position-281 migration must have transactional, non-empty Up and Down directions")
+	}
+	up := strings.ToLower(strings.Join(position281.Up.statements, "\n"))
+	down := strings.ToLower(strings.Join(position281.Down.statements, "\n"))
+	for _, table := range []string{"services", "schedules", "rotations", "escalation_policies"} {
+		if strings.Count(up, "alter table public."+table) != 1 ||
+			!strings.Contains(up, "references public.normal_organizations (organization_id)") ||
+			!strings.Contains(up, "organization_id uuid not null") {
+			t.Fatalf("position-281 Up does not add direct, non-null NormalOrganization ownership to %s", table)
+		}
+		if !strings.Contains(down, "alter table public."+table+" drop column organization_id") {
+			t.Fatalf("position-281 Down does not remove ownership from %s", table)
+		}
+	}
+	for _, forbidden := range []string{
+		"alter table public.alerts",
+		"alter table public.integration_keys",
+		" add column organization_id uuid null",
+		" add column organization_id uuid default",
+		"update public.",
+		"not valid",
+	} {
+		if strings.Contains(up, forbidden) {
+			t.Fatalf("position-281 Up contains forbidden transition or expanded scope %q", forbidden)
+		}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(position281.Down.statements[0]), "LOCK TABLE public.services, public.schedules, public.rotations, public.escalation_policies") {
+		t.Fatalf("position-281 Down does not acquire all root-table write-excluding locks first: %q", position281.Down.statements[0])
+	}
+	guard := strings.ToLower(position281.Down.statements[1])
+	if !strings.Contains(guard, "position-281 downgrade refused: resource rows retain organization ownership") {
+		t.Fatalf("position-281 Down lacks its refusal message: %q", position281.Down.statements[1])
+	}
+	for _, table := range []string{"services", "schedules", "rotations", "escalation_policies"} {
+		if !strings.Contains(guard, "from public."+table) {
+			t.Fatalf("position-281 Down guard does not prove %s empty", table)
+		}
+	}
+	if strings.Contains(position281.Down.statements[0], "DROP ") || strings.Contains(position281.Down.statements[1], "DROP ") ||
+		strings.Contains(position281.Down.statements[0], "ALTER ") || strings.Contains(position281.Down.statements[1], "ALTER ") {
+		t.Fatal("position-281 Down mutates schema before its lossy-downgrade guard")
 	}
 }
 

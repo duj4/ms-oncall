@@ -18,12 +18,12 @@ func TestGraphQLServiceAlertsByStatus(t *testing.T) {
 	t.Parallel()
 
 	const sql = `
-		insert into escalation_policies (id, name)
+		insert into escalation_policies (id, name, organization_id)
 		values
-			({{uuid "eid"}}, 'esc policy');
-		insert into services (id, escalation_policy_id, name)
+			({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
+		insert into services (id, escalation_policy_id, name, organization_id)
 		values
-			({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+			({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 		insert into alerts (id, service_id, status, summary, dedup_key)
 		values
 			(1, {{uuid "sid"}}, 'triggered', 'alert 1', 'test:1:foo'),
@@ -34,7 +34,7 @@ func TestGraphQLServiceAlertsByStatus(t *testing.T) {
 			(6, {{uuid "sid"}}, 'closed', 'alert 6', null);
 	`
 
-	h := harness.NewHarness(t, sql, "om-history-index")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	resp := h.GraphQLQueryT(t, fmt.Sprintf(`{service(id: "%s") {alertsByStatus {acked, unacked, closed}}}`, h.UUID("sid")))

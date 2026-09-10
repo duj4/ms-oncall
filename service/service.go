@@ -3,11 +3,13 @@ package service
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/validation/validate"
 )
 
 type Service struct {
 	ID                   string
+	OrganizationID       uuid.UUID `json:"-"`
 	Name                 string
 	Description          string
 	EscalationPolicyID   string

@@ -10,6 +10,7 @@ import (
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user"
 	"github.com/target/goalert/util"
+	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 )
 
@@ -64,6 +65,7 @@ func (store *Store) FindManyTx(ctx context.Context, tx *sql.Tx, ids []string) ([
 	for _, row := range rows {
 		s := Schedule{
 			ID:             row.ID.String(),
+			OrganizationID: row.OrganizationID,
 			Name:           row.Name,
 			Description:    row.Description,
 			isUserFavorite: row.IsFavorite,
@@ -101,9 +103,10 @@ func (store *Store) FindManyByUserID(ctx context.Context, db gadb.DBTX, userID u
 	var result []Schedule
 	for _, r := range rows {
 		result = append(result, Schedule{
-			ID:          r.ID.String(),
-			Name:        r.Name,
-			Description: r.Description,
+			ID:             r.ID.String(),
+			OrganizationID: r.OrganizationID,
+			Name:           r.Name,
+			Description:    r.Description,
 		})
 	}
 
@@ -124,6 +127,9 @@ func (store *Store) CreateScheduleTx(ctx context.Context, tx *sql.Tx, s *Schedul
 	if err != nil {
 		return nil, err
 	}
+	if n.OrganizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
+	}
 
 	db := gadb.New(store.db)
 	if tx != nil {
@@ -131,9 +137,10 @@ func (store *Store) CreateScheduleTx(ctx context.Context, tx *sql.Tx, s *Schedul
 	}
 
 	id, err := db.SchedCreate(ctx, gadb.SchedCreateParams{
-		Name:        n.Name,
-		Description: n.Description,
-		TimeZone:    n.TimeZone.String(),
+		OrganizationID: n.OrganizationID,
+		Name:           n.Name,
+		Description:    n.Description,
+		TimeZone:       n.TimeZone.String(),
 	})
 	if err != nil {
 		return nil, err
@@ -216,9 +223,10 @@ func (store *Store) FindAll(ctx context.Context) ([]Schedule, error) {
 	var res []Schedule
 	for _, row := range rows {
 		s := Schedule{
-			ID:          row.ID.String(),
-			Name:        row.Name,
-			Description: row.Description,
+			ID:             row.ID.String(),
+			OrganizationID: row.OrganizationID,
+			Name:           row.Name,
+			Description:    row.Description,
 		}
 		s.TimeZone, err = util.LoadLocation(row.TimeZone)
 		if err != nil {
@@ -256,9 +264,10 @@ func (store *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string)
 	}
 
 	s := Schedule{
-		ID:          row.ID.String(),
-		Name:        row.Name,
-		Description: row.Description,
+		ID:             row.ID.String(),
+		OrganizationID: row.OrganizationID,
+		Name:           row.Name,
+		Description:    row.Description,
 	}
 
 	s.TimeZone, err = util.LoadLocation(row.TimeZone)
@@ -294,6 +303,7 @@ func (store *Store) FindOne(ctx context.Context, id string) (*Schedule, error) {
 
 	s := Schedule{
 		ID:             row.ID.String(),
+		OrganizationID: row.OrganizationID,
 		Name:           row.Name,
 		Description:    row.Description,
 		isUserFavorite: row.IsFavorite,

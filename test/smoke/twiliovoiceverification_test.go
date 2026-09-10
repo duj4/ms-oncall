@@ -25,9 +25,9 @@ func TestTwilioVoiceVerification(t *testing.T) {
 		insert into user_notification_rules (id, user_id, delay_minutes, contact_method_id)
 		values
 			({{uuid "nr2"}}, {{uuid "user"}}, 0, {{uuid "cm2"}});
-		insert into escalation_policies (id, name) 
+		insert into escalation_policies (id, name, organization_id)
 		values
-			({{uuid "eid"}}, 'esc policy');
+			({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 		insert into escalation_policy_steps (id, escalation_policy_id) 
 		values
 			({{uuid "esid"}}, {{uuid "eid"}});
@@ -35,12 +35,12 @@ func TestTwilioVoiceVerification(t *testing.T) {
 		values 
 			({{uuid "esid"}}, {{uuid "user"}});
 	
-		insert into services (id, escalation_policy_id, name) 
+		insert into services (id, escalation_policy_id, name, organization_id)
 		values
-			({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+			({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	`
-	h := harness.NewHarness(t, sqlQuery, "add-verification-code")
+	h := harness.NewHarness(t, sqlQuery, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(query string) {

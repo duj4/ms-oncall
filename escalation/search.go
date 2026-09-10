@@ -42,6 +42,7 @@ type SearchCursor struct {
 var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()).Parse(`
 	SELECT
 		pol.id,
+		pol.organization_id,
 		pol.name,
 		pol.description,
 		pol.repeat,
@@ -149,7 +150,7 @@ func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]Policy, erro
 	var result []Policy
 	var p Policy
 	for rows.Next() {
-		err = rows.Scan(&p.ID, &p.Name, &p.Description, &p.Repeat, &p.isUserFavorite)
+		err = rows.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.Repeat, &p.isUserFavorite)
 		if err != nil {
 			return nil, err
 		}

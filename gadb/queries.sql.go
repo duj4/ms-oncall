@@ -4599,7 +4599,7 @@ func (q *Queries) RotMgrFindWork(ctx context.Context) ([]uuid.UUID, error) {
 const rotMgrRotationData = `-- name: RotMgrRotationData :one
 SELECT
     now()::timestamptz AS now,
-    rot.description, rot.id, rot.last_processed, rot.name, rot.participant_count, rot.shift_length, rot.start_time, rot.time_zone, rot.type,
+    rot.description, rot.id, rot.last_processed, rot.name, rot.organization_id, rot.participant_count, rot.shift_length, rot.start_time, rot.time_zone, rot.type,
     coalesce(state.version, 0) AS state_version,
     coalesce(state.position, 0) AS state_position,
     state.shift_start AS state_shift_start,
@@ -4638,6 +4638,7 @@ func (q *Queries) RotMgrRotationData(ctx context.Context, rotationID uuid.UUID) 
 		&i.Rotation.ID,
 		&i.Rotation.LastProcessed,
 		&i.Rotation.Name,
+		&i.Rotation.OrganizationID,
 		&i.Rotation.ParticipantCount,
 		&i.Rotation.ShiftLength,
 		&i.Rotation.StartTime,
@@ -4724,20 +4725,26 @@ func (q *Queries) SWOConnUnlockAll(ctx context.Context) error {
 }
 
 const schedCreate = `-- name: SchedCreate :one
-INSERT INTO schedules (id, name, description, time_zone)
-VALUES (DEFAULT, $1, $2, $3)
+INSERT INTO schedules (id, organization_id, name, description, time_zone)
+VALUES (DEFAULT, $1, $2, $3, $4)
 RETURNING id
 `
 
 type SchedCreateParams struct {
-	Name        string
-	Description string
-	TimeZone    string
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
 }
 
 // Creates a new schedule and returns its ID.
 func (q *Queries) SchedCreate(ctx context.Context, arg SchedCreateParams) (uuid.UUID, error) {
-	row := q.db.QueryRowContext(ctx, schedCreate, arg.Name, arg.Description, arg.TimeZone)
+	row := q.db.QueryRowContext(ctx, schedCreate,
+		arg.OrganizationID,
+		arg.Name,
+		arg.Description,
+		arg.TimeZone,
+	)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -4755,15 +4762,16 @@ func (q *Queries) SchedDeleteMany(ctx context.Context, dollar_1 []uuid.UUID) err
 }
 
 const schedFindAll = `-- name: SchedFindAll :many
-SELECT id, name, description, time_zone
+SELECT id, organization_id, name, description, time_zone
 FROM schedules
 `
 
 type SchedFindAllRow struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	TimeZone    string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
 }
 
 // Returns all schedules.
@@ -4778,6 +4786,7 @@ func (q *Queries) SchedFindAll(ctx context.Context) ([]SchedFindAllRow, error) {
 		var i SchedFindAllRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.Description,
 			&i.TimeZone,
@@ -4833,6 +4842,7 @@ func (q *Queries) SchedFindDataForUpdate(ctx context.Context, scheduleID uuid.UU
 const schedFindMany = `-- name: SchedFindMany :many
 SELECT
     s.id,
+    s.organization_id,
     s.name,
     s.description,
     s.time_zone,
@@ -4849,11 +4859,12 @@ type SchedFindManyParams struct {
 }
 
 type SchedFindManyRow struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	TimeZone    string
-	IsFavorite  bool
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
+	IsFavorite     bool
 }
 
 // Returns multiple schedules with user favorite status.
@@ -4868,6 +4879,7 @@ func (q *Queries) SchedFindMany(ctx context.Context, arg SchedFindManyParams) ([
 		var i SchedFindManyRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.Description,
 			&i.TimeZone,
@@ -4889,6 +4901,7 @@ func (q *Queries) SchedFindMany(ctx context.Context, arg SchedFindManyParams) ([
 const schedFindOne = `-- name: SchedFindOne :one
 SELECT
     s.id,
+    s.organization_id,
     s.name,
     s.description,
     s.time_zone,
@@ -4905,11 +4918,12 @@ type SchedFindOneParams struct {
 }
 
 type SchedFindOneRow struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	TimeZone    string
-	IsFavorite  bool
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
+	IsFavorite     bool
 }
 
 // Returns a single schedule with user favorite status.
@@ -4918,6 +4932,7 @@ func (q *Queries) SchedFindOne(ctx context.Context, arg SchedFindOneParams) (Sch
 	var i SchedFindOneRow
 	err := row.Scan(
 		&i.ID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.TimeZone,
@@ -4927,17 +4942,18 @@ func (q *Queries) SchedFindOne(ctx context.Context, arg SchedFindOneParams) (Sch
 }
 
 const schedFindOneForUpdate = `-- name: SchedFindOneForUpdate :one
-SELECT id, name, description, time_zone
+SELECT id, organization_id, name, description, time_zone
 FROM schedules
 WHERE id = $1
 FOR UPDATE
 `
 
 type SchedFindOneForUpdateRow struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	TimeZone    string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
 }
 
 // Returns a single schedule with FOR UPDATE lock.
@@ -4946,6 +4962,7 @@ func (q *Queries) SchedFindOneForUpdate(ctx context.Context, id uuid.UUID) (Sche
 	var i SchedFindOneForUpdateRow
 	err := row.Scan(
 		&i.ID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.TimeZone,
@@ -5415,7 +5432,7 @@ func (q *Queries) SchedUpdateData(ctx context.Context, arg SchedUpdateDataParams
 
 const scheduleFindManyByUser = `-- name: ScheduleFindManyByUser :many
 SELECT
-    description, id, last_processed, name, time_zone
+    description, id, last_processed, name, organization_id, time_zone
 FROM
     schedules
 WHERE
@@ -5449,6 +5466,7 @@ func (q *Queries) ScheduleFindManyByUser(ctx context.Context, tgtUserID uuid.Nul
 			&i.ID,
 			&i.LastProcessed,
 			&i.Name,
+			&i.OrganizationID,
 			&i.TimeZone,
 		); err != nil {
 			return nil, err

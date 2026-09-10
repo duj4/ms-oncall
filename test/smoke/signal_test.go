@@ -29,17 +29,17 @@ func TestSignal(t *testing.T) {
 			({{uuid "cm1"}}, {{uuid "user"}}, 'personal', 'SMS', {{phone "1"}});
 		insert into user_notification_rules (user_id, contact_method_id, delay_minutes) values
 			({{uuid "user"}}, {{uuid "cm1"}}, 0);
-		insert into escalation_policies (id, name) values
-			({{uuid "ep"}}, 'esc policy');
+		insert into escalation_policies (id, name, organization_id) values
+			({{uuid "ep"}}, 'esc policy', {{smokeOrganizationID}});
 		insert into escalation_policy_steps (id, escalation_policy_id, delay) values
 			({{uuid "step"}}, {{uuid "ep"}}, 5);
 		insert into escalation_policy_actions (escalation_policy_step_id, user_id) values
 			({{uuid "step"}}, {{uuid "user"}});
-		insert into services (id, name, escalation_policy_id) values
-			({{uuid "svc"}}, 'service', {{uuid "ep"}});
+		insert into services (id, name, escalation_policy_id, organization_id) values
+			({{uuid "svc"}}, 'service', {{uuid "ep"}}, {{smokeOrganizationID}});
 	`
 
-	h := harness.NewHarnessWithFlags(t, sql, "nc-duplicate-table", expflag.FlagSet{expflag.UnivKeys})
+	h := harness.NewHarnessWithFlags(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1", expflag.FlagSet{expflag.UnivKeys})
 	defer h.Close()
 
 	var dest gadb.DestV1

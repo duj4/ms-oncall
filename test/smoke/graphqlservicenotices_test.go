@@ -16,13 +16,13 @@ func TestServiceNotices(t *testing.T) {
 	t.Parallel()
 
 	const sql = `
-		insert into escalation_policies (id, name) 
+		insert into escalation_policies (id, name, organization_id)
 		values
-			({{uuid "eid"}}, 'esc policy');
+			({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
-		insert into services (id, escalation_policy_id, name) 
+		insert into services (id, escalation_policy_id, name, organization_id)
 		values
-			({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+			({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 		insert into alerts (id, service_id, summary, created_at, status, dedup_key) 
 		values
@@ -33,7 +33,7 @@ func TestServiceNotices(t *testing.T) {
 			(5, {{uuid "sid"}}, 'mno', now(), 'triggered', 'test:1:mno');
 	`
 
-	h := harness.NewHarness(t, sql, "add-pending-to-contact-methods")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.SetSystemLimit("unacked_alerts_per_service", 5)

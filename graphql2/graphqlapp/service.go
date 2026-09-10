@@ -11,6 +11,7 @@ import (
 	"github.com/target/goalert/alert/alertlog"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/escalation"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/heartbeat"
@@ -202,13 +203,23 @@ func (s *Service) HeartbeatMonitors(ctx context.Context, raw *service.Service) (
 }
 
 func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServiceInput) (result *service.Service, err error) {
+	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
+	if requestExecutionContext == nil {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
+	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+
 	if input.NewEscalationPolicy != nil && input.EscalationPolicyID != nil && *input.EscalationPolicyID != "" {
 		return nil, validation.NewFieldError("newEscalationPolicy", "cannot be used with `escalationPolicyID`.")
 	}
 
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		svc := &service.Service{
-			Name: input.Name,
+			OrganizationID: organizationID,
+			Name:           input.Name,
 		}
 		if input.EscalationPolicyID != nil {
 			svc.EscalationPolicyID = *input.EscalationPolicyID

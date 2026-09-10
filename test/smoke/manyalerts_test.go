@@ -28,9 +28,9 @@ func TestManyAlerts(t *testing.T) {
 	values
 		({{uuid "user"}}, {{uuid "cm1"}}, 0);
 
-	insert into escalation_policies (id, name, repeat)
+	insert into escalation_policies (id, name, repeat, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy', 3);
+		({{uuid "eid"}}, 'esc policy', 3, {{smokeOrganizationID}});
 
 	insert into escalation_policy_steps (id, escalation_policy_id, delay)
 	values
@@ -40,15 +40,15 @@ func TestManyAlerts(t *testing.T) {
 	values
 		({{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name)
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	insert into integration_keys (id, type, name, service_id)
 	values
 		({{uuid "int_key"}}, 'generic', 'my key', {{uuid "sid"}});
 `
-	h := harness.NewHarness(t, sql, "add-generic-integration-key")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	createAlert := func(summary string) {

@@ -42,7 +42,8 @@ type SearchCursor struct {
 
 var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()).Parse(`
 	SELECT
-		rot.id, 
+		rot.id,
+		rot.organization_id,
 		rot.name, 
 		rot.description, 
 		rot.type, 
@@ -153,7 +154,7 @@ func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]Rotation, er
 	var r Rotation
 	var tz string
 	for rows.Next() {
-		err = rows.Scan(&r.ID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz, &r.isUserFavorite)
+		err = rows.Scan(&r.ID, &r.OrganizationID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz, &r.isUserFavorite)
 		if err != nil {
 			return nil, err
 		}

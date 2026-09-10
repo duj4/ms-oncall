@@ -24,9 +24,9 @@ func TestGrafana(t *testing.T) {
 	values
 		({{uuid "user"}}, {{uuid "cm1"}}, 0);
 
-	insert into escalation_policies (id, name)
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
 	insert into escalation_policy_steps (id, escalation_policy_id)
 	values
@@ -36,15 +36,15 @@ func TestGrafana(t *testing.T) {
 	values
 		({{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name)
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	insert into integration_keys (id, type, name, service_id)
 	values
 		({{uuid "int_key"}}, 'grafana', 'my key', {{uuid "sid"}});
 `
-	h := harness.NewHarness(t, sql, "ids-to-uuids")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	url := h.URL() + "/v1/webhooks/grafana?integration_key=" + h.UUID("int_key")

@@ -43,6 +43,7 @@ type SearchCursor struct {
 var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()).Parse(`
 	SELECT
 		sched.id,
+		sched.organization_id,
 		sched.name,
 		sched.description,
 		sched.time_zone,
@@ -146,7 +147,7 @@ func (store *Store) Search(ctx context.Context, opts *SearchOptions) ([]Schedule
 	var s Schedule
 	var tz string
 	for rows.Next() {
-		err = rows.Scan(&s.ID, &s.Name, &s.Description, &tz, &s.isUserFavorite)
+		err = rows.Scan(&s.ID, &s.OrganizationID, &s.Name, &s.Description, &tz, &s.isUserFavorite)
 		if err != nil {
 			return nil, err
 		}

@@ -26,8 +26,8 @@ func TestServiceMaintenanceAlert(t *testing.T) {
 	insert into user_notification_rules (user_id, contact_method_id, delay_minutes)
 	values ({{uuid "user"}}, {{uuid "cm1"}}, 0), ({{uuid "user"}}, {{uuid "cm1"}}, 5);
 
-	insert into escalation_policies (id, name)
-	values ({{uuid "eid"}}, 'esc policy');
+	insert into escalation_policies (id, name, organization_id)
+	values ({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
 	insert into escalation_policy_steps (id, escalation_policy_id, delay)
 	values ({{uuid "es1"}}, {{uuid "eid"}}, 5);
@@ -35,10 +35,10 @@ func TestServiceMaintenanceAlert(t *testing.T) {
 	insert into escalation_policy_actions (escalation_policy_step_id, user_id) 
 	values ({{uuid "es1"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name)
-	values ({{uuid "sid"}}, {{uuid "eid"}}, 'service');`
+	insert into services (id, escalation_policy_id, name, organization_id)
+	values ({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});`
 
-	h := harness.NewHarness(t, initSQL, "add-service-maintenance-expires-at")
+	h := harness.NewHarness(t, initSQL, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	// contact method phone number to use

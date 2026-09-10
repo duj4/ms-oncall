@@ -26,12 +26,12 @@ func TestGraphQLServiceAlertStats(t *testing.T) {
 	t.Parallel()
 
 	const sql = `
-		insert into escalation_policies (id, name)
+		insert into escalation_policies (id, name, organization_id)
 		values
-			({{uuid "eid"}}, 'esc policy');
-		insert into services (id, escalation_policy_id, name)
+			({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
+		insert into services (id, escalation_policy_id, name, organization_id)
 		values
-			({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+			({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 		insert into alerts (id, service_id, status, summary)
 		values
 			(1, {{uuid "sid"}}, 'closed', 'alert 1'),
@@ -42,15 +42,15 @@ func TestGraphQLServiceAlertStats(t *testing.T) {
 		insert into alert_metrics (alert_id, service_id, time_to_ack, time_to_close, escalated, closed_at)
 		values
 			-- First 4 alerts: consistent timing, all in 2022-01-01
-			(1, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:01:00'),
-			(2, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:02:00'),
-			(3, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:03:00'),
-			(4, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:04:00'),
+			(1, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:01:00+00'),
+			(2, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:02:00+00'),
+			(3, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:03:00+00'),
+			(4, {{uuid "sid"}}, '1 hour'::interval, '2 hours'::interval, false, '2022-01-01 00:04:00+00'),
 			-- Alert 5: different timing, escalated, closed on 2022-01-02 (outside first window)
-			(5, {{uuid "sid"}}, '30 minutes'::interval, '3 hours'::interval, true, '2022-01-02 00:05:00');
+			(5, {{uuid "sid"}}, '30 minutes'::interval, '3 hours'::interval, true, '2022-01-02 00:05:00+00');
 	`
 
-	h := harness.NewHarness(t, sql, "om-history-index")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	// Test 1: Query for Jan 1st - should include alerts 1-4 only

@@ -28,44 +28,44 @@ func TestSystemLimits(t *testing.T) {
 			({{uuid "generic_user4"}}, 'User 4'),
 			({{uuid "generic_user5"}}, 'User 5');
 		
-		insert into schedules (id, name, time_zone)
+		insert into schedules (id, name, time_zone, organization_id)
 		values
-			({{uuid "rule_sched"}}, 'Rule Test', 'UTC'),
-			({{uuid "tgt_sched"}}, 'Target Test', 'UTC'),
-			({{uuid "override_sched"}}, 'Override Test', 'UTC'),
-			({{uuid "cal_sub_sched"}}, 'Calendar Subscriptions Test', 'UTC');
+			({{uuid "rule_sched"}}, 'Rule Test', 'UTC', {{smokeOrganizationID}}),
+			({{uuid "tgt_sched"}}, 'Target Test', 'UTC', {{smokeOrganizationID}}),
+			({{uuid "override_sched"}}, 'Override Test', 'UTC', {{smokeOrganizationID}}),
+			({{uuid "cal_sub_sched"}}, 'Calendar Subscriptions Test', 'UTC', {{smokeOrganizationID}});
 
-		insert into rotations (id, name, type, time_zone)
+		insert into rotations (id, name, type, time_zone, organization_id)
 		values
-			({{uuid "part_rot"}}, 'Part Rotation', 'daily', 'UTC');
+			({{uuid "part_rot"}}, 'Part Rotation', 'daily', 'UTC', {{smokeOrganizationID}});
 
 		insert into user_contact_methods (id, user_id, name, type, value)
 		values
 			({{uuid "nr_cm"}}, {{uuid "nr_user"}}, 'Test', 'SMS', {{phone "nr"}});
 
-		insert into escalation_policies (id, name)
+		insert into escalation_policies (id, name, organization_id)
 		values
-			({{uuid "unack_ep1"}}, 'Unack Test 1'),
-			({{uuid "unack_ep2"}}, 'Unack Test 2'),
-			({{uuid "int_key_ep"}}, 'Int Key Test'),
-			({{uuid "hb_ep"}}, 'Heartbeat Test'),
-			({{uuid "step_ep"}}, 'Step Test'),
-			({{uuid "act_ep"}}, 'Action Test');
+			({{uuid "unack_ep1"}}, 'Unack Test 1', {{smokeOrganizationID}}),
+			({{uuid "unack_ep2"}}, 'Unack Test 2', {{smokeOrganizationID}}),
+			({{uuid "int_key_ep"}}, 'Int Key Test', {{smokeOrganizationID}}),
+			({{uuid "hb_ep"}}, 'Heartbeat Test', {{smokeOrganizationID}}),
+			({{uuid "step_ep"}}, 'Step Test', {{smokeOrganizationID}}),
+			({{uuid "act_ep"}}, 'Action Test', {{smokeOrganizationID}});
 
 		insert into escalation_policy_steps (id, escalation_policy_id, delay)
 		values
 			({{uuid "act_ep_step"}}, {{uuid "act_ep"}}, 1);
 
 		
-		insert into services (id, name, escalation_policy_id)
+		insert into services (id, name, escalation_policy_id, organization_id)
 		values
-			({{uuid "int_key_svc"}}, 'Int Key Test', {{uuid "int_key_ep"}}),
-			({{uuid "hb_svc"}}, 'Heartbeat Test', {{uuid "hb_ep"}}),
-			({{uuid "unack_svc1"}}, 'Unack Test 1', {{uuid "unack_ep1"}}),
-			({{uuid "unack_svc2"}}, 'Unack Test 2', {{uuid "unack_ep2"}});
+			({{uuid "int_key_svc"}}, 'Int Key Test', {{uuid "int_key_ep"}}, {{smokeOrganizationID}}),
+			({{uuid "hb_svc"}}, 'Heartbeat Test', {{uuid "hb_ep"}}, {{smokeOrganizationID}}),
+			({{uuid "unack_svc1"}}, 'Unack Test 1', {{uuid "unack_ep1"}}, {{smokeOrganizationID}}),
+			({{uuid "unack_svc2"}}, 'Unack Test 2', {{uuid "unack_ep2"}}, {{smokeOrganizationID}});
 `
 
-	h := harness.NewHarness(t, sql, "limit-configuration")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	type idParser func(m map[string]interface{}) (string, bool)

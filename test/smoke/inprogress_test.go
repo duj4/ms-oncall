@@ -35,9 +35,9 @@ func TestInProgress(t *testing.T) {
         ({{uuid ""}},{{uuid "u2"}}, {{uuid "c2_2"}}, 30),
         ({{uuid ""}},{{uuid "u3"}}, {{uuid "c3"}}, 30);
 
-    insert into escalation_policies (id, name, repeat) 
+    insert into escalation_policies (id, name, repeat, organization_id)
     values 
-        ({{uuid "eid"}}, 'esc policy', -1);
+        ({{uuid "eid"}}, 'esc policy', -1, {{smokeOrganizationID}});
     insert into escalation_policy_steps (id, escalation_policy_id, delay) 
     values 
         ({{uuid "esid1"}}, {{uuid "eid"}}, 300),
@@ -52,18 +52,21 @@ func TestInProgress(t *testing.T) {
         ({{uuid "esid2"}}, {{uuid "u2"}}),
         ({{uuid "esid3"}}, {{uuid "u3"}});
 
-    insert into services (id, escalation_policy_id, name) 
+    insert into services (id, escalation_policy_id, name, organization_id)
     values
-        ({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+        ({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
-    insert into alerts (service_id, summary) 
+    insert into alerts (service_id, summary, dedup_key)
     values
-        ({{uuid "sid"}}, 'testing1'),
-        ({{uuid "sid"}}, 'testing2');
-    
-    insert into escalation_policy_state (alert_id, escalation_policy_id, escalation_policy_step_id, service_id)
-    values
-        (1, {{uuid "eid"}}, {{uuid "esid1"}}, {{uuid "sid"}});
+        ({{uuid "sid"}}, 'testing1', 'auto:1:smoke:inprogress_test:1:1'),
+        ({{uuid "sid"}}, 'testing2', 'auto:1:smoke:inprogress_test:1:2');
+
+    update escalation_policy_state
+    set escalation_policy_step_id = {{uuid "esid1"}},
+        escalation_policy_step_number = 0,
+        last_escalation = now(),
+        next_escalation = now() + '300 minutes'::interval
+    where alert_id = 1;
     
     insert into notification_policy_cycles (alert_id, user_id, last_tick)
     values
@@ -71,7 +74,7 @@ func TestInProgress(t *testing.T) {
         (1, {{uuid "u2"}}, now() + '35 minutes'::interval),
         (1, {{uuid "u3"}}, now() + '1 second'::interval);
 `
-	h := harness.NewHarness(t, sql, "UserFavorites")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	tw := h.Twilio(t)

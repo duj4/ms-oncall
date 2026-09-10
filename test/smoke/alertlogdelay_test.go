@@ -41,11 +41,11 @@ func TestAlertLogDelay(t *testing.T) {
 		insert into user_contact_methods (id, user_id, name, type, value, disabled) 
 		values ({{uuid "cm1"}}, {{uuid "user"}}, 'personal', 'SMS', {{phone "1"}}, false);
 
-		insert into escalation_policies (id, name) 
-		values ({{uuid "eid"}}, 'esc policy');
+		insert into escalation_policies (id, name, organization_id)
+		values ({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
-		insert into services (id, escalation_policy_id, name) 
-		values ({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		insert into services (id, escalation_policy_id, name, organization_id)
+		values ({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 		insert into alerts (id, service_id, summary, dedup_key)
 		values (10, {{uuid "sid"}}, 'test_summary', 'auto:1:test');
@@ -57,7 +57,7 @@ func TestAlertLogDelay(t *testing.T) {
 		values (10, 'notification_sent', '{"MessageID": {{uuidJSON "omid"}}}', '');
 	`
 
-	h := harness.NewHarness(t, query, "add-no-notification-alert-log")
+	h := harness.NewHarness(t, query, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	var alertLogs struct {

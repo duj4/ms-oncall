@@ -51,8 +51,8 @@ WHERE schedule_id = $1;
 
 -- name: SchedCreate :one
 -- Creates a new schedule and returns its ID.
-INSERT INTO schedules (id, name, description, time_zone)
-VALUES (DEFAULT, $1, $2, $3)
+INSERT INTO schedules (id, organization_id, name, description, time_zone)
+VALUES (DEFAULT, $1, $2, $3, $4)
 RETURNING id;
 
 -- name: SchedUpdate :exec
@@ -63,13 +63,14 @@ WHERE id = $1;
 
 -- name: SchedFindAll :many
 -- Returns all schedules.
-SELECT id, name, description, time_zone
+SELECT id, organization_id, name, description, time_zone
 FROM schedules;
 
 -- name: SchedFindOne :one
 -- Returns a single schedule with user favorite status.
 SELECT
     s.id,
+    s.organization_id,
     s.name,
     s.description,
     s.time_zone,
@@ -81,7 +82,7 @@ WHERE s.id = $1;
 
 -- name: SchedFindOneForUpdate :one
 -- Returns a single schedule with FOR UPDATE lock.
-SELECT id, name, description, time_zone
+SELECT id, organization_id, name, description, time_zone
 FROM schedules
 WHERE id = $1
 FOR UPDATE;
@@ -90,6 +91,7 @@ FOR UPDATE;
 -- Returns multiple schedules with user favorite status.
 SELECT
     s.id,
+    s.organization_id,
     s.name,
     s.description,
     s.time_zone,
@@ -103,4 +105,3 @@ WHERE s.id = ANY($1::uuid[]);
 -- Deletes multiple schedules by their IDs.
 DELETE FROM schedules
 WHERE id = ANY($1::uuid[]);
-

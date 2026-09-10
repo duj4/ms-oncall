@@ -21,9 +21,9 @@ func TestStatusUpdates(t *testing.T) {
 	insert into users (id, name, email, role) 
 	values 
 		({{uuid "user"}}, 'bob', 'joe@test.com', 'admin');
-	insert into user_contact_methods (id, user_id, name, type, value) 
+	insert into user_contact_methods (id, user_id, name, type, value, enable_status_updates)
 	values
-		({{uuid "cm1"}}, {{uuid "user"}}, 'personal', 'SMS', {{phone "1"}});
+		({{uuid "cm1"}}, {{uuid "user"}}, 'personal', 'SMS', {{phone "1"}}, true);
 
 	update users set alert_status_log_contact_method_id = {{uuid "cm1"}}
 	where id = {{uuid "user"}};
@@ -32,9 +32,9 @@ func TestStatusUpdates(t *testing.T) {
 	values
 		({{uuid "user"}}, {{uuid "cm1"}}, 0);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}});
@@ -42,21 +42,21 @@ func TestStatusUpdates(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	insert into integration_keys (id, service_id, type, name)
 	values
 		({{uuid "int1"}}, {{uuid "sid"}}, 'generic', 'test');
 
-	insert into alerts (service_id, source, description) 
+	insert into alerts (service_id, source, summary, dedup_key)
 	values
-		({{uuid "sid"}}, 'manual', 'first alert'),
-		({{uuid "sid"}}, 'manual', 'second alert');
+		({{uuid "sid"}}, 'manual', 'first alert', 'auto:1:32dfcc759fb0856b4e36d72cfd057c675d9be3ff406a44127ce3f8d2b7316a4fbf0003fcc7cd9dc897d208cde753a4cd30026385ddbf3f5d854f8344f07517b8'),
+		({{uuid "sid"}}, 'manual', 'second alert', 'auto:1:aa540e455c92e596f8398bcf99bee1495b8d1ba9cfa4f74ce2a3410c11f5dac92aeb55d45ec321618f74c7d5fb2f5ef5c4a22c757e3a5de3d5dc707b9a20888e');
 
 `
-	h := harness.NewHarness(t, sql, "alert-status-updates")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doClose := func(summary string) {

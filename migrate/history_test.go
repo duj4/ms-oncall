@@ -15,7 +15,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(history.entries), 280; got != want {
+	if got, want := len(history.entries), 281; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
 	if got, want := history.provenanceFoundationIndex, 274; got != want {
@@ -43,7 +43,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		t.Fatalf("MS OnCall foundation source binding does not contain the exact parent commit and tree: %s", foundation.SourceBinding)
 	}
 
-	organizationFoundation := history.entries[len(history.entries)-5]
+	organizationFoundation := history.entries[len(history.entries)-6]
 	if organizationFoundation.Position != 276 || organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
 		t.Fatalf("Organization persistence migration = position %d, ID %q", organizationFoundation.Position, organizationFoundation.ID)
 	}
@@ -74,7 +74,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	assignmentFoundation := history.entries[len(history.entries)-4]
+	assignmentFoundation := history.entries[len(history.entries)-5]
 	if assignmentFoundation.Position != 277 || assignmentFoundation.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" {
 		t.Fatalf("UserOrganizationAssignment persistence migration = position %d, ID %q", assignmentFoundation.Position, assignmentFoundation.ID)
 	}
@@ -105,7 +105,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	humanSecurityFoundation := history.entries[len(history.entries)-3]
+	humanSecurityFoundation := history.entries[len(history.entries)-4]
 	if humanSecurityFoundation.Position != 278 || humanSecurityFoundation.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" {
 		t.Fatalf("human security generation migration = position %d, ID %q", humanSecurityFoundation.Position, humanSecurityFoundation.ID)
 	}
@@ -136,7 +136,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	generationRetirement := history.entries[len(history.entries)-2]
+	generationRetirement := history.entries[len(history.entries)-3]
 	if generationRetirement.Position != 279 || generationRetirement.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
 		t.Fatalf("generation retirement migration = position %d, ID %q", generationRetirement.Position, generationRetirement.ID)
 	}
@@ -167,25 +167,25 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	latest := history.latest()
-	if latest.Position != 280 || latest.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
-		t.Fatalf("latest canonical migration = position %d, ID %q", latest.Position, latest.ID)
+	activeReconciliation := history.entries[len(history.entries)-2]
+	if activeReconciliation.Position != 280 || activeReconciliation.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
+		t.Fatalf("active reconciliation migration = position %d, ID %q", activeReconciliation.Position, activeReconciliation.ID)
 	}
-	if latest.Provenance != provenanceMSOnCall || latest.BundleID != "ms-oncall-active-foundation-reconciliation-v1" {
-		t.Fatalf("active reconciliation provenance/bundle = %q/%q", latest.Provenance, latest.BundleID)
+	if activeReconciliation.Provenance != provenanceMSOnCall || activeReconciliation.BundleID != "ms-oncall-active-foundation-reconciliation-v1" {
+		t.Fatalf("active reconciliation provenance/bundle = %q/%q", activeReconciliation.Provenance, activeReconciliation.BundleID)
 	}
-	if latest.OriginalID != latest.ID || latest.SHA256 != "9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083" {
-		t.Fatalf("active reconciliation original identity/checksum = %q/%q", latest.OriginalID, latest.SHA256)
+	if activeReconciliation.OriginalID != activeReconciliation.ID || activeReconciliation.SHA256 != "9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083" {
+		t.Fatalf("active reconciliation original identity/checksum = %q/%q", activeReconciliation.OriginalID, activeReconciliation.SHA256)
 	}
-	if latest.PredecessorID != generationRetirement.ID ||
-		!strings.Contains(latest.DependencyEvidence, "bundle=ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1") ||
-		!strings.Contains(latest.DependencyEvidence, "id=20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql") ||
-		!strings.Contains(latest.DependencyEvidence, "sha256=14b6dc8797bf8a55ccc0d35737dbdafe698c9da601693ac2d651057a7c7aaf5f") ||
-		!strings.Contains(latest.DependencyEvidence, "APPEND_AFTER_ACCEPTED_SESSION_GENERATION_BINDING_HUMAN_SECURITY_GENERATION_RETIREMENT_CLEANUP_V1") {
-		t.Fatalf("active reconciliation dependency evidence is incomplete: %s", latest.DependencyEvidence)
+	if activeReconciliation.PredecessorID != generationRetirement.ID ||
+		!strings.Contains(activeReconciliation.DependencyEvidence, "bundle=ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1") ||
+		!strings.Contains(activeReconciliation.DependencyEvidence, "id=20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql") ||
+		!strings.Contains(activeReconciliation.DependencyEvidence, "sha256=14b6dc8797bf8a55ccc0d35737dbdafe698c9da601693ac2d651057a7c7aaf5f") ||
+		!strings.Contains(activeReconciliation.DependencyEvidence, "APPEND_AFTER_ACCEPTED_SESSION_GENERATION_BINDING_HUMAN_SECURITY_GENERATION_RETIREMENT_CLEANUP_V1") {
+		t.Fatalf("active reconciliation dependency evidence is incomplete: %s", activeReconciliation.DependencyEvidence)
 	}
-	if latest.AdaptationEvidence != "FORWARD_RECONCILIATION_OF_UNJUSTIFIED_ACTIVE_IDENTITY_ORGANIZATION_FOUNDATION_MECHANISMS" {
-		t.Fatalf("active reconciliation adaptation evidence = %q", latest.AdaptationEvidence)
+	if activeReconciliation.AdaptationEvidence != "FORWARD_RECONCILIATION_OF_UNJUSTIFIED_ACTIVE_IDENTITY_ORGANIZATION_FOUNDATION_MECHANISMS" {
+		t.Fatalf("active reconciliation adaptation evidence = %q", activeReconciliation.AdaptationEvidence)
 	}
 	for _, value := range []string{
 		"ce8c6049bdedb9f99337ef5b8f90428bee0e68ba",
@@ -193,8 +193,39 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		"5779724705c3bf0df89896157155eeea404a5273",
 		"1072b9876f0bbf0401d749fdb0852a32255cc0cd",
 	} {
+		if !strings.Contains(activeReconciliation.SourceBinding, value) {
+			t.Fatalf("active reconciliation source binding is missing %q: %s", value, activeReconciliation.SourceBinding)
+		}
+	}
+
+	latest := history.latest()
+	if latest.Position != 281 || latest.ID != "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql" {
+		t.Fatalf("latest canonical migration = position %d, ID %q", latest.Position, latest.ID)
+	}
+	if latest.Provenance != provenanceMSOnCall || latest.BundleID != "ms-oncall-resource-root-organization-ownership-persistence-v1" {
+		t.Fatalf("resource ownership provenance/bundle = %q/%q", latest.Provenance, latest.BundleID)
+	}
+	if latest.OriginalID != latest.ID || latest.SHA256 != "a11980ede42e5d9b4d12561f1673865b552d908cb41f6194be37ce6df29e710a" {
+		t.Fatalf("resource ownership original identity/checksum = %q/%q", latest.OriginalID, latest.SHA256)
+	}
+	if latest.PredecessorID != activeReconciliation.ID ||
+		!strings.Contains(latest.DependencyEvidence, "bundle=ms-oncall-active-foundation-reconciliation-v1") ||
+		!strings.Contains(latest.DependencyEvidence, "id=20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql") ||
+		!strings.Contains(latest.DependencyEvidence, "sha256=9acaa8fa63a136834e13617ff555cb339cee50e65e0607febf3168db1dea9083") ||
+		!strings.Contains(latest.DependencyEvidence, "APPEND_AFTER_ACCEPTED_ACTIVE_FOUNDATION_RECONCILIATION_V1") {
+		t.Fatalf("resource ownership dependency evidence is incomplete: %s", latest.DependencyEvidence)
+	}
+	if latest.AdaptationEvidence != "ADDITIVE_MS_ONCALL_RESOURCE_ROOT_ORGANIZATION_OWNERSHIP_PERSISTENCE_NOT_AN_UPSTREAM_MIGRATION" {
+		t.Fatalf("resource ownership adaptation evidence = %q", latest.AdaptationEvidence)
+	}
+	for _, value := range []string{
+		"0b290707500d9fc8839eb85edbbfce199034f824",
+		"e655da0eeba21749ea6bb702b980fd760c67fa71",
+		"4a2f520bce942a949a928c7f1b56c426ffcb8c65",
+		"71c1abebd0d231b10134e5b1d9c42979cbea4f48",
+	} {
 		if !strings.Contains(latest.SourceBinding, value) {
-			t.Fatalf("active reconciliation source binding is missing %q: %s", value, latest.SourceBinding)
+			t.Fatalf("resource ownership source binding is missing %q: %s", value, latest.SourceBinding)
 		}
 	}
 }

@@ -617,7 +617,7 @@ func TestPostgresOrganizationPersistenceFreshAndFoundationUpgrade(t *testing.T) 
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	organizationFoundation := history.entries[len(history.entries)-5]
+	organizationFoundation := history.entries[len(history.entries)-6]
 	if organizationFoundation.Position != 276 || organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
 		t.Fatalf("unexpected Organization persistence entry: %#v", organizationFoundation)
 	}
@@ -642,8 +642,8 @@ func TestPostgresOrganizationPersistenceFreshAndFoundationUpgrade(t *testing.T) 
 	assertOrganizationTablesAbsent(t, ctx, upgradeURL)
 	if count, err := Up(ctx, upgradeURL, ""); err != nil {
 		t.Fatal(err)
-	} else if count != 5 {
-		t.Fatalf("Foundation-only upgrade applied %d migrations, want 5", count)
+	} else if count != 6 {
+		t.Fatalf("Foundation-only upgrade applied %d migrations, want 6", count)
 	}
 	upgradeDefault := readDefaultOrganizationIdentity(t, ctx, upgradeURL)
 	assertOrganizationPersistenceProvenance(t, ctx, upgradeURL, organizationFoundation)
@@ -666,7 +666,7 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	organizationFoundation := history.entries[len(history.entries)-5]
+	organizationFoundation := history.entries[len(history.entries)-6]
 	latest := history.latest()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -677,8 +677,8 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 	before := readDefaultOrganizationIdentity(t, ctx, testURL)
 	if count, err := Down(ctx, testURL, foundation.Name); err != nil {
 		t.Fatal(err)
-	} else if count != 5 {
-		t.Fatalf("Organization persistence rollback count = %d, want 5", count)
+	} else if count != 6 {
+		t.Fatalf("Organization persistence rollback count = %d, want 6", count)
 	}
 	assertOrganizationTablesAbsent(t, ctx, testURL)
 
@@ -704,8 +704,8 @@ func TestPostgresOrganizationPersistenceRollbackReapply(t *testing.T) {
 
 	if count, err := Up(ctx, testURL, ""); err != nil {
 		t.Fatal(err)
-	} else if count != 5 {
-		t.Fatalf("Organization persistence reapply count = %d, want 5", count)
+	} else if count != 6 {
+		t.Fatalf("Organization persistence reapply count = %d, want 6", count)
 	}
 	after := readDefaultOrganizationIdentity(t, ctx, testURL)
 	if after != before {
@@ -722,7 +722,7 @@ func TestPostgresOrganizationPersistenceRejectsPartialSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundation := history.entries[history.provenanceFoundationIndex]
-	organizationFoundation := history.entries[len(history.entries)-5]
+	organizationFoundation := history.entries[len(history.entries)-6]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -785,8 +785,8 @@ func TestPostgresUserOrganizationAssignmentFreshUpgradeRollbackReapply(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	organizationFoundation := history.entries[len(history.entries)-5]
-	assignmentFoundation := history.entries[len(history.entries)-4]
+	organizationFoundation := history.entries[len(history.entries)-6]
+	assignmentFoundation := history.entries[len(history.entries)-5]
 	if organizationFoundation.Position != 276 ||
 		organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" ||
 		assignmentFoundation.Position != 277 ||
@@ -896,8 +896,8 @@ func TestPostgresGenerationRetirementFreshUpgradeRollbackReapply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	position278 := history.entries[len(history.entries)-3]
-	position279 := history.entries[len(history.entries)-2]
+	position278 := history.entries[len(history.entries)-4]
+	position279 := history.entries[len(history.entries)-3]
 	if position278.Position != 278 ||
 		position278.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" ||
 		position279.Position != 279 ||
@@ -991,8 +991,8 @@ func TestPostgresActiveFoundationReconciliationSafeRollbackAndPopulatedRefusal(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	position279 := history.entries[len(history.entries)-2]
-	position280 := history.latest()
+	position279 := history.entries[len(history.entries)-3]
+	position280 := history.entries[len(history.entries)-2]
 	if position279.Position != 279 || position280.Position != 280 ||
 		position280.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
 		t.Fatalf("unexpected active reconciliation boundary: position279=%#v position280=%#v", position279, position280)
@@ -1002,10 +1002,10 @@ func TestPostgresActiveFoundationReconciliationSafeRollbackAndPopulatedRefusal(t
 	defer cancel()
 
 	freshURL := newPostgresTestDatabase(t, baseURL)
-	if count, err := Up(ctx, freshURL, ""); err != nil {
+	if count, err := Up(ctx, freshURL, position280.Name); err != nil {
 		t.Fatal(err)
-	} else if count != len(history.entries) {
-		t.Fatalf("fresh install applied %d migrations, want %d", count, len(history.entries))
+	} else if count != int(position280.Position) {
+		t.Fatalf("position-280 fresh setup applied %d migrations, want %d", count, position280.Position)
 	}
 	assertActiveFoundationSchema(t, ctx, freshURL, true)
 	assertActiveFoundationProvenance(t, ctx, freshURL, position280, true)
@@ -1105,9 +1105,8 @@ func TestPostgresActiveFoundationReconciliationSafeRollbackAndPopulatedRefusal(t
 	assertActiveFoundationSchema(t, ctx, upgradeURL, true)
 	assertActiveFoundationRows(t, ctx, upgradeURL, userID, organizationID)
 	assertActiveFoundationProvenance(t, ctx, upgradeURL, position280, true)
-	if err := VerifyAll(ctx, upgradeURL); err != nil {
-		t.Fatal(err)
-	}
+	// A no-op Up through position 280 revalidates the canonical applied prefix
+	// without incorrectly requiring the later position-281 ownership migration.
 	if count, err := Up(ctx, upgradeURL, position280.Name); err != nil {
 		t.Fatal(err)
 	} else if count != 0 {

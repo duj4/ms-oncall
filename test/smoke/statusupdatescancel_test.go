@@ -31,9 +31,9 @@ func TestStatusUpdatesCancel(t *testing.T) {
 		({{uuid "user"}}, {{uuid "cm1"}}, 0),
 		({{uuid "user"}}, {{uuid "cm2"}}, 0);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}});
@@ -41,15 +41,15 @@ func TestStatusUpdatesCancel(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	insert into integration_keys (id, service_id, type, name)
 	values
 		({{uuid "int1"}}, {{uuid "sid"}}, 'generic', 'test');
 `
-	h := harness.NewHarness(t, sql, "alert-status-updates")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doClose := func(summary string) {

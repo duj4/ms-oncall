@@ -28,10 +28,10 @@ func TestGenericAPIDedup(t *testing.T) {
 		({{uuid "u1"}}, {{uuid "cm1"}}, 0),
 		({{uuid "u2"}}, {{uuid "cm2"}}, 0);
 
-	insert into escalation_policies (id, name)
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "e1"}}, 'esc policy1'),
-		({{uuid "e2"}}, 'esc policy2');
+		({{uuid "e1"}}, 'esc policy1', {{smokeOrganizationID}}),
+		({{uuid "e2"}}, 'esc policy2', {{smokeOrganizationID}});
 
 	insert into escalation_policy_steps (id, escalation_policy_id)
 	values
@@ -43,21 +43,21 @@ func TestGenericAPIDedup(t *testing.T) {
 		({{uuid "e1s1"}}, {{uuid "u1"}}),
 		({{uuid "e2s1"}}, {{uuid "u2"}});
 
-	insert into services (id, escalation_policy_id, name)
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "s1"}}, {{uuid "e1"}}, 'service1'),
-		({{uuid "s2"}}, {{uuid "e2"}}, 'service2');
+		({{uuid "s1"}}, {{uuid "e1"}}, 'service1', {{smokeOrganizationID}}),
+		({{uuid "s2"}}, {{uuid "e2"}}, 'service2', {{smokeOrganizationID}});
 
 	insert into integration_keys (id, type, name, service_id)
 	values
 		({{uuid "i1"}}, 'generic', 'my key', {{uuid "s1"}}),
 		({{uuid "i2"}}, 'generic', 'my key', {{uuid "s2"}});
 
-	insert into alerts (source, service_id, description)
+	insert into alerts (source, service_id, summary, dedup_key)
 	values
-		('generic', {{uuid "s1"}}, 'pre-existing');
+		('generic', {{uuid "s1"}}, 'pre-existing', 'auto:1:91c4dafedb67e173a51f99212548f58bdb976152f7e6752622ec8693bbe0c9a4a0eabb76ee30fbc9f0d8999d0c51a6e87dbd3e57dd29a115481d851e62e7073a');
 `
-	h := harness.NewHarness(t, sql, "add-generic-integration-key")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	fire := func(key, summary, dedup string) {

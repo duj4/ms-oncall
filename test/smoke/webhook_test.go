@@ -55,9 +55,9 @@ func TestWebhookAlert(t *testing.T) {
 	values
 		({{uuid "user"}}, {{uuid "cm1"}}, 0);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}});
@@ -65,16 +65,16 @@ func TestWebhookAlert(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name, description) 
+	insert into services (id, escalation_policy_id, name, description, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service', 'testing');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', 'testing', {{smokeOrganizationID}});
 
 	insert into alerts (service_id, summary, details, status, dedup_key) 
 	values
 		({{uuid "sid"}}, 'testing summary', 'testing details', 'triggered', 'auto:1:foo');
 `
 
-	h := harness.NewHarness(t, sql, "webhook-user-contact-method-type")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	alert := <-ch

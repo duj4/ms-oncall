@@ -26,10 +26,10 @@ func TestNotifiedAlerts(t *testing.T) {
 	values 
 		({{uuid "user"}}, {{uuid "cm1"}}, 0);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy'),
-		({{uuid "eid2"}}, 'esc policy 2');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}}),
+		({{uuid "eid2"}}, 'esc policy 2', {{smokeOrganizationID}});
 
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values 
@@ -39,10 +39,10 @@ func TestNotifiedAlerts(t *testing.T) {
 	values 
 		({{uuid "epa"}}, {{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service'),
-		({{uuid "sid2"}}, {{uuid "eid2"}}, 'service 2');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}}),
+		({{uuid "sid2"}}, {{uuid "eid2"}}, 'service 2', {{smokeOrganizationID}});
 
 	insert into alerts (service_id, summary, dedup_key) 
 	values
@@ -54,7 +54,7 @@ func TestNotifiedAlerts(t *testing.T) {
 		({{uuid "user"}}, {{uuid "sid2"}});	
 	`
 
-	h := harness.NewHarness(t, sql, "add-no-notification-alert-log")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(t *testing.T, h *harness.Harness, query string, res interface{}) {

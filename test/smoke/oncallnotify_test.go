@@ -24,9 +24,9 @@ func TestOnCallNotify(t *testing.T) {
 		({{uuid "uid"}}, 'bob', 'bob@example.com'),
 		({{uuid "uid2"}}, 'joe', 'joe@example.com');
 
-	insert into schedules (id, name, time_zone) 
+	insert into schedules (id, name, time_zone, organization_id)
 	values
-		({{uuid "sid"}}, 'testschedule', 'UTC');
+		({{uuid "sid"}}, 'testschedule', 'UTC', {{smokeOrganizationID}});
 
 	insert into schedule_rules (id, schedule_id, sunday, monday, tuesday, wednesday, thursday, friday, saturday, start_time, end_time, tgt_user_id)
 	values
@@ -41,7 +41,7 @@ func TestOnCallNotify(t *testing.T) {
 	values
 		({{uuid "sid"}}, '{"V1":{"OnCallNotificationRules": [{"ChannelID": {{uuidJSON "chan1"}} }, {"ChannelID": {{uuidJSON "chan2"}} }]}}');
 `
-	h := harness.NewHarness(t, sql, "outgoing-messages-schedule-id")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.Slack().Channel("test1").ExpectMessage("on-call", "testschedule", "bob")

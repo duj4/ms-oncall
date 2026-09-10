@@ -16,19 +16,19 @@ func TestGraphQLServiceLabels(t *testing.T) {
 
 	// Insert initial one label into db
 	const sql = `
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
-	insert into services (id, escalation_policy_id, name) 
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	insert into labels (id, tgt_service_id, key, value) 
 	values
 		('1', {{uuid "sid"}}, 'foo/bar', 'testvalue');
 `
 
-	h := harness.NewHarness(t, sql, "labels-switchover-trigger")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(query string) {

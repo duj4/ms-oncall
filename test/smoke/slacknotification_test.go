@@ -12,9 +12,9 @@ func TestSlackNotification(t *testing.T) {
 	t.Parallel()
 
 	sql := `
-	insert into escalation_policies (id, name, repeat) 
+	insert into escalation_policies (id, name, repeat, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy', 1);
+		({{uuid "eid"}}, 'esc policy', 1, {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id, delay) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}}, 30);
@@ -27,11 +27,11 @@ func TestSlackNotification(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "chan"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 `
-	h := harness.NewHarness(t, sql, "slack-user-link")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.CreateAlert(h.UUID("sid"), "testing")

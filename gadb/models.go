@@ -1071,11 +1071,12 @@ type EpStepOnCallUser struct {
 }
 
 type EscalationPolicy struct {
-	Description string
-	ID          uuid.UUID
-	Name        string
-	Repeat      int32
-	StepCount   int32
+	Description    string
+	ID             uuid.UUID
+	Name           string
+	OrganizationID uuid.UUID
+	Repeat         int32
+	StepCount      int32
 }
 
 type EscalationPolicyAction struct {
@@ -1348,6 +1349,7 @@ type Rotation struct {
 	ID               uuid.UUID
 	LastProcessed    sql.NullTime
 	Name             string
+	OrganizationID   uuid.UUID
 	ParticipantCount int32
 	ShiftLength      int64
 	StartTime        time.Time
@@ -1372,11 +1374,12 @@ type RotationState struct {
 }
 
 type Schedule struct {
-	Description   string
-	ID            uuid.UUID
-	LastProcessed sql.NullTime
-	Name          string
-	TimeZone      string
+	Description    string
+	ID             uuid.UUID
+	LastProcessed  sql.NullTime
+	Name           string
+	OrganizationID uuid.UUID
+	TimeZone       string
 }
 
 type ScheduleDatum struct {
@@ -1418,6 +1421,7 @@ type Service struct {
 	ID                   uuid.UUID
 	MaintenanceExpiresAt sql.NullTime
 	Name                 string
+	OrganizationID       uuid.UUID
 }
 
 type SwitchoverLog struct {

@@ -11,9 +11,9 @@ func TestStatusUpdatesChannel(t *testing.T) {
 	t.Parallel()
 
 	sql := `
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}});
@@ -26,11 +26,11 @@ func TestStatusUpdatesChannel(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "chan"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 `
-	h := harness.NewHarness(t, sql, "slack-user-link")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	a := h.CreateAlertWithDetails(h.UUID("sid"), "testing", "details")

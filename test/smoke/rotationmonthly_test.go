@@ -28,16 +28,16 @@ func TestRotation_Monthly(t *testing.T) {
 		({{uuid "uid1"}}, {{uuid "cm1"}}, 0),
 		({{uuid "uid2"}}, {{uuid "cm2"}}, 0);
 
-	insert into escalation_policies (id, name)
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id)
 	values
 		({{uuid "esid"}}, {{uuid "eid"}});
 
-	insert into rotations (id, name, type, start_time, shift_length, time_zone)
+	insert into rotations (id, name, type, start_time, shift_length, time_zone, organization_id)
 	values
-		({{uuid "rot1"}}, 'default rotation', 'monthly', now(), 1, 'America/Chicago');
+		({{uuid "rot1"}}, 'default rotation', 'monthly', now(), 1, 'America/Chicago', {{smokeOrganizationID}});
 
 	insert into rotation_participants (rotation_id, user_id, position)
 	values
@@ -48,12 +48,12 @@ func TestRotation_Monthly(t *testing.T) {
 	values
 		({{uuid "esid"}}, {{uuid "rot1"}});
 
-	insert into services (id, escalation_policy_id, name) values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+	insert into services (id, escalation_policy_id, name, organization_id) values
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	`
 
-	h := harness.NewHarness(t, sql, "add-monthly-rotation")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	sid := h.UUID("sid")

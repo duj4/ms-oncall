@@ -27,9 +27,9 @@ func TestPrioritization(t *testing.T) {
 	values
 		({{uuid "u1"}}, {{uuid "cm1"}}, 0);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values
@@ -38,26 +38,30 @@ func TestPrioritization(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "u1"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "s1"}}, {{uuid "eid"}}, 'service1'),
-		({{uuid "s2"}}, {{uuid "eid"}}, 'service2');
+		({{uuid "s1"}}, {{uuid "eid"}}, 'service1', {{smokeOrganizationID}}),
+		({{uuid "s2"}}, {{uuid "eid"}}, 'service2', {{smokeOrganizationID}});
+
+	update config_limits
+	set max = -1
+	where id = 'unacked_alerts_per_service';
 `
 
 	buf := bytes.NewBufferString(`
-		insert into alerts (service_id, description)
+		insert into alerts (service_id, summary, dedup_key)
 		values
 	`)
 	for i := 0; i < 300; i++ {
 		if i > 0 {
 			buf.WriteString(",\n")
 		}
-		buf.WriteString(`({{uuid "s1"}}, 'service-1-alert-` + strconv.Itoa(i) + `')`)
+		buf.WriteString(`({{uuid "s1"}}, 'service-1-alert-` + strconv.Itoa(i) + `', 'auto:1:smoke:prioritization:` + strconv.Itoa(i) + `')`)
 	}
 	buf.WriteString(";")
 	sql += buf.String()
 
-	h := harness.NewHarness(t, sql, "ids-to-uuids")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	tw := h.Twilio(t)

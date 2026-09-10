@@ -17,13 +17,13 @@ func TestGraphQLAlertSort(t *testing.T) {
 	values 
 		({{uuid "user"}}, 'bob', 'joe', 'user');
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 	insert into alerts (id, service_id, summary, created_at, status, dedup_key) 
 	values
@@ -34,7 +34,7 @@ func TestGraphQLAlertSort(t *testing.T) {
 	
 	`
 
-	h := harness.NewHarness(t, sql, "add-no-notification-alert-log")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(t *testing.T, h *harness.Harness, query string, res interface{}) {

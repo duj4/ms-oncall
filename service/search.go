@@ -48,6 +48,7 @@ type SearchCursor struct {
 var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()).Parse(`
 	SELECT{{if .LabelKey}} DISTINCT ON ({{ .OrderBy }}){{end}}
 		svc.id,
+		svc.organization_id,
 		svc.name,
 		svc.description,
 		svc.escalation_policy_id,
@@ -244,7 +245,7 @@ func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]Service, err
 	for rows.Next() {
 		var s Service
 		var maintExpiresAt sql.NullTime
-		err = rows.Scan(&s.ID, &s.Name, &s.Description, &s.EscalationPolicyID, &s.isUserFavorite, &maintExpiresAt)
+		err = rows.Scan(&s.ID, &s.OrganizationID, &s.Name, &s.Description, &s.EscalationPolicyID, &s.isUserFavorite, &maintExpiresAt)
 		if err != nil {
 			return nil, err
 		}

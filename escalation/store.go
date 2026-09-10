@@ -12,6 +12,7 @@ import (
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/util/log"
 	"github.com/target/goalert/util/sqlutil"
+	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 
 	"github.com/google/uuid"
@@ -64,6 +65,7 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 		findOnePolicy: p.P(`
 			SELECT
 				e.id,
+				e.organization_id,
 				e.name,
 				e.description,
 				e.repeat,
@@ -74,10 +76,11 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 				fav.tgt_escalation_policy_id = e.id AND fav.user_id = $2
 			WHERE e.id = $1
 		`),
-		findOnePolicyForUpdate: p.P(`SELECT id, name, description, repeat FROM escalation_policies WHERE id = $1 FOR UPDATE`),
+		findOnePolicyForUpdate: p.P(`SELECT id, organization_id, name, description, repeat FROM escalation_policies WHERE id = $1 FOR UPDATE`),
 		findManyPolicies: p.P(`
             SELECT
                 e.id,
+                e.organization_id,
                 e.name,
                 e.description,
                 e.repeat,
@@ -91,6 +94,7 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 		findAllPoliciesBySchedule: p.P(`
 			SELECT DISTINCT
 				step.escalation_policy_id,
+				pol.organization_id,
 				pol.name,
 				pol.description,
 				pol.repeat
@@ -103,7 +107,7 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 			WHERE
 				act.schedule_id = $1
 		`),
-		createPolicy: p.P(`INSERT INTO escalation_policies (id, name, description, repeat) VALUES ($1, $2, $3, $4)`),
+		createPolicy: p.P(`INSERT INTO escalation_policies (id, organization_id, name, description, repeat) VALUES ($1, $2, $3, $4, $5)`),
 		updatePolicy: p.P(`UPDATE escalation_policies SET name = $2, description = $3, repeat = $4 WHERE id = $1`),
 		deletePolicy: p.P(`DELETE FROM escalation_policies WHERE id = any($1)`),
 
@@ -160,7 +164,7 @@ func (s *Store) FindManyPolicies(ctx context.Context, ids []string) ([]Policy, e
 	var result []Policy
 	var p Policy
 	for rows.Next() {
-		err = rows.Scan(&p.ID, &p.Name, &p.Description, &p.Repeat, &p.isUserFavorite)
+		err = rows.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.Repeat, &p.isUserFavorite)
 		if err != nil {
 			return nil, err
 		}
@@ -181,6 +185,9 @@ func (s *Store) CreatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) (*Pol
 	if err != nil {
 		return nil, err
 	}
+	if n.OrganizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
+	}
 
 	stmt := s.createPolicy
 	if tx != nil {
@@ -189,7 +196,7 @@ func (s *Store) CreatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) (*Pol
 
 	n.ID = uuid.New().String()
 
-	_, err = stmt.ExecContext(ctx, n.ID, n.Name, n.Description, n.Repeat)
+	_, err = stmt.ExecContext(ctx, n.ID, n.OrganizationID, n.Name, n.Description, n.Repeat)
 	if err != nil {
 		return nil, err
 	}
@@ -263,9 +270,9 @@ func (s *Store) FindOnePolicyTx(ctx context.Context, tx *sql.Tx, id string) (*Po
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	row := stmt.QueryRowContext(ctx, id)
+	row := stmt.QueryRowContext(ctx, id, permission.UserNullUUID(ctx))
 	var p Policy
-	err = row.Scan(&p.ID, &p.Name, &p.Description, &p.Repeat)
+	err = row.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.Repeat, &p.isUserFavorite)
 	return &p, err
 }
 
@@ -288,7 +295,7 @@ func (s *Store) FindOnePolicyForUpdateTx(ctx context.Context, tx *sql.Tx, id str
 
 	row := stmt.QueryRowContext(ctx, id)
 	var p Policy
-	err = row.Scan(&p.ID, &p.Name, &p.Description, &p.Repeat)
+	err = row.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.Repeat)
 	return &p, err
 }
 
@@ -311,7 +318,7 @@ func (s *Store) FindAllPoliciesBySchedule(ctx context.Context, scheduleID string
 	var p Policy
 	var policies []Policy
 	for rows.Next() {
-		err = rows.Scan(&p.ID, &p.Name, &p.Description, &p.Repeat)
+		err = rows.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.Repeat)
 		if err != nil {
 			return nil, err
 		}

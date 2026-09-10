@@ -100,6 +100,7 @@ type userFavorite struct {
 }
 
 type datagen struct {
+	OrganizationID     uuid.UUID
 	Users              []user.User
 	ContactMethods     []contactmethod.ContactMethod
 	NotificationRules  []notificationrule.NotificationRule
@@ -177,12 +178,13 @@ func (d *datagen) NewNR(userID, cmID string) {
 // NewRotation will generate a rotation.
 func (d *datagen) NewRotation() {
 	r := rotation.Rotation{
-		ID:          d.UUID(),
-		Name:        d.ids.Gen(idName(d.Faker, "Rotation")),
-		Description: d.LoremIpsumSentence(d.Intn(10) + 3),
-		Type:        rotationTypes[d.Intn(len(rotationTypes))],
-		Start:       d.DateRange(time.Now().AddDate(-3, 0, 0), time.Now()).In(time.FixedZone(d.RandomString(timeZones), 0)),
-		ShiftLength: d.Intn(14) + 1,
+		ID:             d.UUID(),
+		OrganizationID: d.OrganizationID,
+		Name:           d.ids.Gen(idName(d.Faker, "Rotation")),
+		Description:    d.LoremIpsumSentence(d.Intn(10) + 3),
+		Type:           rotationTypes[d.Intn(len(rotationTypes))],
+		Start:          d.DateRange(time.Now().AddDate(-3, 0, 0), time.Now()).In(time.FixedZone(d.RandomString(timeZones), 0)),
+		ShiftLength:    d.Intn(14) + 1,
 	}
 
 	d.Rotations = append(d.Rotations, r)
@@ -205,10 +207,11 @@ func (d *datagen) NewRotationParticipant(rotID string, pos int) {
 // NewSchedule will generate a new random schedule.
 func (d *datagen) NewSchedule() {
 	d.Schedules = append(d.Schedules, schedule.Schedule{
-		ID:          d.UUID(),
-		Name:        d.ids.Gen(idName(d.Faker, "Schedule")),
-		Description: d.LoremIpsumSentence(d.Intn(10) + 3),
-		TimeZone:    time.FixedZone(d.RandomString(timeZones), 0),
+		ID:             d.UUID(),
+		OrganizationID: d.OrganizationID,
+		Name:           d.ids.Gen(idName(d.Faker, "Schedule")),
+		Description:    d.LoremIpsumSentence(d.Intn(10) + 3),
+		TimeZone:       time.FixedZone(d.RandomString(timeZones), 0),
 	})
 }
 
@@ -257,10 +260,11 @@ func (d *datagen) NewScheduleOverride(scheduleID string) {
 // NewEP will generate a new escalation policy.
 func (d *datagen) NewEP() {
 	d.EscalationPolicies = append(d.EscalationPolicies, escalation.Policy{
-		ID:          d.UUID(),
-		Name:        d.ids.Gen(idName(d.Faker, "Policy")),
-		Description: d.LoremIpsumSentence(d.Intn(10) + 3),
-		Repeat:      d.Intn(5),
+		ID:             d.UUID(),
+		OrganizationID: d.OrganizationID,
+		Name:           d.ids.Gen(idName(d.Faker, "Policy")),
+		Description:    d.LoremIpsumSentence(d.Intn(10) + 3),
+		Repeat:         d.Intn(5),
 	})
 }
 
@@ -296,6 +300,7 @@ func (d *datagen) NewEPStepAction(stepID string) {
 func (d *datagen) NewService() {
 	d.Services = append(d.Services, service.Service{
 		ID:                 d.UUID(),
+		OrganizationID:     d.OrganizationID,
 		Name:               d.ids.Gen(idName(d.Faker, "Service")),
 		Description:        d.LoremIpsumSentence(d.Intn(10) + 3),
 		EscalationPolicyID: d.EscalationPolicies[d.Intn(len(d.EscalationPolicies))].ID,
@@ -573,6 +578,7 @@ func (cfg datagenConfig) Generate() datagen {
 		labelKeyVal: make(map[string][]string),
 		Alerts:      make([]alert.Alert, 0, cfg.AlertClosedCount+cfg.AlertActiveCount),
 	}
+	d.OrganizationID = uuid.MustParse(d.UUID())
 
 	run := func(times int, fn func()) int {
 		for i := 0; i < times; i++ {

@@ -23,9 +23,9 @@ func TestMessageBundle_SMS(t *testing.T) {
 		update users set alert_status_log_contact_method_id = {{uuid "cm1"}}
 		where id = {{uuid "user"}};
 
-		insert into escalation_policies (id, name) 
+		insert into escalation_policies (id, name, organization_id)
 		values
-			({{uuid "eid"}}, 'esc policy');
+			({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 		insert into escalation_policy_steps (id, escalation_policy_id) 
 		values
 			({{uuid "esid"}}, {{uuid "eid"}});
@@ -33,11 +33,11 @@ func TestMessageBundle_SMS(t *testing.T) {
 		values 
 			({{uuid "esid"}}, {{uuid "user"}});
 
-		insert into services (id, escalation_policy_id, name) 
+		insert into services (id, escalation_policy_id, name, organization_id)
 		values
-			({{uuid "sid"}}, {{uuid "eid"}}, 'My Service');
+			({{uuid "sid"}}, {{uuid "eid"}}, 'My Service', {{smokeOrganizationID}});
 `
-	h := harness.NewHarness(t, sql, "message-bundles")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.SetConfigValue("General.DisableMessageBundles", "false")

@@ -27,9 +27,9 @@ func TestMultiStepNotifications(t *testing.T) {
 		({{uuid "u1"}}, {{uuid "c2"}}, 0),
 		({{uuid "u1"}}, {{uuid "c1"}}, 30);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values 
-		({{uuid "e1"}}, 'esc policy');
+		({{uuid "e1"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values 
 		({{uuid "es1"}}, {{uuid "e1"}});
@@ -37,15 +37,15 @@ func TestMultiStepNotifications(t *testing.T) {
 	values 
 		({{uuid "es1"}}, {{uuid "u1"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-    	({{uuid "s1"}}, {{uuid "e1"}}, 'service');
+		({{uuid "s1"}}, {{uuid "e1"}}, 'service', {{smokeOrganizationID}});
 
-	insert into alerts (service_id, description) 
+	insert into alerts (service_id, summary, dedup_key)
 	values
-    	({{uuid "s1"}}, 'testing');
+		({{uuid "s1"}}, 'testing', 'auto:1:smoke:multistepnotification_test:1:1');
 `
-	h := harness.NewHarness(t, sql, "ids-to-uuids")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	tw := h.Twilio(t)

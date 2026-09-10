@@ -19,9 +19,9 @@ func TestRotationDelUser(t *testing.T) {
 		({{uuid "uid2"}}, 'ben', 'frank'),
 		({{uuid "uid3"}}, 'joe', 'bob');
 
-	insert into rotations (id, name, type, start_time, shift_length, time_zone)
+	insert into rotations (id, name, type, start_time, shift_length, time_zone, organization_id)
 	values
-		({{uuid "rot1"}}, 'default rotation', 'daily', now(), 1, 'UTC');
+		({{uuid "rot1"}}, 'default rotation', 'daily', now(), 1, 'UTC', {{smokeOrganizationID}});
 
 	insert into rotation_participants (rotation_id, user_id, position)
 	values
@@ -29,7 +29,7 @@ func TestRotationDelUser(t *testing.T) {
 		({{uuid "rot1"}}, {{uuid "uid2"}}, 1),
 		({{uuid "rot1"}}, {{uuid "uid3"}}, 2);
 	`
-	h := harness.NewHarness(t, sql, "add-daily-alert-metrics")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.GraphQLQuery2(fmt.Sprintf(

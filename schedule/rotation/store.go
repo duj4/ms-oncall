@@ -51,7 +51,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 
 		lockPart: p.P(`lock rotation_participants, rotation_state in exclusive mode`),
 
-		createRotation: p.P(`INSERT INTO rotations (id, name, description, type, start_time, shift_length, time_zone) VALUES ($1, $2, $3, $4, $5, $6, $7)`),
+		createRotation: p.P(`INSERT INTO rotations (id, organization_id, name, description, type, start_time, shift_length, time_zone) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`),
 		updateRotation: p.P(`
 			WITH set_shift_start AS (
 				UPDATE rotation_state
@@ -62,7 +62,8 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		`),
 		findRotation: p.P(`
 			SELECT 
-				r.id, 
+				r.id,
+				r.organization_id,
 				r.name, 
 				r.description, 
 				r.type, 
@@ -75,12 +76,13 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			AND fav.user_id = $2 
 			WHERE r.id = $1
 		`),
-		findRotationForUpdate: p.P(`SELECT id, name, description, type, start_time, shift_length, time_zone FROM rotations WHERE id = $1 FOR UPDATE`),
+		findRotationForUpdate: p.P(`SELECT id, organization_id, name, description, type, start_time, shift_length, time_zone FROM rotations WHERE id = $1 FOR UPDATE`),
 		deleteRotation:        p.P(`DELETE FROM rotations WHERE id = ANY($1)`),
 
 		findMany: p.P(`
 			SELECT 
-				r.id, 
+				r.id,
+				r.organization_id,
 				r.name, 
 				r.description, 
 				r.type, 
@@ -181,6 +183,9 @@ func (s *Store) CreateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation) (
 	if err != nil {
 		return nil, err
 	}
+	if n.OrganizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
+	}
 
 	stmt := s.createRotation
 	if tx != nil {
@@ -189,7 +194,7 @@ func (s *Store) CreateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation) (
 
 	n.ID = uuid.New().String()
 
-	_, err = stmt.ExecContext(ctx, n.ID, n.Name, n.Description, n.Type, n.Start, n.ShiftLength, n.Start.Location().String())
+	_, err = stmt.ExecContext(ctx, n.ID, n.OrganizationID, n.Name, n.Description, n.Type, n.Start, n.ShiftLength, n.Start.Location().String())
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +248,7 @@ func (s *Store) FindMany(ctx context.Context, ids []string) ([]Rotation, error) 
 	var tz string
 	result := make([]Rotation, 0, len(ids))
 	for rows.Next() {
-		err = rows.Scan(&r.ID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz, &r.isUserFavorite)
+		err = rows.Scan(&r.ID, &r.OrganizationID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz, &r.isUserFavorite)
 		if err != nil {
 			return nil, err
 		}
@@ -271,7 +276,7 @@ func (s *Store) FindRotation(ctx context.Context, id string) (*Rotation, error) 
 	row := s.findRotation.QueryRowContext(ctx, id, permission.UserNullUUID(ctx))
 	var r Rotation
 	var tz string
-	err = row.Scan(&r.ID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz, &r.isUserFavorite)
+	err = row.Scan(&r.ID, &r.OrganizationID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz, &r.isUserFavorite)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +333,7 @@ func (s *Store) FindRotationForUpdateTx(ctx context.Context, tx *sql.Tx, rotatio
 	row := stmt.QueryRowContext(ctx, rotationID)
 	var r Rotation
 	var tz string
-	err = row.Scan(&r.ID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz)
+	err = row.Scan(&r.ID, &r.OrganizationID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz)
 	if err != nil {
 		return nil, err
 	}

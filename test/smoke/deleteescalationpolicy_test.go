@@ -12,9 +12,9 @@ func TestDeleteEscalationPolicy(t *testing.T) {
 	t.Parallel()
 
 	const sql = `
-	insert into escalation_policies (id, name, description)
+	insert into escalation_policies (id, name, description, organization_id)
 	values
-		({{uuid "ep1"}}, 'test', 'test');
+		({{uuid "ep1"}}, 'test', 'test', {{smokeOrganizationID}});
 	
 	insert into escalation_policy_steps (id, escalation_policy_id)
 	values
@@ -22,7 +22,7 @@ func TestDeleteEscalationPolicy(t *testing.T) {
 		({{uuid ""}}, {{uuid "ep1"}});
 `
 
-	h := harness.NewHarness(t, sql, "heartbeats")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(query string) {
