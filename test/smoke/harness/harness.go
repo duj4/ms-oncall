@@ -248,8 +248,10 @@ func NewStoppedHarnessWithFlags(t *testing.T, initSQL string, sqlData interface{
 	}
 
 	h.Migrate(migrationName)
+	h.ensureSmokeOrganization()
 	h.initSlack()
 	h.execQuery(initSQL, sqlData)
+	h.ensureSmokeUserOrganizationAssignments()
 
 	return h
 }
@@ -296,6 +298,7 @@ func (h *Harness) StartWithAppCfgHook(fn func(*app.Config)) {
 		}
 		h.t.Fatalf("failed to migrate backend: %v\n", err)
 	}
+	h.ensureSmokeOrganization()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -474,14 +477,16 @@ func (h *Harness) execQuery(sql string, data interface{}) {
 	h.t.Helper()
 	t := template.New("sql")
 	t.Funcs(template.FuncMap{
-		"uuidJSON":         func(id string) string { return fmt.Sprintf(`"%s"`, h.uuidG.Get(id)) },
-		"uuid":             func(id string) string { return fmt.Sprintf("'%s'", h.uuidG.Get(id)) },
-		"phone":            func(id string) string { return fmt.Sprintf("'%s'", h.phoneCCG.Get(id)) },
-		"email":            func(id string) string { return fmt.Sprintf("'%s'", h.emailG.Get(id)) },
-		"phoneCC":          func(cc, id string) string { return fmt.Sprintf("'%s'", h.phoneCCG.GetWithArg(cc, id)) },
-		"slackChannelID":   func(name string) string { return fmt.Sprintf("'%s'", h.Slack().Channel(name).ID()) },
-		"slackUserID":      func(name string) string { return fmt.Sprintf("'%s'", h.Slack().User(name).ID()) },
-		"slackUserGroupID": func(name string) string { return fmt.Sprintf("'%s'", h.Slack().UserGroup(name).ID()) },
+		"uuidJSON":            func(id string) string { return fmt.Sprintf(`"%s"`, h.uuidG.Get(id)) },
+		"uuid":                func(id string) string { return fmt.Sprintf("'%s'", h.uuidG.Get(id)) },
+		"smokeOrganizationID": func() string { return fmt.Sprintf("'%s'", SmokeOrganizationID) },
+		"phone":               func(id string) string { return fmt.Sprintf("'%s'", h.phoneCCG.Get(id)) },
+		"email":               func(id string) string { return fmt.Sprintf("'%s'", h.emailG.Get(id)) },
+		"phoneCC":             func(cc, id string) string { return fmt.Sprintf("'%s'", h.phoneCCG.GetWithArg(cc, id)) },
+		"slackChannelID":      func(name string) string { return fmt.Sprintf("'%s'", h.Slack().Channel(name).ID()) },
+		"slackUserID":         func(name string) string { return fmt.Sprintf("'%s'", h.Slack().User(name).ID()) },
+		"slackTeamID":         func() string { return fmt.Sprintf("'%s'", h.slackApp.TeamID) },
+		"slackUserGroupID":    func(name string) string { return fmt.Sprintf("'%s'", h.Slack().UserGroup(name).ID()) },
 	})
 	_, err := t.Parse(sql)
 	if err != nil {

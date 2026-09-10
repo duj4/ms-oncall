@@ -11,10 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/auth"
 	"github.com/target/goalert/limit"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user"
 )
@@ -33,6 +35,23 @@ func (h *Harness) createGraphQLUser(userID string) {
 		})
 		if err != nil {
 			h.t.Fatal(errors.Wrap(err, "create GraphQL user"))
+		}
+		_, err = h.backend.OrganizationStore.CreateUserOrganizationAssignment(ctx, organization.CreateUserOrganizationAssignmentInput{
+			UserID: uuid.MustParse(userID),
+			UserOrganizationAssignmentValues: organization.UserOrganizationAssignmentValues{
+				EffectiveOrganizationID:             uuid.MustParse(SmokeOrganizationID),
+				EffectiveOrganizationClassification: organization.ClassificationNormal,
+				Role:                                organization.OrganizationRoleAdmin,
+				MappingOutcome:                      organization.MappingOutcomeExactlyOne,
+				Evaluation: organization.AssignmentEvaluation{
+					AuthoritativeEvaluatedAt: h.Now(),
+					SourceConfigVersion:      "smoke-harness-v1",
+					MatchedCount:             1,
+				},
+			},
+		})
+		if err != nil {
+			h.t.Fatal(errors.Wrap(err, "create GraphQL user Organization assignment"))
 		}
 	})
 }

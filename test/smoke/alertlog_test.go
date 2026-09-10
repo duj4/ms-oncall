@@ -79,8 +79,8 @@ func TestAlertLog(t *testing.T) {
 		values ({{uuid "user"}}, {{uuid "cm1"}}, 0);
 		{{- end}}
 
-		insert into escalation_policies (id, name) 
-		values ({{uuid "eid"}}, 'esc policy');
+		insert into escalation_policies (id, name, organization_id)
+		values ({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
 		{{- if .EPStep}}
 		insert into escalation_policy_steps (id, escalation_policy_id) 
@@ -92,15 +92,15 @@ func TestAlertLog(t *testing.T) {
 		values ({{uuid "esid"}}, {{uuid "user"}});
 		{{- end}}
 
-		insert into services (id, escalation_policy_id, name) 
-		values ({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		insert into services (id, escalation_policy_id, name, organization_id)
+		values ({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 	`
 
 	check := func(desc string, c config, before func(*testing.T, *harness.Harness), after func(*testing.T, *harness.Harness, alertLogs)) {
 		t.Run(desc, func(t *testing.T) {
 			// setup sql
 			t.Parallel()
-			h := harness.NewHarnessWithData(t, alertLogSQLTmpl, c, "add-no-notification-alert-log")
+			h := harness.NewHarnessWithData(t, alertLogSQLTmpl, c, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 			defer h.Close()
 
 			// create alert

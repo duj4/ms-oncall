@@ -26,20 +26,24 @@ func TestRotation_Hourly(t *testing.T) {
 		({{uuid "uid1"}}, {{uuid "cm1"}}, 0),
 		({{uuid "uid2"}}, {{uuid "cm2"}}, 0);
 
-	insert into escalation_policies (id, name)
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id)
 	values
 		({{uuid "esid"}}, {{uuid "eid"}});
 
-	insert into schedules (id, name, time_zone)
+	insert into schedules (id, name, time_zone, organization_id)
 	values
-		({{uuid "sched1"}}, 'default', 'America/Chicago');
+		({{uuid "sched1"}}, 'default', 'America/Chicago', {{smokeOrganizationID}});
 
-	insert into rotations (id, schedule_id, name, type, start_time, shift_length)
+	insert into rotations (id, name, type, start_time, shift_length, time_zone, organization_id)
 	values
-		({{uuid "rot1"}}, {{uuid "sched1"}}, 'default rotation', 'hourly', now(), 1);
+		({{uuid "rot1"}}, 'default rotation', 'hourly', now(), 1, 'America/Chicago', {{smokeOrganizationID}});
+
+	insert into schedule_rules (schedule_id, tgt_rotation_id)
+	values
+		({{uuid "sched1"}}, {{uuid "rot1"}});
 
 	insert into rotation_participants (rotation_id, user_id, position)
 	values
@@ -50,14 +54,14 @@ func TestRotation_Hourly(t *testing.T) {
 	values
 		({{uuid "esid"}}, {{uuid "sched1"}});
 
-	insert into services (id, escalation_policy_id, name) values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+	insert into services (id, escalation_policy_id, name, organization_id) values
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
-	insert into alerts (service_id, description) values
-		({{uuid "sid"}}, 'testing');
+	insert into alerts (service_id, summary, dedup_key) values
+		({{uuid "sid"}}, 'testing', 'auto:1:smoke:rotationhourly_test:1:1');
 
 	`
-	h := harness.NewHarness(t, sql, "ids-to-uuids")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	tw := h.Twilio(t)

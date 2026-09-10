@@ -16,12 +16,12 @@ func TestGraphQLScheduleFavorites(t *testing.T) {
 	INSERT INTO users (id, name, email) 
 	VALUES 
 		({{uuid "user"}}, 'gary', 'stu');
-	INSERT INTO schedules (id, name, time_zone, description) 
+	INSERT INTO schedules (id, name, time_zone, description, organization_id)
 	VALUES
-		({{uuid "schedId"}},'schedule1', 'America/Chicago', 'test description here');
+		({{uuid "schedId"}},'schedule1', 'America/Chicago', 'test description here', {{smokeOrganizationID}});
 `
 
-	h := harness.NewHarness(t, sql, "add-schedule-favorites")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(t *testing.T, query string, res interface{}) {

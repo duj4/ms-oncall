@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/oncall"
@@ -225,6 +226,15 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 }
 
 func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateScheduleInput) (sched *schedule.Schedule, err error) {
+	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
+	if requestExecutionContext == nil {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
+	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+
 	usedTargets := make(map[assignment.RawTarget]int, len(input.Targets))
 
 	for i, tgt := range input.Targets {
@@ -264,8 +274,9 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		s := &schedule.Schedule{
-			Name:     input.Name,
-			TimeZone: loc,
+			OrganizationID: organizationID,
+			Name:           input.Name,
+			TimeZone:       loc,
 		}
 		if input.Description != nil {
 			s.Description = *input.Description

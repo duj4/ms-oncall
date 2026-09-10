@@ -16,9 +16,9 @@ func TestOnCallNotifyTOD(t *testing.T) {
 	values
 		({{uuid "uid"}}, 'bob', 'bob@example.com');
 
-	insert into schedules (id, name, time_zone) 
+	insert into schedules (id, name, time_zone, organization_id)
 	values
-		({{uuid "sid"}}, 'testschedule', 'UTC');
+		({{uuid "sid"}}, 'testschedule', 'UTC', {{smokeOrganizationID}});
 
 	insert into schedule_rules (id, schedule_id, sunday, monday, tuesday, wednesday, thursday, friday, saturday, start_time, end_time, tgt_user_id)
 	values
@@ -33,7 +33,7 @@ func TestOnCallNotifyTOD(t *testing.T) {
 	values
 		({{uuid "sid"}}, '{"V1":{"OnCallNotificationRules": [{"ChannelID": {{uuidJSON "chan1"}}, "Time": "00:00" },{"ChannelID": {{uuidJSON "chan1"}}, "Time": "01:00" },{"ChannelID": {{uuidJSON "chan2"}}, "Time": "00:00" }]}}');
 `
-	h := harness.NewHarness(t, sql, "outgoing-messages-schedule-id")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.Trigger()

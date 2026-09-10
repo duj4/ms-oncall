@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/event"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule/rotation"
@@ -30,15 +31,25 @@ func (q *Query) Rotation(ctx context.Context, id string) (*rotation.Rotation, er
 }
 
 func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRotationInput) (result *rotation.Rotation, err error) {
+	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
+	if requestExecutionContext == nil {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
+	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+
 	loc, err := util.LoadLocation(input.TimeZone)
 	if err != nil {
 		return nil, validation.NewFieldError("TimeZone", err.Error())
 	}
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		rot := &rotation.Rotation{
-			Name:  input.Name,
-			Type:  input.Type,
-			Start: input.Start.In(loc),
+			OrganizationID: organizationID,
+			Name:           input.Name,
+			Type:           input.Type,
+			Start:          input.Start.In(loc),
 		}
 		if input.Description != nil {
 			rot.Description = *input.Description

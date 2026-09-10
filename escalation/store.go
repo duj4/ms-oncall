@@ -5,7 +5,6 @@ import (
 	"database/sql"
 
 	"github.com/target/goalert/alert/alertlog"
-	"github.com/target/goalert/internal/executioncontextvalue"
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/notification/slack"
 	"github.com/target/goalert/notificationchannel"
@@ -13,6 +12,7 @@ import (
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/util/log"
 	"github.com/target/goalert/util/sqlutil"
+	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 
 	"github.com/google/uuid"
@@ -185,9 +185,8 @@ func (s *Store) CreatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) (*Pol
 	if err != nil {
 		return nil, err
 	}
-	organizationID, present := executioncontextvalue.EffectiveOrganizationID(ctx)
-	if !present {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	if n.OrganizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
 	}
 
 	stmt := s.createPolicy
@@ -196,7 +195,6 @@ func (s *Store) CreatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) (*Pol
 	}
 
 	n.ID = uuid.New().String()
-	n.OrganizationID = organizationID
 
 	_, err = stmt.ExecContext(ctx, n.ID, n.OrganizationID, n.Name, n.Description, n.Repeat)
 	if err != nil {

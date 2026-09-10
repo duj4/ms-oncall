@@ -15,11 +15,11 @@ func TestGraphQLFavoriteRotations(t *testing.T) {
 	values 
 		({{uuid "user"}}, 'bob', 'joe', 'admin');
 
-	insert into rotations (id, name, description, type, start_time, time_zone)
+	insert into rotations (id, name, description, type, start_time, time_zone, organization_id)
 	values
-		({{uuid "r1"}}, 'test', 'test', 'daily', now(), 'UTC');
+		({{uuid "r1"}}, 'test', 'test', 'daily', now(), 'UTC', {{smokeOrganizationID}});
 `
-	h := harness.NewHarness(t, sql, "add-rotation-favorite")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(t *testing.T, query string, res interface{}) {

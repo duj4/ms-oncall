@@ -16,16 +16,16 @@ func TestGraphQLUserFavorites(t *testing.T) {
 	insert into users (id, name, email) 
 	values 
 		({{uuid "user"}}, 'bob', 'joe');
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
-	insert into services (id, escalation_policy_id, name) 
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid1"}}, {{uuid "eid"}}, 'service1'),
-		({{uuid "sid2"}}, {{uuid "eid"}}, 'service2');
+		({{uuid "sid1"}}, {{uuid "eid"}}, 'service1', {{smokeOrganizationID}}),
+		({{uuid "sid2"}}, {{uuid "eid"}}, 'service2', {{smokeOrganizationID}});
 `
 
-	h := harness.NewHarness(t, sql, "UserFavorites")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(query string, res interface{}) {

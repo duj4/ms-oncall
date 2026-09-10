@@ -28,15 +28,15 @@ func TestGraphQLCalendarSubscriptions(t *testing.T) {
 		insert into users (id, name, email, role) 
 		values ({{uuid "user"}}, 'bob', 'joe', 'admin');
 
-		insert into schedules (id, name, time_zone) 
-		values ({{uuid "sched1"}}, 'default', 'America/Chicago');
+		insert into schedules (id, name, time_zone, organization_id)
+		values ({{uuid "sched1"}}, 'default', 'America/Chicago', {{smokeOrganizationID}});
 
 		insert into user_calendar_subscriptions (id, name, user_id, config, schedule_id)
 		values ({{uuid "cs1"}}, 'test1', {{uuid "user"}}, '{ "ReminderMinutes": [2, 4, 8, 16]}', {{uuid "sched1"}});
 
 	`
 
-	h := harness.NewHarness(t, sql, "calendar-subscriptions")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(t *testing.T, query string, res interface{}) {

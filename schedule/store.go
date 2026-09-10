@@ -7,10 +7,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/gadb"
-	"github.com/target/goalert/internal/executioncontextvalue"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user"
 	"github.com/target/goalert/util"
+	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 )
 
@@ -127,9 +127,8 @@ func (store *Store) CreateScheduleTx(ctx context.Context, tx *sql.Tx, s *Schedul
 	if err != nil {
 		return nil, err
 	}
-	organizationID, present := executioncontextvalue.EffectiveOrganizationID(ctx)
-	if !present {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	if n.OrganizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
 	}
 
 	db := gadb.New(store.db)
@@ -138,7 +137,7 @@ func (store *Store) CreateScheduleTx(ctx context.Context, tx *sql.Tx, s *Schedul
 	}
 
 	id, err := db.SchedCreate(ctx, gadb.SchedCreateParams{
-		OrganizationID: organizationID,
+		OrganizationID: n.OrganizationID,
 		Name:           n.Name,
 		Description:    n.Description,
 		TimeZone:       n.TimeZone.String(),
@@ -148,7 +147,6 @@ func (store *Store) CreateScheduleTx(ctx context.Context, tx *sql.Tx, s *Schedul
 	}
 
 	n.ID = id.String()
-	n.OrganizationID = organizationID
 	return n, nil
 }
 

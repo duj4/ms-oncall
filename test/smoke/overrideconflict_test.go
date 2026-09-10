@@ -20,12 +20,12 @@ func TestOverrideConflict(t *testing.T) {
 	values
 		({{uuid "u1"}}, 'bob', 'bob@example.com');
 
-	insert into schedules (id, name, time_zone) 
+	insert into schedules (id, name, time_zone, organization_id)
 	values
-		({{uuid "sid"}}, 'schedule', 'UTC');
+		({{uuid "sid"}}, 'schedule', 'UTC', {{smokeOrganizationID}});
 	`
 
-	h := harness.NewHarness(t, sql, "sched-module-v3")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	db := h.App().DB()

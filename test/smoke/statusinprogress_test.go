@@ -15,21 +15,21 @@ func TestStatusInProgress(t *testing.T) {
 			({{uuid "u1"}}, 'bob', 'bob@email.com'),
 			({{uuid "u2"}}, 'joe', 'joe@email.com');
 
-		insert into user_contact_methods (id, user_id, name, type, value) 
+		insert into user_contact_methods (id, user_id, name, type, value, enable_status_updates)
 		values
-			({{uuid "c1"}}, {{uuid "u1"}}, 'personal', 'SMS', {{phone "1"}});
+			({{uuid "c1"}}, {{uuid "u1"}}, 'personal', 'SMS', {{phone "1"}}, true);
 
 		update users
 		set alert_status_log_contact_method_id = {{uuid "c1"}}
 		where id = {{uuid "u1"}};
 
-		insert into escalation_policies (id, name, repeat) 
+		insert into escalation_policies (id, name, repeat, organization_id)
 		values
-			({{uuid "eid"}}, 'esc policy', -1);
+			({{uuid "eid"}}, 'esc policy', -1, {{smokeOrganizationID}});
 
-		insert into services (id, escalation_policy_id, name) 
+		insert into services (id, escalation_policy_id, name, organization_id)
 		values
-			({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+			({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
 		insert into alerts (id, service_id, status, summary) 
 		values
@@ -42,18 +42,16 @@ func TestStatusInProgress(t *testing.T) {
 			(102, 1, 'acknowledged', {{uuid "u2"}}, 'user', ''),
 			(103, 1, 'closed', {{uuid "u2"}}, 'user', '');
 
-		truncate user_last_alert_log;
-
-		insert into user_last_alert_log (user_id, alert_id, log_id, next_log_id)
+		insert into alert_status_subscriptions (contact_method_id, alert_id, last_alert_status)
 		values
-			({{uuid "u1"}}, 1, 102, 103);
+			({{uuid "c1"}}, 1, 'active');
 
 		insert into outgoing_messages(message_type, user_id, contact_method_id, alert_id, service_id, escalation_policy_id, last_status, sent_at)
 		values
-			('alert_notification', {{uuid "u1"}}, {{uuid "c1"}}, 1, {{uuid "sid"}}, {{uuid "eid"}}, 'sent', now());
+			('alert_notification', {{uuid "u1"}}, {{uuid "c1"}}, 1, {{uuid "sid"}}, {{uuid "eid"}}, 'delivered', now());
 	`
 
-	h := harness.NewHarness(t, sql, "sched-module-v3")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	tw := h.Twilio(t)

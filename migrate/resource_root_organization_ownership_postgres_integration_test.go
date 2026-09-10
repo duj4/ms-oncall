@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,9 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/target/goalert/alert/alertlog"
-	"github.com/target/goalert/auth"
 	"github.com/target/goalert/escalation"
-	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/organization"
@@ -183,6 +182,138 @@ func TestPostgresResourceRootOrganizationOwnershipMigration(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+
+	t.Run("concurrent committed create forces Down refusal", func(t *testing.T) {
+		testURL := newPostgresTestDatabase(t, baseURL)
+		if count, err := Up(ctx, testURL, position281.Name); err != nil {
+			t.Fatal(err)
+		} else if count != len(history.entries) {
+			t.Fatalf("position-281 setup applied %d migrations, want %d", count, len(history.entries))
+		}
+
+		insertConn, err := pgx.Connect(ctx, testURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer insertConn.Close(ctx)
+		organizationID := uuid.New()
+		insertResourceTestNormalOrganization(t, ctx, insertConn, organizationID, "concurrent-down")
+
+		insertTx, err := insertConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		insertCommitted := false
+		defer func() {
+			if !insertCommitted {
+				_ = insertTx.Rollback(context.Background())
+			}
+		}()
+		scheduleID := uuid.New()
+		if _, err := insertTx.Exec(ctx, `
+			INSERT INTO public.schedules (id, organization_id, name, description, time_zone)
+			VALUES ($1, $2, 'Concurrent Down Schedule', 'concurrent down', 'Etc/UTC')
+		`, scheduleID, organizationID); err != nil {
+			t.Fatal(err)
+		}
+
+		applicationName := "resource-root-down-" + uuid.NewString()
+		downURL := postgresURLWithApplicationName(t, testURL, applicationName)
+		type downResult struct {
+			count int
+			err   error
+		}
+		downResultCh := make(chan downResult, 1)
+		downCtx, cancelDown := context.WithTimeout(ctx, 30*time.Second)
+		defer cancelDown()
+		go func() {
+			count, err := Down(downCtx, downURL, position280.Name)
+			downResultCh <- downResult{count: count, err: err}
+		}()
+
+		observer, err := pgx.Connect(ctx, testURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer observer.Close(ctx)
+		lockCtx, cancelLock := context.WithTimeout(ctx, 10*time.Second)
+		defer cancelLock()
+		lockPoll := time.NewTicker(10 * time.Millisecond)
+		defer lockPoll.Stop()
+		for {
+			var waiting bool
+			err := observer.QueryRow(lockCtx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM pg_catalog.pg_locks AS l
+					JOIN pg_catalog.pg_stat_activity AS a ON a.pid = l.pid
+					WHERE a.application_name = $1
+						AND l.locktype = 'relation'
+						AND l.relation = 'public.schedules'::regclass
+						AND l.mode = 'AccessExclusiveLock'
+						AND NOT l.granted
+				)
+			`, applicationName).Scan(&waiting)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if waiting {
+				break
+			}
+			select {
+			case result := <-downResultCh:
+				t.Fatalf("position-281 Down completed before reaching the required lock boundary: (%d, %v)", result.count, result.err)
+			case <-lockCtx.Done():
+				t.Fatalf("observe blocked position-281 Down: %v", lockCtx.Err())
+			case <-lockPoll.C:
+			}
+		}
+		select {
+		case result := <-downResultCh:
+			t.Fatalf("position-281 Down did not remain blocked by the uncommitted create: (%d, %v)", result.count, result.err)
+		default:
+		}
+
+		if err := insertTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		insertCommitted = true
+
+		result := <-downResultCh
+		if result.count != 0 || result.err == nil {
+			t.Fatalf("concurrent populated position-281 Down = (%d, %v), want zero applied and refusal", result.count, result.err)
+		}
+		var databaseError *pgconn.PgError
+		if !errors.As(result.err, &databaseError) || databaseError.Code != "55000" ||
+			databaseError.Message != "position-281 downgrade refused: resource rows retain Organization ownership" {
+			t.Fatalf("concurrent populated position-281 Down error = %#v / %v", databaseError, result.err)
+		}
+
+		var persistedOrganizationID uuid.UUID
+		if err := observer.QueryRow(ctx, `SELECT organization_id FROM public.schedules WHERE id = $1`, scheduleID).Scan(&persistedOrganizationID); err != nil {
+			t.Fatal(err)
+		}
+		if persistedOrganizationID != organizationID {
+			t.Fatalf("committed concurrent schedule owner = %s, want %s", persistedOrganizationID, organizationID)
+		}
+		assertResourceRootOwnershipSchema(t, ctx, testURL, true)
+		assertResourceRootOwnershipProvenance(t, ctx, testURL, position281, true)
+		if err := VerifyAll(ctx, testURL); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func postgresURLWithApplicationName(t *testing.T, databaseURL, applicationName string) string {
+	t.Helper()
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("application_name", applicationName)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
@@ -202,10 +333,11 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 	organizationStore := organization.NewStore(db)
 	organizationA := createResourceTestOrganization(t, ctx, organizationStore, "a")
 	organizationB := createResourceTestOrganization(t, ctx, organizationStore, "b")
-	contextA := createResourceTestHumanContext(t, ctx, db, organizationStore, organizationA.ID, "a")
-	contextB := createResourceTestHumanContext(t, ctx, db, organizationStore, organizationB.ID, "b")
-	defaultContext := createResourceTestDefaultHumanContext(t, ctx, db, organizationStore)
-	missingContext := permission.UserContext(ctx, uuid.New().String(), permission.RoleUser)
+	storeUserID := uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO public.users (id, name, email, role) VALUES ($1, 'Resource Store User', '', 'admin')`, storeUserID); err != nil {
+		t.Fatal(err)
+	}
+	storeContext := permission.UserContext(ctx, storeUserID.String(), permission.RoleAdmin)
 
 	serviceStore, err := service.NewStore(ctx, db)
 	if err != nil {
@@ -228,8 +360,8 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	policy, err := policyStore.CreatePolicyTx(contextA, nil, &escalation.Policy{
-		OrganizationID: organizationB.ID,
+	policy, err := policyStore.CreatePolicyTx(storeContext, nil, &escalation.Policy{
+		OrganizationID: organizationA.ID,
 		Name:           "Ownership Policy",
 		Description:    "ownership policy",
 		Repeat:         1,
@@ -237,8 +369,8 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serviceValue, err := serviceStore.CreateServiceTx(contextA, nil, &service.Service{
-		OrganizationID:     organizationB.ID,
+	serviceValue, err := serviceStore.CreateServiceTx(storeContext, nil, &service.Service{
+		OrganizationID:     organizationA.ID,
 		Name:               "Ownership Service",
 		Description:        "ownership service",
 		EscalationPolicyID: policy.ID,
@@ -246,8 +378,8 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scheduleValue, err := scheduleStore.Create(contextA, &schedule.Schedule{
-		OrganizationID: organizationB.ID,
+	scheduleValue, err := scheduleStore.Create(storeContext, &schedule.Schedule{
+		OrganizationID: organizationA.ID,
 		Name:           "Ownership Schedule",
 		Description:    "ownership schedule",
 		TimeZone:       time.UTC,
@@ -255,8 +387,8 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rotationValue, err := rotationStore.CreateRotationTx(contextA, nil, &rotation.Rotation{
-		OrganizationID: organizationB.ID,
+	rotationValue, err := rotationStore.CreateRotationTx(storeContext, nil, &rotation.Rotation{
+		OrganizationID: organizationA.ID,
 		Name:           "Ownership Rotation",
 		Description:    "ownership rotation",
 		Type:           rotation.TypeDaily,
@@ -273,28 +405,25 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 		"rotation": rotationValue.OrganizationID,
 	} {
 		if got != organizationA.ID {
-			t.Fatalf("created %s OrganizationID = %s, want request-bound %s", name, got, organizationA.ID)
+			t.Fatalf("created %s OrganizationID = %s, want explicit trusted owner %s", name, got, organizationA.ID)
 		}
 	}
 
-	assertResourceRootCreateDenied(t, "missing", missingContext, policy.ID, serviceStore, scheduleStore, rotationStore, policyStore)
-	assertResourceRootCreateDenied(t, "default", defaultContext, policy.ID, serviceStore, scheduleStore, rotationStore, policyStore)
-
 	for name, create := range map[string]func() error{
 		"policy": func() error {
-			_, err := policyStore.CreatePolicyTx(contextB, nil, &escalation.Policy{Name: policy.Name, Description: "duplicate", Repeat: 1})
+			_, err := policyStore.CreatePolicyTx(storeContext, nil, &escalation.Policy{OrganizationID: organizationB.ID, Name: policy.Name, Description: "duplicate", Repeat: 1})
 			return err
 		},
 		"service": func() error {
-			_, err := serviceStore.CreateServiceTx(contextB, nil, &service.Service{Name: serviceValue.Name, Description: "duplicate", EscalationPolicyID: policy.ID})
+			_, err := serviceStore.CreateServiceTx(storeContext, nil, &service.Service{OrganizationID: organizationB.ID, Name: serviceValue.Name, Description: "duplicate", EscalationPolicyID: policy.ID})
 			return err
 		},
 		"schedule": func() error {
-			_, err := scheduleStore.Create(contextB, &schedule.Schedule{Name: scheduleValue.Name, Description: "duplicate", TimeZone: time.UTC})
+			_, err := scheduleStore.Create(storeContext, &schedule.Schedule{OrganizationID: organizationB.ID, Name: scheduleValue.Name, Description: "duplicate", TimeZone: time.UTC})
 			return err
 		},
 		"rotation": func() error {
-			_, err := rotationStore.CreateRotationTx(contextB, nil, &rotation.Rotation{Name: rotationValue.Name, Description: "duplicate", Type: rotation.TypeDaily, Start: time.Now().UTC(), ShiftLength: 1})
+			_, err := rotationStore.CreateRotationTx(storeContext, nil, &rotation.Rotation{OrganizationID: organizationB.ID, Name: rotationValue.Name, Description: "duplicate", Type: rotation.TypeDaily, Start: time.Now().UTC(), ShiftLength: 1})
 			return err
 		},
 	} {
@@ -305,38 +434,38 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 
 	policy.OrganizationID = organizationB.ID
 	policy.Description = "ownership policy updated"
-	if err := policyStore.UpdatePolicyTx(contextB, nil, policy); err != nil {
+	if err := policyStore.UpdatePolicyTx(storeContext, nil, policy); err != nil {
 		t.Fatal(err)
 	}
 	serviceValue.OrganizationID = organizationB.ID
 	serviceValue.Description = "ownership service updated"
-	if err := serviceStore.UpdateTx(contextB, nil, serviceValue); err != nil {
+	if err := serviceStore.UpdateTx(storeContext, nil, serviceValue); err != nil {
 		t.Fatal(err)
 	}
 	scheduleValue.OrganizationID = organizationB.ID
 	scheduleValue.Description = "ownership schedule updated"
-	if err := scheduleStore.Update(contextB, scheduleValue); err != nil {
+	if err := scheduleStore.Update(storeContext, scheduleValue); err != nil {
 		t.Fatal(err)
 	}
 	rotationValue.OrganizationID = organizationB.ID
 	rotationValue.Description = "ownership rotation updated"
-	if err := rotationStore.UpdateRotationTx(contextB, nil, rotationValue); err != nil {
+	if err := rotationStore.UpdateRotationTx(storeContext, nil, rotationValue); err != nil {
 		t.Fatal(err)
 	}
 
-	loadedPolicy, err := policyStore.FindOnePolicyTx(contextB, nil, policy.ID)
+	loadedPolicy, err := policyStore.FindOnePolicyTx(storeContext, nil, policy.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedService, err := serviceStore.FindOne(contextB, serviceValue.ID)
+	loadedService, err := serviceStore.FindOne(storeContext, serviceValue.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedSchedule, err := scheduleStore.FindOne(contextB, scheduleValue.ID)
+	loadedSchedule, err := scheduleStore.FindOne(storeContext, scheduleValue.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedRotation, err := rotationStore.FindRotation(contextB, rotationValue.ID)
+	loadedRotation, err := rotationStore.FindRotation(storeContext, rotationValue.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +480,7 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 		}
 	}
 
-	assertResourceRootMaterializationPaths(t, contextB, db, organizationA.ID, policy.ID, serviceValue.ID, scheduleValue.ID, rotationValue.ID, serviceStore, scheduleStore, rotationStore, policyStore)
+	assertResourceRootMaterializationPaths(t, storeContext, db, organizationA.ID, policy.ID, serviceValue.ID, scheduleValue.ID, rotationValue.ID, serviceStore, scheduleStore, rotationStore, policyStore)
 }
 
 func TestResourceRootOrganizationOwnershipIsInternalOnly(t *testing.T) {
@@ -538,117 +667,6 @@ func createResourceTestOrganization(t *testing.T, ctx context.Context, store *or
 		t.Fatal(err)
 	}
 	return value
-}
-
-func createResourceTestHumanContext(t *testing.T, ctx context.Context, db *sql.DB, store *organization.Store, organizationID uuid.UUID, suffix string) context.Context {
-	t.Helper()
-	userID := uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO public.users (id, name, email, role) VALUES ($1, $2, '', 'user')`, userID, "Resource Store User "+strings.ToUpper(suffix)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CreateUserOrganizationAssignment(ctx, organization.CreateUserOrganizationAssignmentInput{
-		UserID: userID,
-		UserOrganizationAssignmentValues: organization.UserOrganizationAssignmentValues{
-			EffectiveOrganizationID:             organizationID,
-			EffectiveOrganizationClassification: organization.ClassificationNormal,
-			Role:                                organization.OrganizationRoleMember,
-			MappingOutcome:                      organization.MappingOutcomeExactlyOne,
-			Evaluation: organization.AssignmentEvaluation{
-				AuthoritativeEvaluatedAt: time.Date(2026, time.September, 10, 1, 0, 0, 0, time.UTC),
-				SourceConfigVersion:      "resource-store-" + suffix,
-				MatchedCount:             1,
-			},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	sessionID := uuid.New()
-	requestContext := permission.UserSourceContext(ctx, userID.String(), permission.RoleUser, &permission.SourceInfo{
-		Type: permission.SourceTypeAuthProvider,
-		ID:   sessionID.String(),
-	})
-	requester, err := auth.NewRequester(userID.String(), sessionID.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	requestContext = auth.WithRequester(requestContext, requester)
-	constructor, err := executioncontext.NewHumanExecutionContextConstructor(store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, err := constructor.Construct(requestContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return executioncontext.WithExecutionContext(requestContext, value)
-}
-
-func createResourceTestDefaultHumanContext(t *testing.T, ctx context.Context, db *sql.DB, store *organization.Store) context.Context {
-	t.Helper()
-	userID := uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO public.users (id, name, email, role) VALUES ($1, 'Resource Default User', '', 'user')`, userID); err != nil {
-		t.Fatal(err)
-	}
-	defaultID := uuid.MustParse(organization.DefaultOrganizationID)
-	if _, err := store.CreateUserOrganizationAssignment(ctx, organization.CreateUserOrganizationAssignmentInput{
-		UserID: userID,
-		UserOrganizationAssignmentValues: organization.UserOrganizationAssignmentValues{
-			EffectiveOrganizationID:             defaultID,
-			EffectiveOrganizationClassification: organization.ClassificationDefault,
-			Role:                                organization.OrganizationRoleNone,
-			MappingOutcome:                      organization.MappingOutcomeZero,
-			Evaluation: organization.AssignmentEvaluation{
-				AuthoritativeEvaluatedAt: time.Date(2026, time.September, 10, 1, 0, 0, 0, time.UTC),
-				SourceConfigVersion:      "resource-store-default",
-				MatchedCount:             0,
-			},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	sessionID := uuid.New()
-	requestContext := permission.UserSourceContext(ctx, userID.String(), permission.RoleUser, &permission.SourceInfo{Type: permission.SourceTypeAuthProvider, ID: sessionID.String()})
-	requester, err := auth.NewRequester(userID.String(), sessionID.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	requestContext = auth.WithRequester(requestContext, requester)
-	constructor, err := executioncontext.NewHumanExecutionContextConstructor(store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value, err := constructor.Construct(requestContext); !errors.Is(err, executioncontext.ErrHumanExecutionContextUnavailable) || value.Valid() {
-		t.Fatalf("Default Organization admission = (%#v, %v), want unavailable", value, err)
-	}
-	return requestContext
-}
-
-func assertResourceRootCreateDenied(t *testing.T, label string, ctx context.Context, policyID string, serviceStore *service.Store, scheduleStore *schedule.Store, rotationStore *rotation.Store, policyStore *escalation.Store) {
-	t.Helper()
-	checks := map[string]func() error{
-		"service": func() error {
-			_, err := serviceStore.CreateServiceTx(ctx, nil, &service.Service{Name: "Denied Service " + label, Description: "denied", EscalationPolicyID: policyID})
-			return err
-		},
-		"schedule": func() error {
-			_, err := scheduleStore.Create(ctx, &schedule.Schedule{Name: "Denied Schedule " + label, Description: "denied", TimeZone: time.UTC})
-			return err
-		},
-		"rotation": func() error {
-			_, err := rotationStore.CreateRotationTx(ctx, nil, &rotation.Rotation{Name: "Denied Rotation " + label, Description: "denied", Type: rotation.TypeDaily, Start: time.Now().UTC(), ShiftLength: 1})
-			return err
-		},
-		"policy": func() error {
-			_, err := policyStore.CreatePolicyTx(ctx, nil, &escalation.Policy{Name: "Denied Policy " + label, Description: "denied", Repeat: 1})
-			return err
-		},
-	}
-	for name, check := range checks {
-		err := check()
-		if err == nil || !strings.Contains(err.Error(), "normal Organization scoped authority is required") {
-			t.Fatalf("%s %s create error = %v, want fail-closed Organization authority denial", label, name, err)
-		}
-	}
 }
 
 func assertResourceRootMaterializationPaths(t *testing.T, ctx context.Context, db *sql.DB, organizationID uuid.UUID, policyID, serviceID, scheduleID, rotationID string, serviceStore *service.Store, scheduleStore *schedule.Store, rotationStore *rotation.Store, policyStore *escalation.Store) {

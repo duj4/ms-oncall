@@ -16,18 +16,18 @@ func TestUIKManyRules(t *testing.T) {
 
 	// Insert initial one label into db
 	const sql = `
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
-	insert into services (id, escalation_policy_id, name) 
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 	insert into integration_keys (id, service_id, name, type)
 	values
 		({{uuid "key"}}, {{uuid "sid"}}, 'key', 'universal');
 `
 
-	h := harness.NewHarnessWithFlags(t, sql, "universal-integration-key", expflag.FlagSet{expflag.UnivKeys})
+	h := harness.NewHarnessWithFlags(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1", expflag.FlagSet{expflag.UnivKeys})
 	defer h.Close()
 	type dest struct {
 		Type string            `json:"type"`

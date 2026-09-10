@@ -29,17 +29,17 @@ func TestScheduleRule(t *testing.T) {
 		({{uuid "u1"}}, {{uuid "cm1"}}, 0),
 		({{uuid "u2"}}, {{uuid "cm2"}}, 0);
 
-	insert into escalation_policies (id, name) 
+	insert into escalation_policies (id, name, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy');
+		({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 
 	insert into escalation_policy_steps (id, escalation_policy_id) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}});
 
-	insert into schedules (id, name, description, time_zone)
+	insert into schedules (id, name, description, time_zone, organization_id)
 	values
-		({{uuid "sched"}}, 'test', 'test', 'America/Chicago');
+		({{uuid "sched"}}, 'test', 'test', 'America/Chicago', {{smokeOrganizationID}});
 	
 	insert into schedule_rules (schedule_id, start_time, end_time, tgt_user_id)
 	values
@@ -50,16 +50,16 @@ func TestScheduleRule(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "sched"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 	
 	insert into schedule_on_call_users (schedule_id, start_time, end_time, user_id)
 	values
 		({{uuid "sched"}}, now()-'2 hours'::interval, now()-'1 hour'::interval, {{uuid "u1"}});
 
 `
-	h := harness.NewHarness(t, sql, "npcycle-indexes")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	sid := h.UUID("sid")

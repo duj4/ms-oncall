@@ -24,9 +24,9 @@ func TestGraphQLDedup(t *testing.T) {
 	values
 		({{uuid "user"}}, {{uuid "cm"}}, 0);
 
-	insert into escalation_policies (id, name, repeat)
+	insert into escalation_policies (id, name, repeat, organization_id)
 	values
-		({{uuid "eid"}}, 'esc policy', 5);
+		({{uuid "eid"}}, 'esc policy', 5, {{smokeOrganizationID}});
 	insert into escalation_policy_steps (id, escalation_policy_id, delay) 
 	values
 		({{uuid "esid"}}, {{uuid "eid"}}, 10);
@@ -34,12 +34,12 @@ func TestGraphQLDedup(t *testing.T) {
 	values 
 		({{uuid "esid"}}, {{uuid "user"}});
 
-	insert into services (id, escalation_policy_id, name) 
+	insert into services (id, escalation_policy_id, name, organization_id)
 	values
-		({{uuid "sid"}}, {{uuid "eid"}}, 'service');
+		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 `
 
-	h := harness.NewHarness(t, sql, "ids-to-uuids")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(query string) {

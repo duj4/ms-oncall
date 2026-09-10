@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/assignment"
-	"github.com/target/goalert/internal/executioncontextvalue"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/util/sqlutil"
@@ -184,9 +183,8 @@ func (s *Store) CreateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation) (
 	if err != nil {
 		return nil, err
 	}
-	organizationID, present := executioncontextvalue.EffectiveOrganizationID(ctx)
-	if !present {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	if n.OrganizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
 	}
 
 	stmt := s.createRotation
@@ -195,7 +193,6 @@ func (s *Store) CreateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation) (
 	}
 
 	n.ID = uuid.New().String()
-	n.OrganizationID = organizationID
 
 	_, err = stmt.ExecContext(ctx, n.ID, n.OrganizationID, n.Name, n.Description, n.Type, n.Start, n.ShiftLength, n.Start.Location().String())
 	if err != nil {

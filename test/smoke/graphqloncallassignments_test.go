@@ -26,8 +26,8 @@ var onCallAsnQueryTmpl = template.Must(template.New("query").Parse(`
 func TestGraphQLOnCallAssignments(t *testing.T) {
 	t.Parallel()
 
-	sql := `insert into escalation_policies (id, name) 
-					values ({{uuid "eid"}}, 'esc policy');`
+	sql := `insert into escalation_policies (id, name, organization_id)
+					values ({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});`
 
 	type onCallAssertion struct {
 		Service, EP, EPName, User string
@@ -43,7 +43,7 @@ func TestGraphQLOnCallAssignments(t *testing.T) {
 
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			h := harness.NewHarness(t, sql, "escalation-policy-step-reorder")
+			h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 			defer h.Close()
 
 			doQL := func(t *testing.T, query string, res interface{}) {

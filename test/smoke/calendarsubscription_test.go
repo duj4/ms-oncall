@@ -18,11 +18,11 @@ func TestCalendarSubscription(t *testing.T) {
 		insert into users (id, name, email)
 		values
 			({{uuid "user"}}, 'bob', 'joe');
-		insert into schedules (id, name, time_zone, description) 
+		insert into schedules (id, name, time_zone, description, organization_id)
 		values
-			({{uuid "schedId"}},'sched', 'America/Chicago', 'test description here');
+			({{uuid "schedId"}},'sched', 'America/Chicago', 'test description here', {{smokeOrganizationID}});
 	`
-	h := harness.NewHarness(t, sql, "calendar-subscriptions")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	doQL := func(query string, res interface{}) {

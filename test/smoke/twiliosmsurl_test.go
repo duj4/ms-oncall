@@ -26,9 +26,9 @@ func TestTwilioURL_SMS(t *testing.T) {
 		update users set alert_status_log_contact_method_id = {{uuid "cm1"}}
 		where id = {{uuid "user"}};
 
-		insert into escalation_policies (id, name) 
+		insert into escalation_policies (id, name, organization_id)
 		values
-			({{uuid "eid"}}, 'esc policy');
+			({{uuid "eid"}}, 'esc policy', {{smokeOrganizationID}});
 		insert into escalation_policy_steps (id, escalation_policy_id) 
 		values
 			({{uuid "esid"}}, {{uuid "eid"}});
@@ -36,16 +36,16 @@ func TestTwilioURL_SMS(t *testing.T) {
 		values 
 			({{uuid "esid"}}, {{uuid "user"}});
 
-		insert into services (id, escalation_policy_id, name) 
+		insert into services (id, escalation_policy_id, name, organization_id)
 		values
-			({{uuid "sid"}}, {{uuid "eid"}}, 'My Service');
+			({{uuid "sid"}}, {{uuid "eid"}}, 'My Service', {{smokeOrganizationID}});
 	`
 
 	const shortURL = "http://sho.rt"
 
 	t.Run("default URL in sms body", func(t *testing.T) {
 		t.Parallel()
-		h := harness.NewHarness(t, sql, "message-bundles")
+		h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 		defer h.Close()
 
 		tw := h.Twilio(t)
@@ -59,7 +59,7 @@ func TestTwilioURL_SMS(t *testing.T) {
 
 	t.Run("General.ShortURL in sms body", func(t *testing.T) {
 		t.Parallel()
-		h := harness.NewHarness(t, sql, "message-bundles")
+		h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 		defer h.Close()
 
 		tw := h.Twilio(t)
@@ -73,7 +73,7 @@ func TestTwilioURL_SMS(t *testing.T) {
 
 	t.Run("General.DisableSMSLinks with General.ShortURL set", func(t *testing.T) {
 		t.Parallel()
-		h := harness.NewHarness(t, sql, "message-bundles")
+		h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 		defer h.Close()
 
 		tw := h.Twilio(t)
@@ -89,7 +89,7 @@ func TestTwilioURL_SMS(t *testing.T) {
 
 	t.Run("General.DisableSMSLinks using default URL", func(t *testing.T) {
 		t.Parallel()
-		h := harness.NewHarness(t, sql, "message-bundles")
+		h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 		defer h.Close()
 
 		tw := h.Twilio(t)

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/escalation"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/notice"
@@ -165,9 +166,19 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 }
 
 func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.CreateEscalationPolicyInput) (pol *escalation.Policy, err error) {
+	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
+	if requestExecutionContext == nil {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
+	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
+		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	}
+
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		p := &escalation.Policy{
-			Name: input.Name,
+			OrganizationID: organizationID,
+			Name:           input.Name,
 		}
 		if input.Repeat != nil {
 			p.Repeat = *input.Repeat

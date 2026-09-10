@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/target/goalert/internal/executioncontextvalue"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/util/sqlutil"
+	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 
 	"github.com/google/uuid"
@@ -150,18 +150,15 @@ func (s *Store) CreateServiceTx(ctx context.Context, tx *sql.Tx, svc *Service) (
 	if err != nil {
 		return nil, err
 	}
-	organizationID, present := executioncontextvalue.EffectiveOrganizationID(ctx)
-	if !present {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
-	}
-
 	n, err := svc.Normalize()
 	if err != nil {
 		return nil, err
 	}
+	if n.OrganizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
+	}
 
 	n.ID = uuid.New().String()
-	n.OrganizationID = organizationID
 	stmt := s.insert
 	if tx != nil {
 		stmt = tx.Stmt(stmt)

@@ -201,10 +201,26 @@ var initDatas = []initData{
 			({{uuid "sched3"}}, '{"V1": {"OnCallNotificationRules": [{  "Extra3": "Field3", "ChannelID": {{uuidJSON "nc-invalid"}} }] } }');
 	`},
 	// Position 281 intentionally supports only clean initialization. The
-	// migration test's synthetic business-resource rows are disposable, so
-	// remove them before exercising the strict NOT NULL Up and empty-only Down.
+	// migration test's synthetic roots were inserted against historical schemas
+	// that do not yet have organization_id. Remove them and assert the clean
+	// boundary before exercising the strict NOT NULL Up and empty-only Down.
 	{Before: "ms-oncall-resource-root-organization-ownership-persistence-v1", SQL: `
 		TRUNCATE TABLE services, schedules, rotations, escalation_policies CASCADE;
+		DO $$
+		DECLARE
+			remaining_roots bigint;
+		BEGIN
+			SELECT
+				(SELECT count(*) FROM services) +
+				(SELECT count(*) FROM schedules) +
+				(SELECT count(*) FROM rotations) +
+				(SELECT count(*) FROM escalation_policies)
+			INTO remaining_roots;
+			IF remaining_roots <> 0 THEN
+				RAISE EXCEPTION 'position-281 migration smoke boundary retains % root rows', remaining_roots;
+			END IF;
+		END
+		$$;
 	`},
 }
 

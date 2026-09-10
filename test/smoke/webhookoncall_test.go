@@ -56,9 +56,9 @@ func TestWebhookOnCallNotification(t *testing.T) {
 	values 
 		({{uuid "user"}}, 'bob', 'joe');
 	
-	insert into schedules (id, name, time_zone) 
+	insert into schedules (id, name, time_zone, organization_id)
 	values
-		({{uuid "sid"}}, 'testschedule', 'UTC');
+		({{uuid "sid"}}, 'testschedule', 'UTC', {{smokeOrganizationID}});
 
 	insert into schedule_rules (id, schedule_id, sunday, monday, tuesday, wednesday, thursday, friday, saturday, start_time, end_time, tgt_user_id)
 	values
@@ -73,7 +73,7 @@ func TestWebhookOnCallNotification(t *testing.T) {
 		({{uuid "sid"}}, '{"V1":{"OnCallNotificationRules": [{"ChannelID": {{uuidJSON "webhook"}}, "Time": "00:00" }]}}');
 	`
 
-	h := harness.NewHarness(t, sql, "webhook-notification-channel-type")
+	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")
 	defer h.Close()
 
 	h.Trigger()
