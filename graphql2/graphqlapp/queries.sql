@@ -39,8 +39,15 @@ FROM
   JOIN escalation_policies ep ON ep.id = step.escalation_policy_id
   JOIN services svc ON svc.escalation_policy_id = ep.id
 WHERE
-  oc.user_id = $1
-  AND oc.end_time IS NULL;
+  oc.user_id = sqlc.arg(user_id)::uuid
+  AND oc.end_time IS NULL
+  AND (
+    sqlc.narg(organization_id)::uuid IS NULL
+    OR (
+      svc.organization_id = sqlc.narg(organization_id)::uuid
+      AND ep.organization_id = sqlc.narg(organization_id)::uuid
+    )
+  );
 
 -- name: ServiceAlertStats :many
 -- ServiceAlertStats returns statistics about alerts for a service.
@@ -80,4 +87,3 @@ WHERE
 GROUP BY
   service_id,
   status;
-

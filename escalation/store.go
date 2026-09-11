@@ -336,13 +336,17 @@ func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err != nil {
 		return err
 	}
-	err = validate.ManyUUID("EscalationPolicyID", ids, 50)
+	parsedIDs, err := validate.ParseManyUUID("EscalationPolicyID", ids, 50)
 	if err != nil {
 		return err
 	}
 
 	if len(ids) == 0 {
 		return nil
+	}
+	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
+	for _, id := range parsedIDs {
+		want[id] = struct{}{}
 	}
 	stmt := s.deletePolicy
 	args := []any{sqlutil.UUIDArray(ids)}
@@ -363,10 +367,6 @@ func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []stri
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return err
-	}
-	want := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		want[id] = struct{}{}
 	}
 	if rows != int64(len(want)) {
 		return sql.ErrNoRows

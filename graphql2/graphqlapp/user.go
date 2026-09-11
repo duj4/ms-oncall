@@ -40,8 +40,19 @@ func (a *User) OnCallOverview(ctx context.Context, obj *user.User) (*graphql2.On
 	if err != nil {
 		return nil, err
 	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	organizationScope := uuid.NullUUID{}
+	if organizationID != nil {
+		organizationScope = uuid.NullUUID{UUID: *organizationID, Valid: true}
+	}
 
-	data, err := gadb.New(a.DB).GQLUserOnCallOverview(ctx, id)
+	data, err := gadb.New(a.DB).GQLUserOnCallOverview(ctx, gadb.GQLUserOnCallOverviewParams{
+		UserID:         id,
+		OrganizationID: organizationScope,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return &graphql2.OnCallOverview{ServiceAssignments: []graphql2.OnCallServiceAssignment{}}, nil
 	}

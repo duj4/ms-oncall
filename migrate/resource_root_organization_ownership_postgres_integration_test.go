@@ -1017,6 +1017,63 @@ func TestPostgresResourceRootOrganizationScopedCRUD(t *testing.T) {
 			if _, err := adapter.get(deleteCross.ID, nil); err != nil {
 				t.Fatalf("cross delete removed resource: %v", err)
 			}
+
+			missingID := uuid.NewString()
+			if err := adapter.delete(nil, []string{missingID}, &organizationA.ID); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("scoped missing delete error = %v, want sql.ErrNoRows", err)
+			}
+
+			canonicalDuplicate, err := adapter.create(organizationA.ID, prefix+" Canonical Duplicate")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := adapter.delete(nil, []string{canonicalDuplicate.ID, canonicalDuplicate.ID}, &organizationA.ID); err != nil {
+				t.Fatalf("scoped canonical duplicate delete: %v", err)
+			}
+			if _, err := adapter.get(canonicalDuplicate.ID, nil); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("canonical duplicate delete lookup error = %v, want sql.ErrNoRows", err)
+			}
+
+			var caseVariantDuplicate scopedRootObservation
+			var lowerCaseID, upperCaseID string
+			for attempt := 0; attempt < 10 && lowerCaseID == upperCaseID; attempt++ {
+				caseVariantDuplicate, err = adapter.create(organizationA.ID, fmt.Sprintf("%s Case Variant %d", prefix, attempt))
+				if err != nil {
+					t.Fatal(err)
+				}
+				lowerCaseID = strings.ToLower(caseVariantDuplicate.ID)
+				upperCaseID = strings.ToUpper(caseVariantDuplicate.ID)
+			}
+			if lowerCaseID == upperCaseID {
+				t.Fatal("generated UUIDs contained no case-variant hexadecimal characters")
+			}
+			if err := adapter.delete(nil, []string{lowerCaseID, upperCaseID}, &organizationA.ID); err != nil {
+				t.Fatalf("scoped case-variant duplicate delete: %v", err)
+			}
+			if _, err := adapter.get(caseVariantDuplicate.ID, nil); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("case-variant duplicate delete lookup error = %v, want sql.ErrNoRows", err)
+			}
+
+			var internalDuplicate scopedRootObservation
+			lowerCaseID, upperCaseID = "", ""
+			for attempt := 0; attempt < 10 && lowerCaseID == upperCaseID; attempt++ {
+				internalDuplicate, err = adapter.create(organizationB.ID, fmt.Sprintf("%s Internal Case Variant %d", prefix, attempt))
+				if err != nil {
+					t.Fatal(err)
+				}
+				lowerCaseID = strings.ToLower(internalDuplicate.ID)
+				upperCaseID = strings.ToUpper(internalDuplicate.ID)
+			}
+			if lowerCaseID == upperCaseID {
+				t.Fatal("generated UUIDs contained no case-variant hexadecimal characters")
+			}
+			if err := adapter.delete(nil, []string{lowerCaseID, upperCaseID}, nil); err != nil {
+				t.Fatalf("unscoped internal case-variant duplicate delete: %v", err)
+			}
+			if _, err := adapter.get(internalDuplicate.ID, nil); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("internal case-variant duplicate delete lookup error = %v, want sql.ErrNoRows", err)
+			}
+
 			if err := adapter.delete(nil, []string{deleteOwn.ID}, &organizationA.ID); err != nil {
 				t.Fatal(err)
 			}

@@ -419,18 +419,9 @@ func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, 
 	if len(ids) == 0 {
 		return nil
 	}
-	err = validate.ManyUUID("ScheduleID", ids, 50)
+	parsedIDs, err := validate.ParseManyUUID("ScheduleID", ids, 50)
 	if err != nil {
 		return err
-	}
-
-	// Convert string IDs to UUIDs
-	uuids := make([]uuid.UUID, len(ids))
-	for i, id := range ids {
-		uuids[i], err = uuid.Parse(id)
-		if err != nil {
-			return err
-		}
 	}
 
 	db := gadb.New(store.db)
@@ -439,20 +430,20 @@ func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, 
 	}
 
 	if organizationID == nil {
-		return db.SchedDeleteMany(ctx, uuids)
+		return db.SchedDeleteMany(ctx, parsedIDs)
 	}
 	if *organizationID == uuid.Nil {
 		return validation.NewFieldError("OrganizationID", "must be specified")
 	}
 	rows, err := db.SchedDeleteManyScoped(ctx, gadb.SchedDeleteManyScopedParams{
-		Column1:        uuids,
+		Column1:        parsedIDs,
 		OrganizationID: *organizationID,
 	})
 	if err != nil {
 		return err
 	}
-	want := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
+	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
+	for _, id := range parsedIDs {
 		want[id] = struct{}{}
 	}
 	if rows != int64(len(want)) {

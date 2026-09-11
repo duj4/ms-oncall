@@ -2433,9 +2433,21 @@ FROM
   JOIN escalation_policies ep ON ep.id = step.escalation_policy_id
   JOIN services svc ON svc.escalation_policy_id = ep.id
 WHERE
-  oc.user_id = $1
+  oc.user_id = $1::uuid
   AND oc.end_time IS NULL
+  AND (
+    $2::uuid IS NULL
+    OR (
+      svc.organization_id = $2::uuid
+      AND ep.organization_id = $2::uuid
+    )
+  )
 `
+
+type GQLUserOnCallOverviewParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.NullUUID
+}
 
 type GQLUserOnCallOverviewRow struct {
 	ServiceID   uuid.UUID
@@ -2445,8 +2457,8 @@ type GQLUserOnCallOverviewRow struct {
 	StepNumber  int32
 }
 
-func (q *Queries) GQLUserOnCallOverview(ctx context.Context, userID uuid.UUID) ([]GQLUserOnCallOverviewRow, error) {
-	rows, err := q.db.QueryContext(ctx, gQLUserOnCallOverview, userID)
+func (q *Queries) GQLUserOnCallOverview(ctx context.Context, arg GQLUserOnCallOverviewParams) ([]GQLUserOnCallOverviewRow, error) {
+	rows, err := q.db.QueryContext(ctx, gQLUserOnCallOverview, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}

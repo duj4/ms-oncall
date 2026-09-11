@@ -287,12 +287,16 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 	if err != nil {
 		return err
 	}
-	err = validate.ManyUUID("ServiceID", ids, 50)
+	parsedIDs, err := validate.ParseManyUUID("ServiceID", ids, 50)
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
 		return nil
+	}
+	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
+	for _, id := range parsedIDs {
+		want[id] = struct{}{}
 	}
 	stmt := s.delete
 	args := []any{sqlutil.UUIDArray(ids)}
@@ -313,10 +317,6 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return err
-	}
-	want := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		want[id] = struct{}{}
 	}
 	if rows != int64(len(want)) {
 		return sql.ErrNoRows

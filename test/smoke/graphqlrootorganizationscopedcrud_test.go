@@ -116,10 +116,17 @@ func requireScopedSmokeIDs(t *testing.T, connection scopedSmokeRootConnection, w
 	require.Equal(t, want, got)
 }
 
+func scopedSmokeQueryExpectNoRows(t *testing.T, h *harness.Harness, query string) *harness.QLResponse {
+	t.Helper()
+	wait := h.ExpectBackendError("sql: no rows in result set")
+	response := h.GraphQLQueryT(t, query)
+	wait()
+	return response
+}
+
 func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 	h := harness.NewHarness(t, scopedRootCRUDSQL, "")
 	defer h.Close()
-	h.IgnoreErrorsWith("sql: no rows in result set")
 
 	// Ensure the canonical Org A human exists before adding global-user schedule
 	// assignments that deliberately span both root Organizations.
@@ -289,17 +296,24 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 	t.Run("update scopes lock and final write", func(t *testing.T) {
 		updates := []struct {
 			name, mutation, table, ownID, crossID, ownName, crossName string
+			expectNoRowsLog                                           bool
 		}{
-			{name: "service", mutation: "updateService", table: "services", ownID: h.UUID("service-a1"), crossID: h.UUID("service-b1"), ownName: "Human Scoped Service 01 Updated", crossName: "Human Scoped Service 02"},
+			{name: "service", mutation: "updateService", table: "services", ownID: h.UUID("service-a1"), crossID: h.UUID("service-b1"), ownName: "Human Scoped Service 01 Updated", crossName: "Human Scoped Service 02", expectNoRowsLog: true},
 			{name: "schedule", mutation: "updateSchedule", table: "schedules", ownID: h.UUID("schedule-a1"), crossID: h.UUID("schedule-b1"), ownName: "Human Scoped Schedule 01 Updated", crossName: "Human Scoped Schedule 02"},
 			{name: "rotation", mutation: "updateRotation", table: "rotations", ownID: h.UUID("rotation-a1"), crossID: h.UUID("rotation-b1"), ownName: "Human Scoped Rotation 01 Updated", crossName: "Human Scoped Rotation 02"},
-			{name: "policy", mutation: "updateEscalationPolicy", table: "escalation_policies", ownID: h.UUID("policy-a1"), crossID: h.UUID("policy-b1"), ownName: "Human Scoped Policy 01 Updated", crossName: "Human Scoped Policy 02"},
+			{name: "policy", mutation: "updateEscalationPolicy", table: "escalation_policies", ownID: h.UUID("policy-a1"), crossID: h.UUID("policy-b1"), ownName: "Human Scoped Policy 01 Updated", crossName: "Human Scoped Policy 02", expectNoRowsLog: true},
 		}
 		for _, update := range updates {
 			t.Run(update.name, func(t *testing.T) {
 				ownResponse := h.GraphQLQueryT(t, fmt.Sprintf(`mutation { result: %s(input: {id: %q, name: %q}) }`, update.mutation, update.ownID, update.ownName))
 				require.Empty(t, ownResponse.Errors)
-				crossResponse := h.GraphQLQueryT(t, fmt.Sprintf(`mutation { result: %s(input: {id: %q, name: %q}) }`, update.mutation, update.crossID, update.crossName+" Mutated"))
+				crossQuery := fmt.Sprintf(`mutation { result: %s(input: {id: %q, name: %q}) }`, update.mutation, update.crossID, update.crossName+" Mutated")
+				var crossResponse *harness.QLResponse
+				if update.expectNoRowsLog {
+					crossResponse = scopedSmokeQueryExpectNoRows(t, h, crossQuery)
+				} else {
+					crossResponse = h.GraphQLQueryT(t, crossQuery)
+				}
 				require.NotEmpty(t, crossResponse.Errors)
 
 				for _, check := range []struct {
@@ -330,11 +344,11 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 		}
 		for _, deletion := range deletes {
 			t.Run(deletion.name, func(t *testing.T) {
-				crossResponse := h.GraphQLQueryT(t, fmt.Sprintf(`mutation { deleteAll(input: [{id: %q, type: %s}]) }`, deletion.crossID, deletion.targetType))
+				crossResponse := scopedSmokeQueryExpectNoRows(t, h, fmt.Sprintf(`mutation { deleteAll(input: [{id: %q, type: %s}]) }`, deletion.crossID, deletion.targetType))
 				require.NotEmpty(t, crossResponse.Errors)
 				require.Equal(t, 1, scopedSmokeRowCount(t, h, deletion.table, deletion.crossID))
 
-				mixedResponse := h.GraphQLQueryT(t, fmt.Sprintf(`mutation { deleteAll(input: [{id: %q, type: %s}, {id: %q, type: %s}]) }`, deletion.mixedOwnID, deletion.targetType, deletion.mixedCrossID, deletion.targetType))
+				mixedResponse := scopedSmokeQueryExpectNoRows(t, h, fmt.Sprintf(`mutation { deleteAll(input: [{id: %q, type: %s}, {id: %q, type: %s}]) }`, deletion.mixedOwnID, deletion.targetType, deletion.mixedCrossID, deletion.targetType))
 				require.NotEmpty(t, mixedResponse.Errors)
 				require.Equal(t, 1, scopedSmokeRowCount(t, h, deletion.table, deletion.mixedOwnID))
 				require.Equal(t, 1, scopedSmokeRowCount(t, h, deletion.table, deletion.mixedCrossID))
@@ -382,14 +396,25 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 		require.Len(t, result.ScheduleSearch.Nodes, 2)
 		require.Len(t, result.RotationSearch.Nodes, 2)
 
-		for _, crossQuery := range []string{
-			fmt.Sprintf(`query { destinationFieldValueName(input: {destType: "builtin-schedule", fieldID: "schedule_id", value: %q}) }`, h.UUID("schedule-b1")),
-			fmt.Sprintf(`query { destinationDisplayInfo(input: {type: "builtin-schedule", args: {schedule_id: %q}}) { text } }`, h.UUID("schedule-b1")),
-			fmt.Sprintf(`query { destinationFieldValueName(input: {destType: "builtin-rotation", fieldID: "rotation_id", value: %q}) }`, h.UUID("rotation-b1")),
-			fmt.Sprintf(`query { destinationDisplayInfo(input: {type: "builtin-rotation", args: {rotation_id: %q}}) { text } }`, h.UUID("rotation-b1")),
+		for _, crossQuery := range []struct {
+			name            string
+			query           string
+			expectNoRowsLog bool
+		}{
+			{name: "schedule field value", query: fmt.Sprintf(`query { destinationFieldValueName(input: {destType: "builtin-schedule", fieldID: "schedule_id", value: %q}) }`, h.UUID("schedule-b1")), expectNoRowsLog: true},
+			{name: "schedule display info", query: fmt.Sprintf(`query { destinationDisplayInfo(input: {type: "builtin-schedule", args: {schedule_id: %q}}) { text } }`, h.UUID("schedule-b1"))},
+			{name: "rotation field value", query: fmt.Sprintf(`query { destinationFieldValueName(input: {destType: "builtin-rotation", fieldID: "rotation_id", value: %q}) }`, h.UUID("rotation-b1")), expectNoRowsLog: true},
+			{name: "rotation display info", query: fmt.Sprintf(`query { destinationDisplayInfo(input: {type: "builtin-rotation", args: {rotation_id: %q}}) { text } }`, h.UUID("rotation-b1"))},
 		} {
-			crossResponse := h.GraphQLQueryT(t, crossQuery)
-			require.NotEmpty(t, crossResponse.Errors)
+			t.Run(crossQuery.name, func(t *testing.T) {
+				var crossResponse *harness.QLResponse
+				if crossQuery.expectNoRowsLog {
+					crossResponse = scopedSmokeQueryExpectNoRows(t, h, crossQuery.query)
+				} else {
+					crossResponse = h.GraphQLQueryT(t, crossQuery.query)
+				}
+				require.NotEmpty(t, crossResponse.Errors)
+			})
 		}
 	})
 
@@ -458,6 +483,166 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 		require.Equal(t, h.UUID("rotation-b1"), result.Data.RotationValue.ID)
 		require.Equal(t, h.UUID("policy-b1"), result.Data.PolicyValue.ID)
 	})
+}
+
+type scopedSmokeOnCallOverview struct {
+	ServiceCount       int `json:"serviceCount"`
+	ServiceAssignments []struct {
+		StepNumber           int    `json:"stepNumber"`
+		EscalationPolicyID   string `json:"escalationPolicyID"`
+		EscalationPolicyName string `json:"escalationPolicyName"`
+		ServiceID            string `json:"serviceID"`
+		ServiceName          string `json:"serviceName"`
+	} `json:"serviceAssignments"`
+}
+
+func TestGraphQLUserOnCallOverviewOrganizationScoped(t *testing.T) {
+	h := harness.NewHarness(t, scopedRootCRUDSQL, "")
+	defer h.Close()
+
+	// Materialize the canonical Org A human before referring to it from the
+	// current on-call table.
+	h.GraphQLToken(harness.DefaultGraphQLAdminUserID)
+	_, err := h.App().DB().Exec(`
+		INSERT INTO escalation_policy_steps (id, escalation_policy_id, delay)
+		VALUES ($1, $2, 0)
+	`, h.UUID("policy-b1-step"), h.UUID("policy-b1"))
+	require.NoError(t, err)
+	setCurrentOnCall := func() {
+		t.Helper()
+		_, err := h.App().DB().Exec(`
+			DELETE FROM ep_step_on_call_users
+			WHERE user_id IN ($1, $2)
+		`, harness.DefaultGraphQLAdminUserID, h.UUID("scoped-user-b"))
+		require.NoError(t, err)
+		_, err = h.App().DB().Exec(`
+			INSERT INTO ep_step_on_call_users (ep_step_id, user_id)
+			VALUES ($1, $2), ($3, $4)
+		`, h.UUID("policy-a1-step"), harness.DefaultGraphQLAdminUserID, h.UUID("policy-b1-step"), h.UUID("scoped-user-b"))
+		require.NoError(t, err)
+	}
+	setCurrentOnCall()
+
+	humanResponse := h.GraphQLQueryT(t, fmt.Sprintf(`
+		query {
+			sameUser: user(id: %q) {
+				onCallOverview {
+					serviceCount
+					serviceAssignments { stepNumber escalationPolicyID escalationPolicyName serviceID serviceName }
+				}
+			}
+			crossUser: user(id: %q) {
+				onCallOverview {
+					serviceCount
+					serviceAssignments { stepNumber escalationPolicyID escalationPolicyName serviceID serviceName }
+				}
+			}
+			ownService: service(id: %q) { id name }
+			ownPolicy: escalationPolicy(id: %q) { id name }
+			crossService: service(id: %q) { id name }
+			crossPolicy: escalationPolicy(id: %q) { id name }
+		}
+	`, harness.DefaultGraphQLAdminUserID, h.UUID("scoped-user-b"), h.UUID("service-a1"), h.UUID("policy-a1"), h.UUID("service-b1"), h.UUID("policy-b1")))
+	require.Empty(t, humanResponse.Errors)
+	var humanResult struct {
+		SameUser struct {
+			OnCallOverview scopedSmokeOnCallOverview `json:"onCallOverview"`
+		} `json:"sameUser"`
+		CrossUser struct {
+			OnCallOverview scopedSmokeOnCallOverview `json:"onCallOverview"`
+		} `json:"crossUser"`
+		OwnService   *struct{ ID, Name string } `json:"ownService"`
+		OwnPolicy    *struct{ ID, Name string } `json:"ownPolicy"`
+		CrossService *struct{ ID, Name string } `json:"crossService"`
+		CrossPolicy  *struct{ ID, Name string } `json:"crossPolicy"`
+	}
+	require.NoError(t, json.Unmarshal(humanResponse.Data, &humanResult))
+	require.NotNil(t, humanResult.OwnService)
+	require.Equal(t, h.UUID("service-a1"), humanResult.OwnService.ID)
+	require.NotNil(t, humanResult.OwnPolicy)
+	require.Equal(t, h.UUID("policy-a1"), humanResult.OwnPolicy.ID)
+	require.Nil(t, humanResult.CrossService)
+	require.Nil(t, humanResult.CrossPolicy)
+
+	require.Equal(t, 3, humanResult.SameUser.OnCallOverview.ServiceCount)
+	sameOrgServiceIDs := make([]string, 0, len(humanResult.SameUser.OnCallOverview.ServiceAssignments))
+	for _, assignment := range humanResult.SameUser.OnCallOverview.ServiceAssignments {
+		sameOrgServiceIDs = append(sameOrgServiceIDs, assignment.ServiceID)
+		require.Equal(t, h.UUID("policy-a1"), assignment.EscalationPolicyID)
+		require.Equal(t, "Human Scoped Policy 01", assignment.EscalationPolicyName)
+	}
+	require.ElementsMatch(t, []string{h.UUID("service-a1"), h.UUID("service-delete-a"), h.UUID("service-mixed-a")}, sameOrgServiceIDs)
+	require.Zero(t, humanResult.CrossUser.OnCallOverview.ServiceCount)
+	require.Empty(t, humanResult.CrossUser.OnCallOverview.ServiceAssignments)
+
+	const queryDocument = `
+		query OnCallCompatibility($userID: ID!) {
+			user(id: $userID) {
+				onCallOverview {
+					serviceCount
+					serviceAssignments { stepNumber escalationPolicyID escalationPolicyName serviceID serviceName }
+				}
+			}
+		}
+	`
+	createResponse := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
+		mutation CreateOnCallCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
+			createGQLAPIKey(input: {
+				name: "on-call-overview-scope-compatibility"
+				description: "on-call overview scope compatibility smoke"
+				expiresAt: $expires
+				role: admin
+				query: $query
+			}) { token }
+		}
+	`, "CreateOnCallCompatibilityKey", map[string]any{
+		"expires": time.Now().Add(time.Hour).Format(time.RFC3339),
+		"query":   queryDocument,
+	})
+	require.Empty(t, createResponse.Errors)
+	var created struct {
+		CreateGQLAPIKey struct{ Token string }
+	}
+	require.NoError(t, json.Unmarshal(createResponse.Data, &created))
+	require.NotEmpty(t, created.CreateGQLAPIKey.Token)
+
+	requestBody, err := json.Marshal(map[string]any{
+		"operationName": "OnCallCompatibility",
+		"variables":     map[string]string{"userID": h.UUID("scoped-user-b")},
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, h.URL()+"/api/graphql", bytes.NewReader(requestBody))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+created.CreateGQLAPIKey.Token)
+	req.Header.Set("Content-Type", "application/json")
+	setCurrentOnCall()
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var compatibilityResult struct {
+		Data struct {
+			User struct {
+				OnCallOverview scopedSmokeOnCallOverview `json:"onCallOverview"`
+			} `json:"user"`
+		} `json:"data"`
+		Errors []struct{ Message string } `json:"errors"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&compatibilityResult))
+	require.Empty(t, compatibilityResult.Errors)
+	require.Equal(t, 4, compatibilityResult.Data.User.OnCallOverview.ServiceCount)
+	nonHumanServiceIDs := make([]string, 0, len(compatibilityResult.Data.User.OnCallOverview.ServiceAssignments))
+	for _, assignment := range compatibilityResult.Data.User.OnCallOverview.ServiceAssignments {
+		nonHumanServiceIDs = append(nonHumanServiceIDs, assignment.ServiceID)
+		require.Equal(t, h.UUID("policy-b1"), assignment.EscalationPolicyID)
+	}
+	require.ElementsMatch(t, []string{
+		h.UUID("service-a2"),
+		h.UUID("service-b1"),
+		h.UUID("service-delete-b"),
+		h.UUID("service-mixed-b"),
+	}, nonHumanServiceIDs)
 }
 
 func scopedSmokeRowCount(t *testing.T, h *harness.Harness, table, id string) int {
