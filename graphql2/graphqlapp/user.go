@@ -135,6 +135,11 @@ func (a *User) OnCallSteps(ctx context.Context, obj *user.User) ([]escalation.St
 }
 
 func (a *User) AssignedSchedules(ctx context.Context, obj *user.User) (schedules []schedule.Schedule, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
 		err = validate.UUID("UserID", obj.ID)
 		if err != nil {
@@ -150,7 +155,7 @@ func (a *User) AssignedSchedules(ctx context.Context, obj *user.User) (schedules
 		}
 
 		// get list of schedules user is on as a direct assignment, or indirectly from a rotation
-		schedules, err = (*App)(a).ScheduleStore.FindManyByUserID(ctx, tx, uid)
+		schedules, err = (*App)(a).ScheduleStore.FindManyByUserID(ctx, tx, uid, organizationID)
 		if err != nil {
 			return err
 		}

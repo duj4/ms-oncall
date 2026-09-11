@@ -132,7 +132,7 @@ func addInputError(ctx context.Context, err error) {
 //
 // In the future this will be a call to the plugin system.
 func (a *App) ValidateDestination(ctx context.Context, fieldName string, dest *gadb.DestV1) (err error) {
-	err = a.DestReg.ValidateDest(ctx, *dest)
+	err = a.validateDestination(ctx, *dest)
 	if errors.Is(err, nfydest.ErrUnknownType) {
 		message := fmt.Sprintf("unsupported destination type: %s", dest.Type)
 		if dest.Type == "" {

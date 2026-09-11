@@ -49,7 +49,7 @@ func (s *Store) TypeInfo(ctx context.Context) (*nfydest.TypeInfo, error) {
 func (s *Store) DisplayInfo(ctx context.Context, args map[string]string) (*nfydest.DisplayInfo, error) {
 	cfg := config.FromContext(ctx)
 
-	r, err := s.FindRotation(ctx, args[FieldRotationID])
+	r, err := s.FindRotation(ctx, args[FieldRotationID], nil)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *Store) DisplayInfo(ctx context.Context, args map[string]string) (*nfyde
 func (s *Store) ValidateField(ctx context.Context, fieldID, value string) error {
 	switch fieldID {
 	case FieldRotationID:
-		_, err := s.FindRotation(ctx, value)
+		_, err := s.FindRotation(ctx, value, nil)
 		return err
 	}
 
@@ -75,7 +75,7 @@ func (s *Store) ValidateField(ctx context.Context, fieldID, value string) error 
 func (s *Store) FieldLabel(ctx context.Context, fieldID, value string) (string, error) {
 	switch fieldID {
 	case FieldRotationID:
-		r, err := s.FindRotation(ctx, value)
+		r, err := s.FindRotation(ctx, value, nil)
 		if err != nil {
 			return "", err
 		}

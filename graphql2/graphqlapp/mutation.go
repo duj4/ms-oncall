@@ -15,6 +15,7 @@ import (
 	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
 
@@ -169,10 +170,33 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 }
 
 func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
+	var hasRootTarget bool
+	for _, tgt := range input {
+		switch tgt.TargetType() {
+		case assignment.TargetTypeService,
+			assignment.TargetTypeSchedule,
+			assignment.TargetTypeRotation,
+			assignment.TargetTypeEscalationPolicy:
+			hasRootTarget = true
+		}
+		if hasRootTarget {
+			break
+		}
+	}
+
+	var organizationID *uuid.UUID
+	if hasRootTarget {
+		var err error
+		organizationID, err = rootStoreOrganizationID(ctx)
+		if err != nil {
+			return false, err
+		}
+	}
+
 	// Retry because deleting frequently can cause a deadlock
 	// under heavy load.
 	err := retry.DoTemporaryError(func(int) error {
-		return a.tryDeleteAll(ctx, input)
+		return a.tryDeleteAll(ctx, input, organizationID)
 	},
 		retry.Log(ctx),
 		retry.Limit(5),
@@ -182,7 +206,7 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 	return err == nil, err
 }
 
-func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget) error {
+func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, organizationID *uuid.UUID) error {
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -220,17 +244,17 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeUser:
 			err = errors.Wrap(a.UserStore.DeleteManyTx(ctx, tx, ids), "delete users")
 		case assignment.TargetTypeService:
-			err = errors.Wrap(a.ServiceStore.DeleteManyTx(ctx, tx, ids), "delete services")
+			err = errors.Wrap(a.ServiceStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete services")
 		case assignment.TargetTypeEscalationPolicy:
-			err = errors.Wrap(a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids), "delete escalation policies")
+			err = errors.Wrap(a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, organizationID), "delete escalation policies")
 		case assignment.TargetTypeIntegrationKey:
 			err = errors.Wrap(a.IntKeyStore.DeleteMany(ctx, tx, ids), "delete integration keys")
 		case assignment.TargetTypeSchedule:
-			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids), "delete schedules")
+			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete schedules")
 		case assignment.TargetTypeCalendarSubscription:
 			err = errors.Wrap(a.CalSubStore.DeleteTx(ctx, tx, permission.UserID(ctx), ids...), "delete calendar subscriptions")
 		case assignment.TargetTypeRotation:
-			err = errors.Wrap(a.RotationStore.DeleteManyTx(ctx, tx, ids), "delete rotations")
+			err = errors.Wrap(a.RotationStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete rotations")
 		case assignment.TargetTypeContactMethod:
 			err = errors.Wrap(a.CMStore.Delete(ctx, tx, ids...), "delete contact methods")
 		case assignment.TargetTypeNotificationRule:

@@ -34,14 +34,20 @@ type Store struct {
 	reg     *nfydest.Registry
 	slackFn func(ctx context.Context, channelID string) (*slack.Channel, error)
 
-	findOnePolicy          *sql.Stmt
-	findOnePolicyForUpdate *sql.Stmt
-	findManyPolicies       *sql.Stmt
+	findOnePolicy             *sql.Stmt
+	findOnePolicyOrg          *sql.Stmt
+	findOnePolicyForUpdate    *sql.Stmt
+	findOnePolicyForUpdateOrg *sql.Stmt
+	findManyPolicies          *sql.Stmt
+	findManyPoliciesOrg       *sql.Stmt
 
-	findAllPoliciesBySchedule *sql.Stmt
-	createPolicy              *sql.Stmt
-	updatePolicy              *sql.Stmt
-	deletePolicy              *sql.Stmt
+	findAllPoliciesBySchedule    *sql.Stmt
+	findAllPoliciesByScheduleOrg *sql.Stmt
+	createPolicy                 *sql.Stmt
+	updatePolicy                 *sql.Stmt
+	updatePolicyOrg              *sql.Stmt
+	deletePolicy                 *sql.Stmt
+	deletePolicyOrg              *sql.Stmt
 
 	findOneStepForUpdate *sql.Stmt
 	findAllSteps         *sql.Stmt
@@ -76,7 +82,22 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 				fav.tgt_escalation_policy_id = e.id AND fav.user_id = $2
 			WHERE e.id = $1
 		`),
-		findOnePolicyForUpdate: p.P(`SELECT id, organization_id, name, description, repeat FROM escalation_policies WHERE id = $1 FOR UPDATE`),
+		findOnePolicyOrg: p.P(`
+			SELECT
+				e.id,
+				e.organization_id,
+				e.name,
+				e.description,
+				e.repeat,
+				fav is distinct from null
+			FROM
+				escalation_policies e
+			LEFT JOIN user_favorites fav ON
+				fav.tgt_escalation_policy_id = e.id AND fav.user_id = $2
+			WHERE e.id = $1 AND e.organization_id = $3
+		`),
+		findOnePolicyForUpdate:    p.P(`SELECT id, organization_id, name, description, repeat FROM escalation_policies WHERE id = $1 FOR UPDATE`),
+		findOnePolicyForUpdateOrg: p.P(`SELECT id, organization_id, name, description, repeat FROM escalation_policies WHERE id = $1 AND organization_id = $2 FOR UPDATE`),
 		findManyPolicies: p.P(`
             SELECT
                 e.id,
@@ -89,8 +110,22 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
                 escalation_policies e
             LEFT JOIN user_favorites fav ON
                 fav.tgt_escalation_policy_id = e.id AND fav.user_id = $2
-            WHERE e.id = any($1)
-        `),
+			WHERE e.id = any($1)
+		`),
+		findManyPoliciesOrg: p.P(`
+			SELECT
+				e.id,
+				e.organization_id,
+				e.name,
+				e.description,
+				e.repeat,
+				fav is distinct from null
+			FROM
+				escalation_policies e
+			LEFT JOIN user_favorites fav ON
+				fav.tgt_escalation_policy_id = e.id AND fav.user_id = $2
+			WHERE e.id = any($1) AND e.organization_id = $3
+		`),
 		findAllPoliciesBySchedule: p.P(`
 			SELECT DISTINCT
 				step.escalation_policy_id,
@@ -107,9 +142,44 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 			WHERE
 				act.schedule_id = $1
 		`),
-		createPolicy: p.P(`INSERT INTO escalation_policies (id, organization_id, name, description, repeat) VALUES ($1, $2, $3, $4, $5)`),
-		updatePolicy: p.P(`UPDATE escalation_policies SET name = $2, description = $3, repeat = $4 WHERE id = $1`),
-		deletePolicy: p.P(`DELETE FROM escalation_policies WHERE id = any($1)`),
+		findAllPoliciesByScheduleOrg: p.P(`
+			SELECT DISTINCT
+				step.escalation_policy_id,
+				pol.organization_id,
+				pol.name,
+				pol.description,
+				pol.repeat
+			FROM
+				escalation_policy_actions as act
+			JOIN
+				escalation_policy_steps as step on step.id = act.escalation_policy_step_id
+			JOIN
+				escalation_policies as pol on pol.id = step.escalation_policy_id
+			WHERE
+				act.schedule_id = $1 AND
+				pol.organization_id = $2
+		`),
+		createPolicy:    p.P(`INSERT INTO escalation_policies (id, organization_id, name, description, repeat) VALUES ($1, $2, $3, $4, $5)`),
+		updatePolicy:    p.P(`UPDATE escalation_policies SET name = $2, description = $3, repeat = $4 WHERE id = $1`),
+		updatePolicyOrg: p.P(`UPDATE escalation_policies SET name = $2, description = $3, repeat = $4 WHERE id = $1 AND organization_id = $5`),
+		deletePolicy:    p.P(`DELETE FROM escalation_policies WHERE id = any($1)`),
+		deletePolicyOrg: p.P(`
+			DELETE FROM escalation_policies pol
+			WHERE pol.id = any($1)
+				AND pol.organization_id = $2
+				AND (
+					SELECT count(*)
+					FROM (
+						SELECT DISTINCT requested_id
+						FROM unnest($1::uuid[]) AS requested(requested_id)
+					) requested
+				) = (
+					SELECT count(*)
+					FROM escalation_policies matched
+					WHERE matched.id = any($1)
+						AND matched.organization_id = $2
+				)
+		`),
 
 		findOneStepForUpdate: p.P(`SELECT id, escalation_policy_id, delay, step_number FROM escalation_policy_steps WHERE id = $1 FOR UPDATE`),
 		findAllSteps:         p.P(`SELECT id, escalation_policy_id, delay, step_number FROM escalation_policy_steps WHERE escalation_policy_id = $1 ORDER BY step_number`),
@@ -141,7 +211,7 @@ func (s *Store) logChange(ctx context.Context, tx *sql.Tx, policyID string) {
 }
 
 // FindManyPolicies returns escalation policies for the given IDs.
-func (s *Store) FindManyPolicies(ctx context.Context, ids []string) ([]Policy, error) {
+func (s *Store) FindManyPolicies(ctx context.Context, ids []string, organizationID *uuid.UUID) ([]Policy, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -152,7 +222,16 @@ func (s *Store) FindManyPolicies(ctx context.Context, ids []string) ([]Policy, e
 		return nil, err
 	}
 
-	rows, err := s.findManyPolicies.QueryContext(ctx, sqlutil.UUIDArray(ids), permission.UserNullUUID(ctx))
+	stmt := s.findManyPolicies
+	args := []any{sqlutil.UUIDArray(ids), permission.UserNullUUID(ctx)}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findManyPoliciesOrg
+		args = append(args, *organizationID)
+	}
+	rows, err := stmt.QueryContext(ctx, args...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -204,7 +283,7 @@ func (s *Store) CreatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) (*Pol
 }
 
 // UpdatePolicyTx will update a single escalation policy.
-func (s *Store) UpdatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) error {
+func (s *Store) UpdatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy, organizationID *uuid.UUID) error {
 	err := validate.UUID("EscalationPolicyID", p.ID)
 	if err != nil {
 		return err
@@ -220,13 +299,30 @@ func (s *Store) UpdatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) error
 	}
 
 	stmt := s.updatePolicy
+	args := []any{n.ID, n.Name, n.Description, n.Repeat}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.updatePolicyOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	_, err = stmt.ExecContext(ctx, n.ID, n.Name, n.Description, n.Repeat)
+	result, err := stmt.ExecContext(ctx, args...)
 	if err != nil {
 		return err
+	}
+	if organizationID != nil {
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return sql.ErrNoRows
+		}
 	}
 
 	s.logChange(ctx, nil, p.ID)
@@ -235,7 +331,7 @@ func (s *Store) UpdatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy) error
 }
 
 // DeleteManyPoliciesTx deletes multiple policies in a single transaction.
-func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []string) error {
+func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return err
@@ -245,16 +341,41 @@ func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []stri
 		return err
 	}
 
+	if len(ids) == 0 {
+		return nil
+	}
 	stmt := s.deletePolicy
+	args := []any{sqlutil.UUIDArray(ids)}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.deletePolicyOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
-	_, err = stmt.ExecContext(ctx, sqlutil.UUIDArray(ids))
-	return err
+	result, err := stmt.ExecContext(ctx, args...)
+	if err != nil || organizationID == nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	if rows != int64(len(want)) {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // FindOnePolicyTx returns a policy by ID.
-func (s *Store) FindOnePolicyTx(ctx context.Context, tx *sql.Tx, id string) (*Policy, error) {
+func (s *Store) FindOnePolicyTx(ctx context.Context, tx *sql.Tx, id string, organizationID *uuid.UUID) (*Policy, error) {
 	err := validate.UUID("EscalationPolicyID", id)
 	if err != nil {
 		return nil, err
@@ -266,18 +387,26 @@ func (s *Store) FindOnePolicyTx(ctx context.Context, tx *sql.Tx, id string) (*Po
 	}
 
 	stmt := s.findOnePolicy
+	args := []any{id, permission.UserNullUUID(ctx)}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findOnePolicyOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	row := stmt.QueryRowContext(ctx, id, permission.UserNullUUID(ctx))
+	row := stmt.QueryRowContext(ctx, args...)
 	var p Policy
 	err = row.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.Repeat, &p.isUserFavorite)
 	return &p, err
 }
 
 // FindOnePolicyForUpdateTx returns a single policy locked to the tx for updating.
-func (s *Store) FindOnePolicyForUpdateTx(ctx context.Context, tx *sql.Tx, id string) (*Policy, error) {
+func (s *Store) FindOnePolicyForUpdateTx(ctx context.Context, tx *sql.Tx, id string, organizationID *uuid.UUID) (*Policy, error) {
 	err := validate.UUID("EscalationPolicyID", id)
 	if err != nil {
 		return nil, err
@@ -289,18 +418,26 @@ func (s *Store) FindOnePolicyForUpdateTx(ctx context.Context, tx *sql.Tx, id str
 	}
 
 	stmt := s.findOnePolicyForUpdate
+	args := []any{id}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findOnePolicyForUpdateOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	row := stmt.QueryRowContext(ctx, id)
+	row := stmt.QueryRowContext(ctx, args...)
 	var p Policy
 	err = row.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.Repeat)
 	return &p, err
 }
 
 // FindAllPoliciesBySchedule will return all policies that have the given schedule assigned to them.
-func (s *Store) FindAllPoliciesBySchedule(ctx context.Context, scheduleID string) ([]Policy, error) {
+func (s *Store) FindAllPoliciesBySchedule(ctx context.Context, scheduleID string, organizationID *uuid.UUID) ([]Policy, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -309,7 +446,16 @@ func (s *Store) FindAllPoliciesBySchedule(ctx context.Context, scheduleID string
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.findAllPoliciesBySchedule.QueryContext(ctx, scheduleID)
+	stmt := s.findAllPoliciesBySchedule
+	args := []any{scheduleID}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findAllPoliciesByScheduleOrg
+		args = append(args, *organizationID)
+	}
+	rows, err := stmt.QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -570,7 +570,7 @@ func (a *Alert) PendingNotifications(ctx context.Context, obj *alert.Alert) ([]g
 				})
 				break
 			}
-			dispInfo, err := a.DestReg.DisplayInfo(ctx, r.NcDest.DestV1)
+			dispInfo, err := (*App)(a).destinationDisplayInfo(ctx, r.NcDest.DestV1)
 			if err != nil {
 				log.Log(ctx, errors.Wrap(err, "lookup display info"))
 				result = append(result, graphql2.AlertPendingNotification{

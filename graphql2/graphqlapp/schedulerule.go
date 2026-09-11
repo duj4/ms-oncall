@@ -37,8 +37,12 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 	if input.Target.Type == assignment.TargetTypeUser && input.Target.ID == "__current_user" {
 		input.Target.ID = permission.UserID(ctx)
 	}
-	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, schedID) // lock schedule
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
+	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, schedID, organizationID) // lock schedule
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("scheduleID", "schedule not found")
 		}

@@ -211,7 +211,7 @@ func (q *Query) MessageLogs(ctx context.Context, opts *graphql2.MessageLogSearch
 			SentAt:     log.SentAt,
 		}
 		if dest.Type != "" {
-			info, err := q.DestReg.DisplayInfo(ctx, dest)
+			info, err := (*App)(q).destinationDisplayInfo(ctx, dest)
 			if err != nil {
 				return nil, fmt.Errorf("lookup dest %s: %w", dest, err)
 			}

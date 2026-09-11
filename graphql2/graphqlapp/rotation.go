@@ -191,11 +191,18 @@ func (r *Rotation) ActiveUserIndex(ctx context.Context, obj *rotation.Rotation) 
 }
 
 func (q *Query) Rotations(ctx context.Context, opts *graphql2.RotationSearchOptions) (conn *graphql2.RotationConnection, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		opts = &graphql2.RotationSearchOptions{}
 	}
 
 	var searchOpts rotation.SearchOptions
+	if organizationID != nil {
+		searchOpts.OrganizationID = *organizationID
+	}
 	searchOpts.FavoritesUserID = permission.UserID(ctx)
 	if opts.Search != nil {
 		searchOpts.Search = *opts.Search
@@ -320,8 +327,12 @@ func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, r
 }
 
 func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRotationInput) (res bool, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		result, err := m.RotationStore.FindRotationForUpdateTx(ctx, tx, input.ID)
+		result, err := m.RotationStore.FindRotationForUpdateTx(ctx, tx, input.ID, organizationID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("id", "Rotation not found")
 		}
@@ -360,7 +371,7 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 		}
 
 		if update {
-			err = m.RotationStore.UpdateRotationTx(ctx, tx, result)
+			err = m.RotationStore.UpdateRotationTx(ctx, tx, result, organizationID)
 			if err != nil {
 				return err
 			}

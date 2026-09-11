@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/target/goalert/alert/alertlog"
+	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/escalation"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
@@ -24,6 +26,7 @@ import (
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rotation"
 	"github.com/target/goalert/service"
+	"github.com/target/goalert/user/favorite"
 )
 
 func TestPostgresResourceRootOrganizationOwnershipMigration(t *testing.T) {
@@ -434,12 +437,12 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 
 	policy.OrganizationID = organizationB.ID
 	policy.Description = "ownership policy updated"
-	if err := policyStore.UpdatePolicyTx(storeContext, nil, policy); err != nil {
+	if err := policyStore.UpdatePolicyTx(storeContext, nil, policy, nil); err != nil {
 		t.Fatal(err)
 	}
 	serviceValue.OrganizationID = organizationB.ID
 	serviceValue.Description = "ownership service updated"
-	if err := serviceStore.UpdateTx(storeContext, nil, serviceValue); err != nil {
+	if err := serviceStore.UpdateTx(storeContext, nil, serviceValue, nil); err != nil {
 		t.Fatal(err)
 	}
 	scheduleValue.OrganizationID = organizationB.ID
@@ -449,23 +452,23 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 	}
 	rotationValue.OrganizationID = organizationB.ID
 	rotationValue.Description = "ownership rotation updated"
-	if err := rotationStore.UpdateRotationTx(storeContext, nil, rotationValue); err != nil {
+	if err := rotationStore.UpdateRotationTx(storeContext, nil, rotationValue, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	loadedPolicy, err := policyStore.FindOnePolicyTx(storeContext, nil, policy.ID)
+	loadedPolicy, err := policyStore.FindOnePolicyTx(storeContext, nil, policy.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedService, err := serviceStore.FindOne(storeContext, serviceValue.ID)
+	loadedService, err := serviceStore.FindOne(storeContext, serviceValue.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedSchedule, err := scheduleStore.FindOne(storeContext, scheduleValue.ID)
+	loadedSchedule, err := scheduleStore.FindOne(storeContext, scheduleValue.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedRotation, err := rotationStore.FindRotation(storeContext, rotationValue.ID)
+	loadedRotation, err := rotationStore.FindRotation(storeContext, rotationValue.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,6 +484,675 @@ func TestPostgresResourceRootOrganizationOwnershipStores(t *testing.T) {
 	}
 
 	assertResourceRootMaterializationPaths(t, storeContext, db, organizationA.ID, policy.ID, serviceValue.ID, scheduleValue.ID, rotationValue.ID, serviceStore, scheduleStore, rotationStore, policyStore)
+}
+
+type scopedRootObservation struct {
+	ID             string
+	OrganizationID uuid.UUID
+	Name           string
+}
+
+type scopedRootSearchInput struct {
+	OrganizationID uuid.UUID
+	Search         string
+	Omit           []string
+	Only           []string
+	Limit          int
+	AfterName      string
+	FavoritesOnly  bool
+	FavoritesFirst bool
+	FavoritesUser  string
+}
+
+type scopedRootStoreAdapter struct {
+	name         string
+	supportsOnly bool
+	create       func(uuid.UUID, string) (scopedRootObservation, error)
+	get          func(string, *uuid.UUID) (scopedRootObservation, error)
+	batch        func([]string, *uuid.UUID) ([]scopedRootObservation, error)
+	search       func(scopedRootSearchInput) ([]scopedRootObservation, error)
+	lock         func(*sql.Tx, string, *uuid.UUID) (scopedRootObservation, error)
+	update       func(string, string, uuid.UUID, *uuid.UUID) error
+	delete       func(*sql.Tx, []string, *uuid.UUID) error
+	favorite     func(string) error
+}
+
+func TestPostgresResourceRootOrganizationScopedCRUD(t *testing.T) {
+	baseURL := postgresIntegrationURL(t)
+	testURL := newPostgresTestDatabase(t, baseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := Up(ctx, testURL, ""); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("pgx", testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	organizationStore := organization.NewStore(db)
+	organizationA := createResourceTestOrganization(t, ctx, organizationStore, "scoped-a")
+	organizationB := createResourceTestOrganization(t, ctx, organizationStore, "scoped-b")
+	storeUserID := uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO public.users (id, name, email, role) VALUES ($1, 'Scoped Root Store User', '', 'admin')`, storeUserID); err != nil {
+		t.Fatal(err)
+	}
+	storeContext := permission.UserContext(ctx, storeUserID.String(), permission.RoleAdmin)
+
+	serviceStore, err := service.NewStore(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduleStore, err := schedule.NewStore(ctx, db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotationStore, err := rotation.NewStore(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logStore, err := alertlog.NewStore(ctx, db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyStore, err := escalation.NewStore(ctx, db, escalation.Config{LogStore: logStore})
+	if err != nil {
+		t.Fatal(err)
+	}
+	favoriteStore, err := favorite.NewStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	observeService := func(value service.Service) scopedRootObservation {
+		return scopedRootObservation{ID: value.ID, OrganizationID: value.OrganizationID, Name: value.Name}
+	}
+	observeSchedule := func(value schedule.Schedule) scopedRootObservation {
+		return scopedRootObservation{ID: value.ID, OrganizationID: value.OrganizationID, Name: value.Name}
+	}
+	observeRotation := func(value rotation.Rotation) scopedRootObservation {
+		return scopedRootObservation{ID: value.ID, OrganizationID: value.OrganizationID, Name: value.Name}
+	}
+	observePolicy := func(value escalation.Policy) scopedRootObservation {
+		return scopedRootObservation{ID: value.ID, OrganizationID: value.OrganizationID, Name: value.Name}
+	}
+
+	adapters := []scopedRootStoreAdapter{
+		{
+			name:         "service",
+			supportsOnly: true,
+			create: func(organizationID uuid.UUID, name string) (scopedRootObservation, error) {
+				policy, err := policyStore.CreatePolicyTx(storeContext, nil, &escalation.Policy{
+					OrganizationID: organizationID,
+					Name:           "Support Policy " + name,
+					Description:    "support",
+					Repeat:         1,
+				})
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				value, err := serviceStore.CreateServiceTx(storeContext, nil, &service.Service{
+					OrganizationID:     organizationID,
+					Name:               name,
+					Description:        "scoped service",
+					EscalationPolicyID: policy.ID,
+				})
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeService(*value), nil
+			},
+			get: func(id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := serviceStore.FindOne(storeContext, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeService(*value), nil
+			},
+			batch: func(ids []string, organizationID *uuid.UUID) ([]scopedRootObservation, error) {
+				values, err := serviceStore.FindMany(storeContext, ids, organizationID)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observeService(value))
+				}
+				return result, nil
+			},
+			search: func(input scopedRootSearchInput) ([]scopedRootObservation, error) {
+				values, err := serviceStore.Search(storeContext, &service.SearchOptions{
+					OrganizationID:  input.OrganizationID,
+					Search:          input.Search,
+					Omit:            input.Omit,
+					Only:            input.Only,
+					Limit:           input.Limit,
+					After:           service.SearchCursor{Name: input.AfterName},
+					FavoritesOnly:   input.FavoritesOnly,
+					FavoritesFirst:  input.FavoritesFirst,
+					FavoritesUserID: input.FavoritesUser,
+				})
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observeService(value))
+				}
+				return result, nil
+			},
+			lock: func(tx *sql.Tx, id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := serviceStore.FindOneForUpdate(storeContext, tx, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeService(*value), nil
+			},
+			update: func(id, name string, modelOrganizationID uuid.UUID, organizationID *uuid.UUID) error {
+				value, err := serviceStore.FindOne(storeContext, id, nil)
+				if err != nil {
+					return err
+				}
+				value.Name = name
+				value.OrganizationID = modelOrganizationID
+				return serviceStore.UpdateTx(storeContext, nil, value, organizationID)
+			},
+			delete: func(tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
+				return serviceStore.DeleteManyTx(storeContext, tx, ids, organizationID)
+			},
+			favorite: func(id string) error {
+				return favoriteStore.Set(storeContext, db, storeUserID.String(), assignment.ServiceTarget(id))
+			},
+		},
+		{
+			name: "schedule",
+			create: func(organizationID uuid.UUID, name string) (scopedRootObservation, error) {
+				value, err := scheduleStore.Create(storeContext, &schedule.Schedule{
+					OrganizationID: organizationID,
+					Name:           name,
+					Description:    "scoped schedule",
+					TimeZone:       time.UTC,
+				})
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeSchedule(*value), nil
+			},
+			get: func(id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := scheduleStore.FindOne(storeContext, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeSchedule(*value), nil
+			},
+			batch: func(ids []string, organizationID *uuid.UUID) ([]scopedRootObservation, error) {
+				values, err := scheduleStore.FindMany(storeContext, ids, organizationID)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observeSchedule(value))
+				}
+				return result, nil
+			},
+			search: func(input scopedRootSearchInput) ([]scopedRootObservation, error) {
+				values, err := scheduleStore.Search(storeContext, &schedule.SearchOptions{
+					OrganizationID:  input.OrganizationID,
+					Search:          input.Search,
+					Omit:            input.Omit,
+					Limit:           input.Limit,
+					After:           schedule.SearchCursor{Name: input.AfterName},
+					FavoritesOnly:   input.FavoritesOnly,
+					FavoritesFirst:  input.FavoritesFirst,
+					FavoritesUserID: input.FavoritesUser,
+				})
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observeSchedule(value))
+				}
+				return result, nil
+			},
+			lock: func(tx *sql.Tx, id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := scheduleStore.FindOneForUpdate(storeContext, tx, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeSchedule(*value), nil
+			},
+			update: func(id, name string, modelOrganizationID uuid.UUID, organizationID *uuid.UUID) error {
+				value, err := scheduleStore.FindOne(storeContext, id, nil)
+				if err != nil {
+					return err
+				}
+				value.Name = name
+				value.OrganizationID = modelOrganizationID
+				return scheduleStore.UpdateTx(storeContext, nil, value, organizationID)
+			},
+			delete: func(tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
+				return scheduleStore.DeleteManyTx(storeContext, tx, ids, organizationID)
+			},
+			favorite: func(id string) error {
+				return favoriteStore.Set(storeContext, db, storeUserID.String(), assignment.ScheduleTarget(id))
+			},
+		},
+		{
+			name: "rotation",
+			create: func(organizationID uuid.UUID, name string) (scopedRootObservation, error) {
+				value, err := rotationStore.CreateRotationTx(storeContext, nil, &rotation.Rotation{
+					OrganizationID: organizationID,
+					Name:           name,
+					Description:    "scoped rotation",
+					Type:           rotation.TypeDaily,
+					Start:          time.Date(2026, time.September, 10, 0, 0, 0, 0, time.UTC),
+					ShiftLength:    1,
+				})
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeRotation(*value), nil
+			},
+			get: func(id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := rotationStore.FindRotation(storeContext, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeRotation(*value), nil
+			},
+			batch: func(ids []string, organizationID *uuid.UUID) ([]scopedRootObservation, error) {
+				values, err := rotationStore.FindMany(storeContext, ids, organizationID)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observeRotation(value))
+				}
+				return result, nil
+			},
+			search: func(input scopedRootSearchInput) ([]scopedRootObservation, error) {
+				values, err := rotationStore.Search(storeContext, &rotation.SearchOptions{
+					OrganizationID:  input.OrganizationID,
+					Search:          input.Search,
+					Omit:            input.Omit,
+					Limit:           input.Limit,
+					After:           rotation.SearchCursor{Name: input.AfterName},
+					FavoritesOnly:   input.FavoritesOnly,
+					FavoritesFirst:  input.FavoritesFirst,
+					FavoritesUserID: input.FavoritesUser,
+				})
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observeRotation(value))
+				}
+				return result, nil
+			},
+			lock: func(tx *sql.Tx, id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := rotationStore.FindRotationForUpdateTx(storeContext, tx, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observeRotation(*value), nil
+			},
+			update: func(id, name string, modelOrganizationID uuid.UUID, organizationID *uuid.UUID) error {
+				value, err := rotationStore.FindRotation(storeContext, id, nil)
+				if err != nil {
+					return err
+				}
+				value.Name = name
+				value.OrganizationID = modelOrganizationID
+				return rotationStore.UpdateRotationTx(storeContext, nil, value, organizationID)
+			},
+			delete: func(tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
+				return rotationStore.DeleteManyTx(storeContext, tx, ids, organizationID)
+			},
+			favorite: func(id string) error {
+				return favoriteStore.Set(storeContext, db, storeUserID.String(), assignment.RotationTarget(id))
+			},
+		},
+		{
+			name: "policy",
+			create: func(organizationID uuid.UUID, name string) (scopedRootObservation, error) {
+				value, err := policyStore.CreatePolicyTx(storeContext, nil, &escalation.Policy{
+					OrganizationID: organizationID,
+					Name:           name,
+					Description:    "scoped policy",
+					Repeat:         1,
+				})
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observePolicy(*value), nil
+			},
+			get: func(id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := policyStore.FindOnePolicyTx(storeContext, nil, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observePolicy(*value), nil
+			},
+			batch: func(ids []string, organizationID *uuid.UUID) ([]scopedRootObservation, error) {
+				values, err := policyStore.FindManyPolicies(storeContext, ids, organizationID)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observePolicy(value))
+				}
+				return result, nil
+			},
+			search: func(input scopedRootSearchInput) ([]scopedRootObservation, error) {
+				values, err := policyStore.Search(storeContext, &escalation.SearchOptions{
+					OrganizationID:  input.OrganizationID,
+					Search:          input.Search,
+					Omit:            input.Omit,
+					Limit:           input.Limit,
+					After:           escalation.SearchCursor{Name: input.AfterName},
+					FavoritesOnly:   input.FavoritesOnly,
+					FavoritesFirst:  input.FavoritesFirst,
+					FavoritesUserID: input.FavoritesUser,
+				})
+				if err != nil {
+					return nil, err
+				}
+				result := make([]scopedRootObservation, 0, len(values))
+				for _, value := range values {
+					result = append(result, observePolicy(value))
+				}
+				return result, nil
+			},
+			lock: func(tx *sql.Tx, id string, organizationID *uuid.UUID) (scopedRootObservation, error) {
+				value, err := policyStore.FindOnePolicyForUpdateTx(storeContext, tx, id, organizationID)
+				if err != nil {
+					return scopedRootObservation{}, err
+				}
+				return observePolicy(*value), nil
+			},
+			update: func(id, name string, modelOrganizationID uuid.UUID, organizationID *uuid.UUID) error {
+				value, err := policyStore.FindOnePolicyTx(storeContext, nil, id, nil)
+				if err != nil {
+					return err
+				}
+				value.Name = name
+				value.OrganizationID = modelOrganizationID
+				return policyStore.UpdatePolicyTx(storeContext, nil, value, organizationID)
+			},
+			delete: func(tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
+				return policyStore.DeleteManyPoliciesTx(storeContext, tx, ids, organizationID)
+			},
+			favorite: func(id string) error {
+				return favoriteStore.Set(storeContext, db, storeUserID.String(), assignment.EscalationPolicyTarget(id))
+			},
+		},
+	}
+
+	for _, adapter := range adapters {
+		t.Run(adapter.name, func(t *testing.T) {
+			prefix := "Scoped " + strings.ToUpper(adapter.name[:1]) + adapter.name[1:] + " Root"
+			ownFirst, err := adapter.create(organizationA.ID, prefix+" 01")
+			if err != nil {
+				t.Fatal(err)
+			}
+			crossMiddle, err := adapter.create(organizationB.ID, prefix+" 02")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ownLast, err := adapter.create(organizationA.ID, prefix+" 03")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := adapter.get(ownFirst.ID, &organizationA.ID)
+			if err != nil || got.ID != ownFirst.ID || got.OrganizationID != organizationA.ID {
+				t.Fatalf("scoped own get = (%#v, %v)", got, err)
+			}
+			if _, err := adapter.get(crossMiddle.ID, &organizationA.ID); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("scoped cross get error = %v, want sql.ErrNoRows", err)
+			}
+			got, err = adapter.get(crossMiddle.ID, nil)
+			if err != nil || got.ID != crossMiddle.ID || got.OrganizationID != organizationB.ID {
+				t.Fatalf("unscoped internal get = (%#v, %v)", got, err)
+			}
+
+			batch, err := adapter.batch([]string{ownFirst.ID, crossMiddle.ID, ownLast.ID}, &organizationA.ID)
+			assertScopedRootIDs(t, batch, err, organizationA.ID, ownFirst.ID, ownLast.ID)
+
+			searchInput := scopedRootSearchInput{OrganizationID: organizationA.ID, Search: prefix, Limit: 20}
+			values, err := adapter.search(searchInput)
+			assertScopedRootIDs(t, values, err, organizationA.ID, ownFirst.ID, ownLast.ID)
+
+			searchInput.Limit = 1
+			pageOne, err := adapter.search(searchInput)
+			assertScopedRootIDs(t, pageOne, err, organizationA.ID, ownFirst.ID)
+			searchInput.AfterName = pageOne[0].Name
+			pageTwo, err := adapter.search(searchInput)
+			assertScopedRootIDs(t, pageTwo, err, organizationA.ID, ownLast.ID)
+
+			searchInput.Limit = 20
+			searchInput.AfterName = ""
+			searchInput.Omit = []string{ownFirst.ID, crossMiddle.ID}
+			values, err = adapter.search(searchInput)
+			assertScopedRootIDs(t, values, err, organizationA.ID, ownLast.ID)
+			searchInput.Omit = nil
+			if adapter.supportsOnly {
+				searchInput.Only = []string{ownLast.ID, crossMiddle.ID}
+				values, err = adapter.search(searchInput)
+				assertScopedRootIDs(t, values, err, organizationA.ID, ownLast.ID)
+				searchInput.Only = nil
+			}
+
+			if err := adapter.favorite(ownLast.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := adapter.favorite(crossMiddle.ID); err != nil {
+				t.Fatal(err)
+			}
+			searchInput.FavoritesOnly = true
+			searchInput.FavoritesFirst = true
+			searchInput.FavoritesUser = storeUserID.String()
+			values, err = adapter.search(searchInput)
+			assertScopedRootIDs(t, values, err, organizationA.ID, ownLast.ID)
+
+			tx, err := db.BeginTx(storeContext, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			locked, err := adapter.lock(tx, ownFirst.ID, &organizationA.ID)
+			if err != nil || locked.OrganizationID != organizationA.ID {
+				_ = tx.Rollback()
+				t.Fatalf("scoped own lock = (%#v, %v)", locked, err)
+			}
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+
+			tx, err = db.BeginTx(storeContext, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, lockErr := adapter.lock(tx, crossMiddle.ID, &organizationA.ID)
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(lockErr, sql.ErrNoRows) {
+				t.Fatalf("scoped cross lock error = %v, want sql.ErrNoRows", lockErr)
+			}
+
+			updatedOwnName := prefix + " 04 Updated"
+			if err := adapter.update(ownFirst.ID, updatedOwnName, organizationB.ID, &organizationA.ID); err != nil {
+				t.Fatal(err)
+			}
+			got, err = adapter.get(ownFirst.ID, nil)
+			if err != nil || got.Name != updatedOwnName || got.OrganizationID != organizationA.ID {
+				t.Fatalf("own update/immutable OrganizationID = (%#v, %v)", got, err)
+			}
+			crossOriginalName := crossMiddle.Name
+			if err := adapter.update(crossMiddle.ID, prefix+" 05 Cross Update", organizationA.ID, &organizationA.ID); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("scoped cross update error = %v, want sql.ErrNoRows", err)
+			}
+			got, err = adapter.get(crossMiddle.ID, nil)
+			if err != nil || got.Name != crossOriginalName || got.OrganizationID != organizationB.ID {
+				t.Fatalf("cross update mutated resource = (%#v, %v)", got, err)
+			}
+
+			deleteOwn, err := adapter.create(organizationA.ID, prefix+" 06 Delete Own")
+			if err != nil {
+				t.Fatal(err)
+			}
+			deleteCross, err := adapter.create(organizationB.ID, prefix+" 07 Delete Cross")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := adapter.delete(nil, []string{deleteCross.ID}, &organizationA.ID); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("scoped cross delete error = %v, want sql.ErrNoRows", err)
+			}
+			if _, err := adapter.get(deleteCross.ID, nil); err != nil {
+				t.Fatalf("cross delete removed resource: %v", err)
+			}
+			if err := adapter.delete(nil, []string{deleteOwn.ID}, &organizationA.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := adapter.get(deleteOwn.ID, nil); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("own delete lookup error = %v, want sql.ErrNoRows", err)
+			}
+
+			mixedOwn, err := adapter.create(organizationA.ID, prefix+" 08 Mixed Own")
+			if err != nil {
+				t.Fatal(err)
+			}
+			mixedCross, err := adapter.create(organizationB.ID, prefix+" 09 Mixed Cross")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tx, err = db.BeginTx(storeContext, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deleteErr := adapter.delete(tx, []string{mixedOwn.ID, mixedCross.ID}, &organizationA.ID)
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(deleteErr, sql.ErrNoRows) {
+				t.Fatalf("mixed scoped delete error = %v, want sql.ErrNoRows", deleteErr)
+			}
+			for _, value := range []scopedRootObservation{mixedOwn, mixedCross} {
+				if _, err := adapter.get(value.ID, nil); err != nil {
+					t.Fatalf("mixed delete did not roll back %s: %v", value.ID, err)
+				}
+			}
+		})
+	}
+
+	t.Run("alternate scoped materialization", func(t *testing.T) {
+		policyA, err := policyStore.CreatePolicyTx(storeContext, nil, &escalation.Policy{OrganizationID: organizationA.ID, Name: "Scoped Alternate Policy A", Repeat: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		policyB, err := policyStore.CreatePolicyTx(storeContext, nil, &escalation.Policy{OrganizationID: organizationB.ID, Name: "Scoped Alternate Policy B", Repeat: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		serviceA, err := serviceStore.CreateServiceTx(storeContext, nil, &service.Service{OrganizationID: organizationA.ID, Name: "Scoped Alternate Service A", EscalationPolicyID: policyA.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		serviceB, err := serviceStore.CreateServiceTx(storeContext, nil, &service.Service{OrganizationID: organizationB.ID, Name: "Scoped Alternate Service B", EscalationPolicyID: policyB.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		services, err := serviceStore.FindAllByEP(storeContext, policyA.ID, &organizationA.ID)
+		if err != nil || len(services) != 1 || services[0].ID != serviceA.ID {
+			t.Fatalf("scoped FindAllByEP = (%#v, %v)", services, err)
+		}
+		services, err = serviceStore.FindAllByEP(storeContext, policyB.ID, &organizationA.ID)
+		if err != nil || len(services) != 0 {
+			t.Fatalf("cross FindAllByEP = (%#v, %v), cross service %s", services, err, serviceB.ID)
+		}
+
+		scheduleA, err := scheduleStore.Create(storeContext, &schedule.Schedule{OrganizationID: organizationA.ID, Name: "Scoped Alternate Schedule A", TimeZone: time.UTC})
+		if err != nil {
+			t.Fatal(err)
+		}
+		scheduleB, err := scheduleStore.Create(storeContext, &schedule.Schedule{OrganizationID: organizationB.ID, Name: "Scoped Alternate Schedule B", TimeZone: time.UTC})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(storeContext, `INSERT INTO public.schedule_rules (schedule_id, tgt_user_id) VALUES ($1, $2), ($3, $2)`, scheduleA.ID, storeUserID, scheduleB.ID); err != nil {
+			t.Fatal(err)
+		}
+		userSchedules, err := scheduleStore.FindManyByUserID(storeContext, db, uuid.NullUUID{UUID: storeUserID, Valid: true}, &organizationA.ID)
+		if err != nil || len(userSchedules) != 1 || userSchedules[0].ID != scheduleA.ID {
+			t.Fatalf("scoped FindManyByUserID = (%#v, %v)", userSchedules, err)
+		}
+
+		stepA, stepB := uuid.New(), uuid.New()
+		if _, err := db.ExecContext(storeContext, `INSERT INTO public.escalation_policy_steps (id, escalation_policy_id) VALUES ($1, $2), ($3, $4)`, stepA, policyA.ID, stepB, policyB.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(storeContext, `INSERT INTO public.escalation_policy_actions (escalation_policy_step_id, schedule_id) VALUES ($1, $2), ($3, $4)`, stepA, scheduleA.ID, stepB, scheduleB.ID); err != nil {
+			t.Fatal(err)
+		}
+		policies, err := policyStore.FindAllPoliciesBySchedule(storeContext, scheduleA.ID, &organizationA.ID)
+		if err != nil || len(policies) != 1 || policies[0].ID != policyA.ID {
+			t.Fatalf("scoped FindAllPoliciesBySchedule = (%#v, %v)", policies, err)
+		}
+		policies, err = policyStore.FindAllPoliciesBySchedule(storeContext, scheduleB.ID, &organizationA.ID)
+		if err != nil || len(policies) != 0 {
+			t.Fatalf("cross FindAllPoliciesBySchedule = (%#v, %v)", policies, err)
+		}
+
+		rotationB, err := rotationStore.CreateRotationTx(storeContext, nil, &rotation.Rotation{
+			OrganizationID: organizationB.ID,
+			Name:           "Scoped Alternate Rotation B",
+			Type:           rotation.TypeDaily,
+			Start:          time.Date(2026, time.September, 10, 0, 0, 0, 0, time.UTC),
+			ShiftLength:    1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := scheduleStore.ValidateField(storeContext, schedule.FieldScheduleID, scheduleB.ID); err != nil {
+			t.Fatalf("shared internal schedule destination provider lost unscoped compatibility: %v", err)
+		}
+		if err := rotationStore.ValidateField(storeContext, rotation.FieldRotationID, rotationB.ID); err != nil {
+			t.Fatalf("shared internal rotation destination provider lost unscoped compatibility: %v", err)
+		}
+	})
+
+	t.Run("existing actor permission remains independent", func(t *testing.T) {
+		deniedContext := permission.UserContext(ctx, uuid.NewString(), permission.RoleUnknown)
+		_, err := serviceStore.Search(deniedContext, &service.SearchOptions{OrganizationID: organizationA.ID})
+		if !permission.IsPermissionError(err) {
+			t.Fatalf("scoped search permission error = %v, want existing AccessDenied behavior", err)
+		}
+	})
+}
+
+func assertScopedRootIDs(t *testing.T, values []scopedRootObservation, err error, organizationID uuid.UUID, want ...string) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(values))
+	for _, value := range values {
+		if value.OrganizationID != organizationID {
+			t.Fatalf("materialized OrganizationID = %s, want %s", value.OrganizationID, organizationID)
+		}
+		got = append(got, value.ID)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("materialized IDs = %v, want %v", got, want)
+	}
 }
 
 func TestResourceRootOrganizationOwnershipIsInternalOnly(t *testing.T) {
@@ -508,6 +1180,20 @@ func TestResourceRootOrganizationOwnershipIsInternalOnly(t *testing.T) {
 		typeOfInput := reflect.TypeOf(input)
 		if _, present := typeOfInput.FieldByName("OrganizationID"); present {
 			t.Fatalf("%s exposes client-selected OrganizationID", name)
+		}
+	}
+	for name, options := range map[string]any{
+		"service search":  service.SearchOptions{OrganizationID: organizationID},
+		"schedule search": schedule.SearchOptions{OrganizationID: organizationID},
+		"rotation search": rotation.SearchOptions{OrganizationID: organizationID},
+		"policy search":   escalation.SearchOptions{OrganizationID: organizationID},
+	} {
+		encoded, err := json.Marshal(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), organizationID.String()) || strings.Contains(strings.ToLower(string(encoded)), "organization") {
+			t.Fatalf("%s cursor payload exposed Organization filtering dimension: %s", name, encoded)
 		}
 	}
 }
@@ -677,17 +1363,17 @@ func assertResourceRootMaterializationPaths(t *testing.T, ctx context.Context, d
 			t.Fatalf("%s materialized OrganizationID = %s, want %s", name, got, organizationID)
 		}
 	}
-	services, err := serviceStore.FindMany(ctx, []string{serviceID})
+	services, err := serviceStore.FindMany(ctx, []string{serviceID}, nil)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("FindMany services = %d, %v", len(services), err)
 	}
 	assertOwner("service FindMany", services[0].OrganizationID)
-	services, err = serviceStore.FindAllByEP(ctx, policyID)
+	services, err = serviceStore.FindAllByEP(ctx, policyID, nil)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("FindAllByEP services = %d, %v", len(services), err)
 	}
 	assertOwner("service FindAllByEP", services[0].OrganizationID)
-	schedules, err := scheduleStore.FindMany(ctx, []string{scheduleID})
+	schedules, err := scheduleStore.FindMany(ctx, []string{scheduleID}, nil)
 	if err != nil || len(schedules) != 1 {
 		t.Fatalf("FindMany schedules = %d, %v", len(schedules), err)
 	}
@@ -697,12 +1383,12 @@ func assertResourceRootMaterializationPaths(t *testing.T, ctx context.Context, d
 		t.Fatalf("FindAll schedules = %d, %v", len(schedules), err)
 	}
 	assertOwner("schedule FindAll", schedules[0].OrganizationID)
-	rotations, err := rotationStore.FindMany(ctx, []string{rotationID})
+	rotations, err := rotationStore.FindMany(ctx, []string{rotationID}, nil)
 	if err != nil || len(rotations) != 1 {
 		t.Fatalf("FindMany rotations = %d, %v", len(rotations), err)
 	}
 	assertOwner("rotation FindMany", rotations[0].OrganizationID)
-	policies, err := policyStore.FindManyPolicies(ctx, []string{policyID})
+	policies, err := policyStore.FindManyPolicies(ctx, []string{policyID}, nil)
 	if err != nil || len(policies) != 1 {
 		t.Fatalf("FindMany policies = %d, %v", len(policies), err)
 	}
@@ -715,7 +1401,7 @@ func assertResourceRootMaterializationPaths(t *testing.T, ctx context.Context, d
 	`, scheduleID, userID); err != nil {
 		t.Fatal(err)
 	}
-	userSchedules, err := scheduleStore.FindManyByUserID(ctx, db, uuid.NullUUID{UUID: userID, Valid: true})
+	userSchedules, err := scheduleStore.FindManyByUserID(ctx, db, uuid.NullUUID{UUID: userID, Valid: true}, nil)
 	if err != nil || len(userSchedules) != 1 {
 		t.Fatalf("FindManyByUserID schedules = %d, %v", len(userSchedules), err)
 	}
@@ -734,7 +1420,7 @@ func assertResourceRootMaterializationPaths(t *testing.T, ctx context.Context, d
 	`, stepID, scheduleID); err != nil {
 		t.Fatal(err)
 	}
-	policies, err = policyStore.FindAllPoliciesBySchedule(ctx, scheduleID)
+	policies, err = policyStore.FindAllPoliciesBySchedule(ctx, scheduleID, nil)
 	if err != nil || len(policies) != 1 {
 		t.Fatalf("FindAllPoliciesBySchedule policies = %d, %v", len(policies), err)
 	}
@@ -772,22 +1458,22 @@ func assertResourceRootMaterializationPaths(t *testing.T, ctx context.Context, d
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	lockedService, err := serviceStore.FindOneForUpdate(ctx, tx, serviceID)
+	lockedService, err := serviceStore.FindOneForUpdate(ctx, tx, serviceID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertOwner("service FindOneForUpdate", lockedService.OrganizationID)
-	lockedSchedule, err := scheduleStore.FindOneForUpdate(ctx, tx, scheduleID)
+	lockedSchedule, err := scheduleStore.FindOneForUpdate(ctx, tx, scheduleID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertOwner("schedule FindOneForUpdate", lockedSchedule.OrganizationID)
-	lockedRotation, err := rotationStore.FindRotationForUpdateTx(ctx, tx, rotationID)
+	lockedRotation, err := rotationStore.FindRotationForUpdateTx(ctx, tx, rotationID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertOwner("rotation FindOneForUpdate", lockedRotation.OrganizationID)
-	lockedPolicy, err := policyStore.FindOnePolicyForUpdateTx(ctx, tx, policyID)
+	lockedPolicy, err := policyStore.FindOnePolicyForUpdateTx(ctx, tx, policyID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/util/sqlutil"
@@ -16,6 +17,10 @@ import (
 
 // SearchOptions contains criteria for filtering and sorting services.
 type SearchOptions struct {
+	// OrganizationID is a server-controlled filtering dimension. Its zero value
+	// preserves the existing trusted/internal compatibility path.
+	OrganizationID uuid.UUID `json:"-"`
+
 	// Search is matched case-insensitive against the service name and description.
 	Search string `json:"s,omitempty"`
 
@@ -68,6 +73,9 @@ var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()
 			{{if ne .LabelValue "*"}} AND value = :labelValue{{end}}
 	{{end}}
 	WHERE true
+	{{if .OrganizationScoped}}
+		AND svc.organization_id = :organizationID
+	{{end}}
 	{{if .Omit}}
 		AND not svc.id = any(:omit)
 	{{end}}
@@ -110,6 +118,8 @@ func (opts renderData) OrderBy() string {
 
 	return "lower(svc.name)"
 }
+
+func (opts renderData) OrganizationScoped() bool { return opts.OrganizationID != uuid.Nil }
 
 func (opts renderData) IntegrationKey() string {
 	if !strings.Contains(opts.Search, "token=") {
@@ -197,6 +207,7 @@ func (opts renderData) Normalize() (*renderData, error) {
 
 func (opts renderData) QueryArgs() []sql.NamedArg {
 	return []sql.NamedArg{
+		sql.Named("organizationID", opts.OrganizationID),
 		sql.Named("favUserID", opts.FavoritesUserID),
 		sql.Named("integrationKey", opts.IntegrationKey()),
 		sql.Named("labelKey", opts.LabelKey()),

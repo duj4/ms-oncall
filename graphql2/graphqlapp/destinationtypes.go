@@ -17,7 +17,7 @@ type (
 )
 
 func (q *Query) DestinationFieldValueName(ctx context.Context, input graphql2.DestinationFieldValidateInput) (string, error) {
-	return q.DestReg.FieldLabel(ctx, input.DestType, input.FieldID, input.Value)
+	return (*App)(q).destinationFieldLabel(ctx, input.DestType, input.FieldID, input.Value)
 }
 
 func (q *Query) DestinationFieldSearch(ctx context.Context, input graphql2.DestinationFieldSearchInput) (*graphql2.FieldSearchConnection, error) {
@@ -33,7 +33,7 @@ func (q *Query) DestinationFieldSearch(ctx context.Context, input graphql2.Desti
 		opts.Search = *input.Search
 	}
 
-	res, err := q.DestReg.SearchField(ctx, input.DestType, input.FieldID, opts)
+	res, err := (*App)(q).destinationSearchField(ctx, input.DestType, input.FieldID, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (q *Query) DestinationFieldSearch(ctx context.Context, input graphql2.Desti
 }
 
 func (q *Query) DestinationFieldValidate(ctx context.Context, input graphql2.DestinationFieldValidateInput) (bool, error) {
-	err := q.DestReg.ValidateField(ctx, input.DestType, input.FieldID, input.Value)
+	err := (*App)(q).destinationValidateField(ctx, input.DestType, input.FieldID, input.Value)
 	if validation.IsClientError(err) {
 		return false, nil
 	}

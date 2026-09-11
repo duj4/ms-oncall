@@ -64,5 +64,5 @@ func (a *Query) _DestinationDisplayInfo(ctx context.Context, dest gadb.DestV1, s
 		}
 	}
 
-	return app.DestReg.DisplayInfo(ctx, dest)
+	return app.destinationDisplayInfo(ctx, dest)
 }

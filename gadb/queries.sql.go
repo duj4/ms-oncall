@@ -4761,6 +4761,38 @@ func (q *Queries) SchedDeleteMany(ctx context.Context, dollar_1 []uuid.UUID) err
 	return err
 }
 
+const schedDeleteManyScoped = `-- name: SchedDeleteManyScoped :execrows
+DELETE FROM schedules sched
+WHERE sched.id = ANY($1::uuid[])
+    AND sched.organization_id = $2
+    AND (
+        SELECT count(*)
+        FROM (
+            SELECT DISTINCT requested_id
+            FROM unnest($1::uuid[]) AS requested(requested_id)
+        ) requested
+    ) = (
+        SELECT count(*)
+        FROM schedules matched
+        WHERE matched.id = ANY($1::uuid[])
+            AND matched.organization_id = $2
+    )
+`
+
+type SchedDeleteManyScopedParams struct {
+	Column1        []uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Deletes every distinct requested ID only when all belong to one Organization.
+func (q *Queries) SchedDeleteManyScoped(ctx context.Context, arg SchedDeleteManyScopedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, schedDeleteManyScoped, pq.Array(arg.Column1), arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const schedFindAll = `-- name: SchedFindAll :many
 SELECT id, organization_id, name, description, time_zone
 FROM schedules
@@ -4898,6 +4930,66 @@ func (q *Queries) SchedFindMany(ctx context.Context, arg SchedFindManyParams) ([
 	return items, nil
 }
 
+const schedFindManyScoped = `-- name: SchedFindManyScoped :many
+SELECT
+    s.id,
+    s.organization_id,
+    s.name,
+    s.description,
+    s.time_zone,
+    fav IS DISTINCT FROM NULL as is_favorite
+FROM schedules s
+LEFT JOIN user_favorites fav ON
+    fav.tgt_schedule_id = s.id AND fav.user_id = $2
+WHERE s.id = ANY($1::uuid[]) AND s.organization_id = $3
+`
+
+type SchedFindManyScopedParams struct {
+	Column1        []uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type SchedFindManyScopedRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
+	IsFavorite     bool
+}
+
+// Returns multiple Organization-scoped schedules with user favorite status.
+func (q *Queries) SchedFindManyScoped(ctx context.Context, arg SchedFindManyScopedParams) ([]SchedFindManyScopedRow, error) {
+	rows, err := q.db.QueryContext(ctx, schedFindManyScoped, pq.Array(arg.Column1), arg.UserID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SchedFindManyScopedRow
+	for rows.Next() {
+		var i SchedFindManyScopedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Name,
+			&i.Description,
+			&i.TimeZone,
+			&i.IsFavorite,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const schedFindOne = `-- name: SchedFindOne :one
 SELECT
     s.id,
@@ -4966,6 +5058,84 @@ func (q *Queries) SchedFindOneForUpdate(ctx context.Context, id uuid.UUID) (Sche
 		&i.Name,
 		&i.Description,
 		&i.TimeZone,
+	)
+	return i, err
+}
+
+const schedFindOneForUpdateScoped = `-- name: SchedFindOneForUpdateScoped :one
+SELECT id, organization_id, name, description, time_zone
+FROM schedules
+WHERE id = $1 AND organization_id = $2
+FOR UPDATE
+`
+
+type SchedFindOneForUpdateScopedParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type SchedFindOneForUpdateScopedRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
+}
+
+// Returns one Organization-scoped schedule with FOR UPDATE lock.
+func (q *Queries) SchedFindOneForUpdateScoped(ctx context.Context, arg SchedFindOneForUpdateScopedParams) (SchedFindOneForUpdateScopedRow, error) {
+	row := q.db.QueryRowContext(ctx, schedFindOneForUpdateScoped, arg.ID, arg.OrganizationID)
+	var i SchedFindOneForUpdateScopedRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.Description,
+		&i.TimeZone,
+	)
+	return i, err
+}
+
+const schedFindOneScoped = `-- name: SchedFindOneScoped :one
+SELECT
+    s.id,
+    s.organization_id,
+    s.name,
+    s.description,
+    s.time_zone,
+    fav IS DISTINCT FROM NULL as is_favorite
+FROM schedules s
+LEFT JOIN user_favorites fav ON
+    fav.tgt_schedule_id = s.id AND fav.user_id = $2
+WHERE s.id = $1 AND s.organization_id = $3
+`
+
+type SchedFindOneScopedParams struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type SchedFindOneScopedRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
+	IsFavorite     bool
+}
+
+// Returns a single Organization-scoped schedule with user favorite status.
+func (q *Queries) SchedFindOneScoped(ctx context.Context, arg SchedFindOneScopedParams) (SchedFindOneScopedRow, error) {
+	row := q.db.QueryRowContext(ctx, schedFindOneScoped, arg.ID, arg.UserID, arg.OrganizationID)
+	var i SchedFindOneScopedRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.Description,
+		&i.TimeZone,
+		&i.IsFavorite,
 	)
 	return i, err
 }
@@ -5430,6 +5600,34 @@ func (q *Queries) SchedUpdateData(ctx context.Context, arg SchedUpdateDataParams
 	return err
 }
 
+const schedUpdateScoped = `-- name: SchedUpdateScoped :execrows
+UPDATE schedules
+SET name = $2, description = $3, time_zone = $4
+WHERE id = $1 AND organization_id = $5
+`
+
+type SchedUpdateScopedParams struct {
+	ID             uuid.UUID
+	Name           string
+	Description    string
+	TimeZone       string
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) SchedUpdateScoped(ctx context.Context, arg SchedUpdateScopedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, schedUpdateScoped,
+		arg.ID,
+		arg.Name,
+		arg.Description,
+		arg.TimeZone,
+		arg.OrganizationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const scheduleFindManyByUser = `-- name: ScheduleFindManyByUser :many
 SELECT
     description, id, last_processed, name, organization_id, time_zone
@@ -5454,6 +5652,64 @@ WHERE
 
 func (q *Queries) ScheduleFindManyByUser(ctx context.Context, tgtUserID uuid.NullUUID) ([]Schedule, error) {
 	rows, err := q.db.QueryContext(ctx, scheduleFindManyByUser, tgtUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Schedule
+	for rows.Next() {
+		var i Schedule
+		if err := rows.Scan(
+			&i.Description,
+			&i.ID,
+			&i.LastProcessed,
+			&i.Name,
+			&i.OrganizationID,
+			&i.TimeZone,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scheduleFindManyByUserScoped = `-- name: ScheduleFindManyByUserScoped :many
+SELECT
+    description, id, last_processed, name, organization_id, time_zone
+FROM
+    schedules
+WHERE
+    organization_id = $2
+    AND id = ANY (
+        SELECT
+            schedule_id
+        FROM
+            schedule_rules
+        WHERE
+            tgt_user_id = $1
+            OR tgt_rotation_id = ANY (
+                SELECT
+                    rotation_id
+                FROM
+                    rotation_participants
+                WHERE
+                    user_id = $1))
+`
+
+type ScheduleFindManyByUserScopedParams struct {
+	TgtUserID      uuid.NullUUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) ScheduleFindManyByUserScoped(ctx context.Context, arg ScheduleFindManyByUserScopedParams) ([]Schedule, error) {
+	rows, err := q.db.QueryContext(ctx, scheduleFindManyByUserScoped, arg.TgtUserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}

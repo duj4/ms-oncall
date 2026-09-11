@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"text/template"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
@@ -15,6 +16,10 @@ import (
 
 // SearchOptions allow filtering and paginating the list of schedules.
 type SearchOptions struct {
+	// OrganizationID is a server-controlled filtering dimension. Its zero value
+	// preserves the existing trusted/internal compatibility path.
+	OrganizationID uuid.UUID `json:"-"`
+
 	Search string `json:"s,omitempty"`
 
 	// FavoritesUserID specifies the UserID whose favorite services want to be displayed.
@@ -53,6 +58,9 @@ var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()
 		LEFT {{end}}JOIN user_favorites fav ON sched.id = fav.tgt_schedule_id
 			AND {{if .FavoritesUserID}}fav.user_id = :favUserID{{else}}false{{end}}
 	WHERE true
+	{{if .OrganizationScoped}}
+		AND sched.organization_id = :organizationID
+	{{end}}
 	{{if .Omit}}
 		AND NOT sched.id = any(:omit)
 	{{end}}
@@ -82,6 +90,8 @@ func (opts renderData) OrderBy() string {
 	return "lower(sched.name)"
 }
 
+func (opts renderData) OrganizationScoped() bool { return opts.OrganizationID != uuid.Nil }
+
 func (opts renderData) Normalize() (*renderData, error) {
 	if opts.Limit == 0 {
 		opts.Limit = search.DefaultMaxResults
@@ -106,6 +116,7 @@ func (opts renderData) Normalize() (*renderData, error) {
 
 func (opts renderData) QueryArgs() []sql.NamedArg {
 	return []sql.NamedArg{
+		sql.Named("organizationID", opts.OrganizationID),
 		sql.Named("search", opts.Search),
 		sql.Named("afterName", opts.After.Name),
 		sql.Named("omit", sqlutil.UUIDArray(opts.Omit)),
