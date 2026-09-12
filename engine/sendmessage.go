@@ -143,7 +143,7 @@ func (p *Engine) sendMessage(ctx context.Context, msg *message.Message) (*notifi
 		if err != nil {
 			return nil, errors.Wrap(err, "lookup on call users by schedule")
 		}
-		sched, err := p.cfg.ScheduleStore.FindOne(ctx, msg.ScheduleID)
+		sched, err := p.cfg.ScheduleStore.FindOne(ctx, msg.ScheduleID, nil)
 		if err != nil {
 			return nil, errors.Wrap(err, "lookup schedule by id")
 		}

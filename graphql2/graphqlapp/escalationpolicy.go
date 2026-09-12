@@ -212,8 +212,13 @@ func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.Cr
 }
 
 func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.UpdateEscalationPolicyInput) (bool, error) {
-	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		ep, err := m.PolicyStore.FindOnePolicyForUpdateTx(ctx, tx, input.ID)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		ep, err := m.PolicyStore.FindOnePolicyForUpdateTx(ctx, tx, input.ID, organizationID)
 		if err != nil {
 			return err
 		}
@@ -230,7 +235,7 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 			ep.Repeat = *input.Repeat
 		}
 
-		err = m.PolicyStore.UpdatePolicyTx(ctx, tx, ep)
+		err = m.PolicyStore.UpdatePolicyTx(ctx, tx, ep, organizationID)
 		if err != nil {
 			return err
 		}
@@ -386,7 +391,12 @@ func (ep *EscalationPolicy) Notices(ctx context.Context, raw *escalation.Policy)
 }
 
 func (ep *EscalationPolicy) AssignedTo(ctx context.Context, raw *escalation.Policy) ([]assignment.RawTarget, error) {
-	svcs, err := ep.ServiceStore.FindAllByEP(ctx, raw.ID)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	svcs, err := ep.ServiceStore.FindAllByEP(ctx, raw.ID, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -413,6 +423,13 @@ func (q *Query) EscalationPolicies(ctx context.Context, opts *graphql2.Escalatio
 	}
 
 	var searchOpts escalation.SearchOptions
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if organizationID != nil {
+		searchOpts.OrganizationID = *organizationID
+	}
 	searchOpts.FavoritesUserID = permission.UserID(ctx)
 	if opts.Search != nil {
 		searchOpts.Search = *opts.Search

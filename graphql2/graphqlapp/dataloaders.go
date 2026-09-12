@@ -59,12 +59,36 @@ type AlertStatsParam struct {
 // Each loader is configured with appropriate batch settings and ID extraction functions.
 func (a *App) registerLoaders(ctx context.Context) context.Context {
 	ctx = context.WithValue(ctx, requestLoadersKey, &loaders{
-		Alert:                     dataloader.NewStoreLoader(ctx, a.AlertStore.FindMany, func(a alert.Alert) int { return a.ID }),
-		AlertState:                dataloader.NewStoreLoader(ctx, a.AlertStore.State, func(s alert.State) int { return s.ID }),
-		EP:                        dataloader.NewStoreLoader(ctx, a.PolicyStore.FindManyPolicies, func(p escalation.Policy) string { return p.ID }),
-		Rotation:                  dataloader.NewStoreLoader(ctx, a.RotationStore.FindMany, func(r rotation.Rotation) string { return r.ID }),
-		Schedule:                  dataloader.NewStoreLoader(ctx, a.ScheduleStore.FindMany, func(s schedule.Schedule) string { return s.ID }),
-		Service:                   dataloader.NewStoreLoader(ctx, a.ServiceStore.FindMany, func(s service.Service) string { return s.ID }),
+		Alert:      dataloader.NewStoreLoader(ctx, a.AlertStore.FindMany, func(a alert.Alert) int { return a.ID }),
+		AlertState: dataloader.NewStoreLoader(ctx, a.AlertStore.State, func(s alert.State) int { return s.ID }),
+		EP: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]escalation.Policy, error) {
+			organizationID, err := rootStoreOrganizationID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return a.PolicyStore.FindManyPolicies(ctx, ids, organizationID)
+		}, func(p escalation.Policy) string { return p.ID }),
+		Rotation: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]rotation.Rotation, error) {
+			organizationID, err := rootStoreOrganizationID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return a.RotationStore.FindMany(ctx, ids, organizationID)
+		}, func(r rotation.Rotation) string { return r.ID }),
+		Schedule: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]schedule.Schedule, error) {
+			organizationID, err := rootStoreOrganizationID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return a.ScheduleStore.FindMany(ctx, ids, organizationID)
+		}, func(s schedule.Schedule) string { return s.ID }),
+		Service: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]service.Service, error) {
+			organizationID, err := rootStoreOrganizationID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return a.ServiceStore.FindMany(ctx, ids, organizationID)
+		}, func(s service.Service) string { return s.ID }),
 		User:                      dataloader.NewStoreLoader(ctx, a.UserStore.FindMany, func(u user.User) string { return u.ID }),
 		CM:                        dataloader.NewStoreLoaderWithDB(ctx, a.DB, a.CMStore.FindMany, func(cm contactmethod.ContactMethod) string { return cm.ID.String() }),
 		Heartbeat:                 dataloader.NewStoreLoader(ctx, a.HeartbeatStore.FindMany, func(hb heartbeat.Monitor) string { return hb.ID }),
@@ -232,7 +256,11 @@ func (app *App) FindOneAlertFeedback(ctx context.Context, id int) (*alert.Feedba
 func (app *App) FindOneRotation(ctx context.Context, id string) (*rotation.Rotation, error) {
 	loader := loadersFrom(ctx).Rotation
 	if loader == nil {
-		return app.RotationStore.FindRotation(ctx, id)
+		organizationID, err := rootStoreOrganizationID(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return app.RotationStore.FindRotation(ctx, id, organizationID)
 	}
 
 	return loader.FetchOne(ctx, id)
@@ -241,7 +269,11 @@ func (app *App) FindOneRotation(ctx context.Context, id string) (*rotation.Rotat
 func (app *App) FindOneSchedule(ctx context.Context, id string) (*schedule.Schedule, error) {
 	loader := loadersFrom(ctx).Schedule
 	if loader == nil {
-		return app.ScheduleStore.FindOne(ctx, id)
+		organizationID, err := rootStoreOrganizationID(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return app.ScheduleStore.FindOne(ctx, id, organizationID)
 	}
 
 	return loader.FetchOne(ctx, id)
@@ -295,7 +327,11 @@ func (app *App) FindOneNC(ctx context.Context, id uuid.UUID) (*notificationchann
 func (app *App) FindOnePolicy(ctx context.Context, id string) (*escalation.Policy, error) {
 	loader := loadersFrom(ctx).EP
 	if loader == nil {
-		return app.PolicyStore.FindOnePolicyTx(ctx, nil, id)
+		organizationID, err := rootStoreOrganizationID(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return app.PolicyStore.FindOnePolicyTx(ctx, nil, id, organizationID)
 	}
 
 	return loader.FetchOne(ctx, id)
@@ -304,7 +340,11 @@ func (app *App) FindOnePolicy(ctx context.Context, id string) (*escalation.Polic
 func (app *App) FindOneService(ctx context.Context, id string) (*service.Service, error) {
 	loader := loadersFrom(ctx).Service
 	if loader == nil {
-		return app.ServiceStore.FindOne(ctx, id)
+		organizationID, err := rootStoreOrganizationID(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return app.ServiceStore.FindOne(ctx, id, organizationID)
 	}
 
 	return loader.FetchOne(ctx, id)

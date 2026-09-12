@@ -26,7 +26,7 @@ func NewStore(ctx context.Context, db *sql.DB, usr *user.Store) (*Store, error) 
 	}, nil
 }
 
-func (store *Store) FindManyTx(ctx context.Context, tx *sql.Tx, ids []string) ([]Schedule, error) {
+func (store *Store) FindManyTx(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) ([]Schedule, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -50,6 +50,40 @@ func (store *Store) FindManyTx(ctx context.Context, tx *sql.Tx, ids []string) ([
 		db = db.WithTx(tx)
 	}
 
+	var result []Schedule
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		rows, err := db.SchedFindManyScoped(ctx, gadb.SchedFindManyScopedParams{
+			Column1:        uuids,
+			UserID:         permission.UserNullUUID(ctx).UUID,
+			OrganizationID: *organizationID,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		result = make([]Schedule, 0, len(ids))
+		for _, row := range rows {
+			s := Schedule{
+				ID:             row.ID.String(),
+				OrganizationID: row.OrganizationID,
+				Name:           row.Name,
+				Description:    row.Description,
+				isUserFavorite: row.IsFavorite,
+			}
+			s.TimeZone, err = util.LoadLocation(row.TimeZone)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, s)
+		}
+		return result, nil
+	}
+
 	rows, err := db.SchedFindMany(ctx, gadb.SchedFindManyParams{
 		Column1: uuids,
 		UserID:  permission.UserNullUUID(ctx).UUID,
@@ -61,7 +95,7 @@ func (store *Store) FindManyTx(ctx context.Context, tx *sql.Tx, ids []string) ([
 		return nil, err
 	}
 
-	result := make([]Schedule, 0, len(ids))
+	result = make([]Schedule, 0, len(ids))
 	for _, row := range rows {
 		s := Schedule{
 			ID:             row.ID.String(),
@@ -81,17 +115,29 @@ func (store *Store) FindManyTx(ctx context.Context, tx *sql.Tx, ids []string) ([
 	return result, nil
 }
 
-func (store *Store) FindMany(ctx context.Context, ids []string) ([]Schedule, error) {
-	return store.FindManyTx(ctx, nil, ids)
+func (store *Store) FindMany(ctx context.Context, ids []string, organizationID *uuid.UUID) ([]Schedule, error) {
+	return store.FindManyTx(ctx, nil, ids, organizationID)
 }
 
-func (store *Store) FindManyByUserID(ctx context.Context, db gadb.DBTX, userID uuid.NullUUID) ([]Schedule, error) {
+func (store *Store) FindManyByUserID(ctx context.Context, db gadb.DBTX, userID uuid.NullUUID, organizationID *uuid.UUID) ([]Schedule, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := gadb.New(db).ScheduleFindManyByUser(ctx, userID)
+	queries := gadb.New(db)
+	var rows []gadb.Schedule
+	if organizationID == nil {
+		rows, err = queries.ScheduleFindManyByUser(ctx, userID)
+	} else {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		rows, err = queries.ScheduleFindManyByUserScoped(ctx, gadb.ScheduleFindManyByUserScopedParams{
+			TgtUserID:      userID,
+			OrganizationID: *organizationID,
+		})
+	}
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -151,6 +197,10 @@ func (store *Store) CreateScheduleTx(ctx context.Context, tx *sql.Tx, s *Schedul
 }
 
 func (store *Store) Update(ctx context.Context, s *Schedule) error {
+	return store.update(ctx, nil, s, nil)
+}
+
+func (store *Store) update(ctx context.Context, tx *sql.Tx, s *Schedule, organizationID *uuid.UUID) error {
 	n, err := s.Normalize()
 	if err != nil {
 		return err
@@ -171,42 +221,39 @@ func (store *Store) Update(ctx context.Context, s *Schedule) error {
 		return err
 	}
 
-	err = gadb.New(store.db).SchedUpdate(ctx, gadb.SchedUpdateParams{
-		ID:          id,
-		Name:        n.Name,
-		Description: n.Description,
-		TimeZone:    n.TimeZone.String(),
+	db := gadb.New(store.db)
+	if tx != nil {
+		db = db.WithTx(tx)
+	}
+	if organizationID == nil {
+		return db.SchedUpdate(ctx, gadb.SchedUpdateParams{
+			ID:          id,
+			Name:        n.Name,
+			Description: n.Description,
+			TimeZone:    n.TimeZone.String(),
+		})
+	}
+	if *organizationID == uuid.Nil {
+		return validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	rows, err := db.SchedUpdateScoped(ctx, gadb.SchedUpdateScopedParams{
+		ID:             id,
+		Name:           n.Name,
+		Description:    n.Description,
+		TimeZone:       n.TimeZone.String(),
+		OrganizationID: *organizationID,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
-func (store *Store) UpdateTx(ctx context.Context, tx *sql.Tx, s *Schedule) error {
-	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
-	if err != nil {
-		return err
-	}
-	n, err := s.Normalize()
-	if err != nil {
-		return err
-	}
-
-	err = validate.UUID("ScheduleID", n.ID)
-	if err != nil {
-		return err
-	}
-
-	id, err := uuid.Parse(n.ID)
-	if err != nil {
-		return err
-	}
-
-	err = gadb.New(store.db).WithTx(tx).SchedUpdate(ctx, gadb.SchedUpdateParams{
-		ID:          id,
-		Name:        n.Name,
-		Description: n.Description,
-		TimeZone:    n.TimeZone.String(),
-	})
-	return err
+func (store *Store) UpdateTx(ctx context.Context, tx *sql.Tx, s *Schedule, organizationID *uuid.UUID) error {
+	return store.update(ctx, tx, s, organizationID)
 }
 
 func (store *Store) FindAll(ctx context.Context) ([]Schedule, error) {
@@ -238,7 +285,7 @@ func (store *Store) FindAll(ctx context.Context) ([]Schedule, error) {
 	return res, nil
 }
 
-func (store *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string) (*Schedule, error) {
+func (store *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string, organizationID *uuid.UUID) (*Schedule, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -258,19 +305,37 @@ func (store *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string)
 		db = db.WithTx(tx)
 	}
 
-	row, err := db.SchedFindOneForUpdate(ctx, schedID)
-	if err != nil {
-		return nil, err
+	var s Schedule
+	var timeZone string
+	if organizationID == nil {
+		row, err := db.SchedFindOneForUpdate(ctx, schedID)
+		if err != nil {
+			return nil, err
+		}
+		s.ID = row.ID.String()
+		s.OrganizationID = row.OrganizationID
+		s.Name = row.Name
+		s.Description = row.Description
+		timeZone = row.TimeZone
+	} else {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		row, err := db.SchedFindOneForUpdateScoped(ctx, gadb.SchedFindOneForUpdateScopedParams{
+			ID:             schedID,
+			OrganizationID: *organizationID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.ID = row.ID.String()
+		s.OrganizationID = row.OrganizationID
+		s.Name = row.Name
+		s.Description = row.Description
+		timeZone = row.TimeZone
 	}
 
-	s := Schedule{
-		ID:             row.ID.String(),
-		OrganizationID: row.OrganizationID,
-		Name:           row.Name,
-		Description:    row.Description,
-	}
-
-	s.TimeZone, err = util.LoadLocation(row.TimeZone)
+	s.TimeZone, err = util.LoadLocation(timeZone)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +343,7 @@ func (store *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string)
 	return &s, nil
 }
 
-func (store *Store) FindOne(ctx context.Context, id string) (*Schedule, error) {
+func (store *Store) FindOne(ctx context.Context, id string, organizationID *uuid.UUID) (*Schedule, error) {
 	err := validate.UUID("ScheduleID", id)
 	if err != nil {
 		return nil, err
@@ -293,23 +358,44 @@ func (store *Store) FindOne(ctx context.Context, id string) (*Schedule, error) {
 		return nil, err
 	}
 
-	row, err := gadb.New(store.db).SchedFindOne(ctx, gadb.SchedFindOneParams{
-		ID:     schedID,
-		UserID: permission.UserNullUUID(ctx).UUID,
-	})
-	if err != nil {
-		return nil, err
+	db := gadb.New(store.db)
+	var s Schedule
+	var timeZone string
+	if organizationID == nil {
+		row, err := db.SchedFindOne(ctx, gadb.SchedFindOneParams{
+			ID:     schedID,
+			UserID: permission.UserNullUUID(ctx).UUID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.ID = row.ID.String()
+		s.OrganizationID = row.OrganizationID
+		s.Name = row.Name
+		s.Description = row.Description
+		s.isUserFavorite = row.IsFavorite
+		timeZone = row.TimeZone
+	} else {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		row, err := db.SchedFindOneScoped(ctx, gadb.SchedFindOneScopedParams{
+			ID:             schedID,
+			UserID:         permission.UserNullUUID(ctx).UUID,
+			OrganizationID: *organizationID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.ID = row.ID.String()
+		s.OrganizationID = row.OrganizationID
+		s.Name = row.Name
+		s.Description = row.Description
+		s.isUserFavorite = row.IsFavorite
+		timeZone = row.TimeZone
 	}
 
-	s := Schedule{
-		ID:             row.ID.String(),
-		OrganizationID: row.OrganizationID,
-		Name:           row.Name,
-		Description:    row.Description,
-		isUserFavorite: row.IsFavorite,
-	}
-
-	s.TimeZone, err = util.LoadLocation(row.TimeZone)
+	s.TimeZone, err = util.LoadLocation(timeZone)
 	if err != nil {
 		return nil, err
 	}
@@ -317,15 +403,15 @@ func (store *Store) FindOne(ctx context.Context, id string) (*Schedule, error) {
 	return &s, nil
 }
 
-func (store *Store) Delete(ctx context.Context, id string) error {
-	return store.DeleteTx(ctx, nil, id)
+func (store *Store) Delete(ctx context.Context, id string, organizationID *uuid.UUID) error {
+	return store.DeleteTx(ctx, nil, id, organizationID)
 }
 
-func (store *Store) DeleteTx(ctx context.Context, tx *sql.Tx, id string) error {
-	return store.DeleteManyTx(ctx, tx, []string{id})
+func (store *Store) DeleteTx(ctx context.Context, tx *sql.Tx, id string, organizationID *uuid.UUID) error {
+	return store.DeleteManyTx(ctx, tx, []string{id}, organizationID)
 }
 
-func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string) error {
+func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return err
@@ -333,18 +419,9 @@ func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string) 
 	if len(ids) == 0 {
 		return nil
 	}
-	err = validate.ManyUUID("ScheduleID", ids, 50)
+	parsedIDs, err := validate.ParseManyUUID("ScheduleID", ids, 50)
 	if err != nil {
 		return err
-	}
-
-	// Convert string IDs to UUIDs
-	uuids := make([]uuid.UUID, len(ids))
-	for i, id := range ids {
-		uuids[i], err = uuid.Parse(id)
-		if err != nil {
-			return err
-		}
 	}
 
 	db := gadb.New(store.db)
@@ -352,6 +429,25 @@ func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string) 
 		db = db.WithTx(tx)
 	}
 
-	err = db.SchedDeleteMany(ctx, uuids)
-	return err
+	if organizationID == nil {
+		return db.SchedDeleteMany(ctx, parsedIDs)
+	}
+	if *organizationID == uuid.Nil {
+		return validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	rows, err := db.SchedDeleteManyScoped(ctx, gadb.SchedDeleteManyScopedParams{
+		Column1:        parsedIDs,
+		OrganizationID: *organizationID,
+	})
+	if err != nil {
+		return err
+	}
+	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
+	for _, id := range parsedIDs {
+		want[id] = struct{}{}
+	}
+	if rows != int64(len(want)) {
+		return sql.ErrNoRows
+	}
+	return nil
 }

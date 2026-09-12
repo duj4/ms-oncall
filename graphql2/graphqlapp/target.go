@@ -35,7 +35,7 @@ func (t *Target) Name(ctx context.Context, raw *assignment.RawTarget) (string, e
 		return "", err
 	}
 
-	info, err := t.DestReg.DisplayInfo(ctx, dest)
+	info, err := (*App)(t).destinationDisplayInfo(ctx, dest)
 	if err != nil {
 		return "", err
 	}

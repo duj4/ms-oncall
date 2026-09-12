@@ -26,7 +26,7 @@ func (a *UserCalendarSubscription) FullSchedule(ctx context.Context, obj *calsub
 }
 
 func (a *UserCalendarSubscription) Schedule(ctx context.Context, obj *calsub.Subscription) (*schedule.Schedule, error) {
-	return a.ScheduleStore.FindOne(ctx, obj.ScheduleID)
+	return (*App)(a).FindOneSchedule(ctx, obj.ScheduleID)
 }
 
 func (a *UserCalendarSubscription) URL(ctx context.Context, obj *calsub.Subscription) (*string, error) {

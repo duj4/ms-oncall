@@ -186,6 +186,51 @@ func TestGraphQLRootOrganizationOwnershipFailsClosed(t *testing.T) {
 					require.True(t, strings.Contains(response.Errors[0].Message, "normal Organization scoped authority is required"), response.Errors[0].Message)
 				})
 			}
+
+			for _, operation := range []struct {
+				name  string
+				query string
+			}{
+				{
+					name: "get and search",
+					query: `query {
+						service(id: "00000000-0000-0000-0000-000000000101") {id}
+						services {nodes {id}}
+						schedule(id: "00000000-0000-0000-0000-000000000102") {id}
+						schedules {nodes {id}}
+						rotation(id: "00000000-0000-0000-0000-000000000103") {id}
+						rotations {nodes {id}}
+						escalationPolicy(id: "00000000-0000-0000-0000-000000000104") {id}
+						escalationPolicies {nodes {id}}
+					}`,
+				},
+				{
+					name: "update",
+					query: `mutation {
+						service: updateService(input: {id: "00000000-0000-0000-0000-000000000101", name: "denied"})
+						schedule: updateSchedule(input: {id: "00000000-0000-0000-0000-000000000102", name: "denied"})
+						rotation: updateRotation(input: {id: "00000000-0000-0000-0000-000000000103", name: "denied"})
+						policy: updateEscalationPolicy(input: {id: "00000000-0000-0000-0000-000000000104", name: "denied"})
+					}`,
+				},
+				{
+					name: "delete",
+					query: `mutation {
+						deleteAll(input: [
+							{id: "00000000-0000-0000-0000-000000000101", type: service},
+							{id: "00000000-0000-0000-0000-000000000102", type: schedule},
+							{id: "00000000-0000-0000-0000-000000000103", type: rotation},
+							{id: "00000000-0000-0000-0000-000000000104", type: escalationPolicy}
+						])
+					}`,
+				},
+			} {
+				t.Run(operation.name, func(t *testing.T) {
+					response := h.GraphQLQueryUserT(t, authority.userID, operation.query)
+					require.NotEmpty(t, response.Errors)
+					require.True(t, strings.Contains(response.Errors[0].Message, "normal Organization scoped authority is required"), response.Errors[0].Message)
+				})
+			}
 		})
 	}
 

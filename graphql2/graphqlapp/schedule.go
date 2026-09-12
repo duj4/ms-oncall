@@ -174,7 +174,11 @@ func (s *Schedule) Targets(ctx context.Context, raw *schedule.Schedule) ([]graph
 }
 
 func (s *Schedule) AssignedTo(ctx context.Context, raw *schedule.Schedule) ([]assignment.RawTarget, error) {
-	pols, err := s.PolicyStore.FindAllPoliciesBySchedule(ctx, raw.ID)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pols, err := s.PolicyStore.FindAllPoliciesBySchedule(ctx, raw.ID, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +197,10 @@ func (s *Schedule) AssignedTo(ctx context.Context, raw *schedule.Schedule) ([]as
 }
 
 func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateScheduleInput) (ok bool, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
 	var loc *time.Location
 	if input.TimeZone != nil {
 		loc, err = util.LoadLocation(*input.TimeZone)
@@ -201,7 +209,7 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 		}
 	}
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		sched, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, input.ID)
+		sched, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, input.ID, organizationID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("id", "not found")
 		}
@@ -219,7 +227,7 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 			sched.TimeZone = loc
 		}
 
-		return m.ScheduleStore.UpdateTx(ctx, tx, sched)
+		return m.ScheduleStore.UpdateTx(ctx, tx, sched, organizationID)
 	})
 
 	return err == nil, err
@@ -331,10 +339,17 @@ func (r *Schedule) TimeZone(ctx context.Context, data *schedule.Schedule) (strin
 }
 
 func (q *Query) Schedules(ctx context.Context, opts *graphql2.ScheduleSearchOptions) (conn *graphql2.ScheduleConnection, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		opts = &graphql2.ScheduleSearchOptions{}
 	}
 	var searchOpts schedule.SearchOptions
+	if organizationID != nil {
+		searchOpts.OrganizationID = *organizationID
+	}
 	searchOpts.FavoritesUserID = permission.UserID(ctx)
 	if opts.Search != nil {
 		searchOpts.Search = *opts.Search

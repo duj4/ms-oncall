@@ -101,7 +101,8 @@ type Harness struct {
 
 	pgTime *pgmocktime.Mocker
 
-	ignoreErrors []string
+	ignoreErrors          []string
+	expectedBackendErrors []*expectedBackendError
 
 	backend     *app.App
 	backendLogs io.Closer

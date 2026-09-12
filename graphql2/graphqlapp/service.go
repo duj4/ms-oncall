@@ -39,11 +39,18 @@ func (q *Query) Service(ctx context.Context, id string) (*service.Service, error
 }
 
 func (q *Query) Services(ctx context.Context, opts *graphql2.ServiceSearchOptions) (conn *graphql2.ServiceConnection, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		opts = &graphql2.ServiceSearchOptions{}
 	}
 
 	var searchOpts service.SearchOptions
+	if organizationID != nil {
+		searchOpts.OrganizationID = *organizationID
+	}
 	searchOpts.FavoritesUserID = permission.UserID(ctx)
 	if opts.Search != nil {
 		searchOpts.Search = *opts.Search
@@ -299,13 +306,17 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 }
 
 func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServiceInput) (bool, error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer sqlutil.Rollback(ctx, "graphql: update service", tx)
 
-	svc, err := a.ServiceStore.FindOneForUpdate(ctx, tx, input.ID)
+	svc, err := a.ServiceStore.FindOneForUpdate(ctx, tx, input.ID, organizationID)
 	if err != nil {
 		return false, err
 	}
@@ -324,7 +335,7 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 		svc.MaintenanceExpiresAt = *input.MaintenanceExpiresAt
 	}
 
-	err = a.ServiceStore.UpdateTx(ctx, tx, svc)
+	err = a.ServiceStore.UpdateTx(ctx, tx, svc, organizationID)
 	if err != nil {
 		return false, err
 	}

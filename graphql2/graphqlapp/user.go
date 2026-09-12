@@ -40,8 +40,19 @@ func (a *User) OnCallOverview(ctx context.Context, obj *user.User) (*graphql2.On
 	if err != nil {
 		return nil, err
 	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	organizationScope := uuid.NullUUID{}
+	if organizationID != nil {
+		organizationScope = uuid.NullUUID{UUID: *organizationID, Valid: true}
+	}
 
-	data, err := gadb.New(a.DB).GQLUserOnCallOverview(ctx, id)
+	data, err := gadb.New(a.DB).GQLUserOnCallOverview(ctx, gadb.GQLUserOnCallOverviewParams{
+		UserID:         id,
+		OrganizationID: organizationScope,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return &graphql2.OnCallOverview{ServiceAssignments: []graphql2.OnCallServiceAssignment{}}, nil
 	}
@@ -135,6 +146,11 @@ func (a *User) OnCallSteps(ctx context.Context, obj *user.User) ([]escalation.St
 }
 
 func (a *User) AssignedSchedules(ctx context.Context, obj *user.User) (schedules []schedule.Schedule, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
 		err = validate.UUID("UserID", obj.ID)
 		if err != nil {
@@ -150,7 +166,7 @@ func (a *User) AssignedSchedules(ctx context.Context, obj *user.User) (schedules
 		}
 
 		// get list of schedules user is on as a direct assignment, or indirectly from a rotation
-		schedules, err = (*App)(a).ScheduleStore.FindManyByUserID(ctx, tx, uid)
+		schedules, err = (*App)(a).ScheduleStore.FindManyByUserID(ctx, tx, uid, organizationID)
 		if err != nil {
 			return err
 		}

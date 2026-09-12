@@ -21,12 +21,17 @@ var ErrNoState = errors.New("no state available")
 type Store struct {
 	db *sql.DB
 
-	createRotation        *sql.Stmt
-	updateRotation        *sql.Stmt
-	findRotation          *sql.Stmt
-	findRotationForUpdate *sql.Stmt
-	deleteRotation        *sql.Stmt
-	findMany              *sql.Stmt
+	createRotation           *sql.Stmt
+	updateRotation           *sql.Stmt
+	updateRotationOrg        *sql.Stmt
+	findRotation             *sql.Stmt
+	findRotationOrg          *sql.Stmt
+	findRotationForUpdate    *sql.Stmt
+	findRotationForUpdateOrg *sql.Stmt
+	deleteRotation           *sql.Stmt
+	deleteRotationOrg        *sql.Stmt
+	findMany                 *sql.Stmt
+	findManyOrg              *sql.Stmt
 
 	findAllParticipants *sql.Stmt
 	addParticipant      *sql.Stmt
@@ -60,6 +65,21 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			)
 			UPDATE rotations SET name = $2, description = $3, type = $4, start_time = $5, shift_length = $6, time_zone = $7 WHERE id = $1
 		`),
+		updateRotationOrg: p.P(`
+			WITH set_shift_start AS (
+				UPDATE rotation_state
+				SET shift_start = now()
+				WHERE rotation_id = $1
+					AND EXISTS (
+						SELECT 1
+						FROM rotations
+						WHERE id = $1 AND organization_id = $8
+					)
+			)
+			UPDATE rotations
+			SET name = $2, description = $3, type = $4, start_time = $5, shift_length = $6, time_zone = $7
+			WHERE id = $1 AND organization_id = $8
+		`),
 		findRotation: p.P(`
 			SELECT 
 				r.id,
@@ -76,8 +96,42 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			AND fav.user_id = $2 
 			WHERE r.id = $1
 		`),
-		findRotationForUpdate: p.P(`SELECT id, organization_id, name, description, type, start_time, shift_length, time_zone FROM rotations WHERE id = $1 FOR UPDATE`),
-		deleteRotation:        p.P(`DELETE FROM rotations WHERE id = ANY($1)`),
+		findRotationOrg: p.P(`
+			SELECT
+				r.id,
+				r.organization_id,
+				r.name,
+				r.description,
+				r.type,
+				r.start_time,
+				r.shift_length,
+				r.time_zone,
+				fav IS DISTINCT FROM NULL
+			FROM rotations r
+			LEFT JOIN user_favorites fav ON fav.tgt_rotation_id = r.id
+			AND fav.user_id = $2
+			WHERE r.id = $1 AND r.organization_id = $3
+		`),
+		findRotationForUpdate:    p.P(`SELECT id, organization_id, name, description, type, start_time, shift_length, time_zone FROM rotations WHERE id = $1 FOR UPDATE`),
+		findRotationForUpdateOrg: p.P(`SELECT id, organization_id, name, description, type, start_time, shift_length, time_zone FROM rotations WHERE id = $1 AND organization_id = $2 FOR UPDATE`),
+		deleteRotation:           p.P(`DELETE FROM rotations WHERE id = ANY($1)`),
+		deleteRotationOrg: p.P(`
+			DELETE FROM rotations r
+			WHERE r.id = any($1)
+				AND r.organization_id = $2
+				AND (
+					SELECT count(*)
+					FROM (
+						SELECT DISTINCT requested_id
+						FROM unnest($1::uuid[]) AS requested(requested_id)
+					) requested
+				) = (
+					SELECT count(*)
+					FROM rotations matched
+					WHERE matched.id = any($1)
+						AND matched.organization_id = $2
+				)
+		`),
 
 		findMany: p.P(`
 			SELECT 
@@ -94,6 +148,22 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			LEFT JOIN user_favorites fav ON fav.tgt_rotation_id = r.id 
 			AND fav.user_id = $2 
 			WHERE r.id = ANY($1)
+		`),
+		findManyOrg: p.P(`
+			SELECT
+				r.id,
+				r.organization_id,
+				r.name,
+				r.description,
+				r.type,
+				r.start_time,
+				r.shift_length,
+				r.time_zone,
+				fav IS DISTINCT FROM NULL
+			FROM rotations r
+			LEFT JOIN user_favorites fav ON fav.tgt_rotation_id = r.id
+			AND fav.user_id = $2
+			WHERE r.id = ANY($1) AND r.organization_id = $3
 		`),
 
 		addParticipant: p.P(`
@@ -201,7 +271,7 @@ func (s *Store) CreateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation) (
 	return n, nil
 }
 
-func (s *Store) UpdateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation) error {
+func (s *Store) UpdateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation, organizationID *uuid.UUID) error {
 	err := validate.UUID("RotationID", r.ID)
 	if err != nil {
 		return err
@@ -217,15 +287,33 @@ func (s *Store) UpdateRotationTx(ctx context.Context, tx *sql.Tx, r *Rotation) e
 	}
 
 	stmt := s.updateRotation
+	args := []any{n.ID, n.Name, n.Description, n.Type, n.Start, n.ShiftLength, n.Start.Location().String()}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.updateRotationOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	_, err = stmt.ExecContext(ctx, n.ID, n.Name, n.Description, n.Type, n.Start, n.ShiftLength, n.Start.Location().String())
-	return err
+	result, err := stmt.ExecContext(ctx, args...)
+	if err != nil || organizationID == nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
-func (s *Store) FindMany(ctx context.Context, ids []string) ([]Rotation, error) {
+func (s *Store) FindMany(ctx context.Context, ids []string, organizationID *uuid.UUID) ([]Rotation, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -235,7 +323,16 @@ func (s *Store) FindMany(ctx context.Context, ids []string) ([]Rotation, error) 
 		return nil, err
 	}
 
-	rows, err := s.findMany.QueryContext(ctx, sqlutil.UUIDArray(ids), permission.UserNullUUID(ctx))
+	stmt := s.findMany
+	args := []any{sqlutil.UUIDArray(ids), permission.UserNullUUID(ctx)}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findManyOrg
+		args = append(args, *organizationID)
+	}
+	rows, err := stmt.QueryContext(ctx, args...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -263,7 +360,7 @@ func (s *Store) FindMany(ctx context.Context, ids []string) ([]Rotation, error) 
 	return result, nil
 }
 
-func (s *Store) FindRotation(ctx context.Context, id string) (*Rotation, error) {
+func (s *Store) FindRotation(ctx context.Context, id string, organizationID *uuid.UUID) (*Rotation, error) {
 	err := validate.UUID("RotationID", id)
 	if err != nil {
 		return nil, err
@@ -273,7 +370,16 @@ func (s *Store) FindRotation(ctx context.Context, id string) (*Rotation, error) 
 		return nil, err
 	}
 
-	row := s.findRotation.QueryRowContext(ctx, id, permission.UserNullUUID(ctx))
+	stmt := s.findRotation
+	args := []any{id, permission.UserNullUUID(ctx)}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findRotationOrg
+		args = append(args, *organizationID)
+	}
+	row := stmt.QueryRowContext(ctx, args...)
 	var r Rotation
 	var tz string
 	err = row.Scan(&r.ID, &r.OrganizationID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz, &r.isUserFavorite)
@@ -309,7 +415,7 @@ func (s *Store) FindParticipantCount(ctx context.Context, id string) (int, error
 	return count, nil
 }
 
-func (s *Store) FindRotationForUpdateTx(ctx context.Context, tx *sql.Tx, rotationID string) (*Rotation, error) {
+func (s *Store) FindRotationForUpdateTx(ctx context.Context, tx *sql.Tx, rotationID string, organizationID *uuid.UUID) (*Rotation, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -321,6 +427,14 @@ func (s *Store) FindRotationForUpdateTx(ctx context.Context, tx *sql.Tx, rotatio
 	}
 
 	stmt := s.findRotationForUpdate
+	args := []any{rotationID}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findRotationForUpdateOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		_, err = tx.StmtContext(ctx, s.lockPart).ExecContext(ctx)
 		if err != nil {
@@ -330,7 +444,7 @@ func (s *Store) FindRotationForUpdateTx(ctx context.Context, tx *sql.Tx, rotatio
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	row := stmt.QueryRowContext(ctx, rotationID)
+	row := stmt.QueryRowContext(ctx, args...)
 	var r Rotation
 	var tz string
 	err = row.Scan(&r.ID, &r.OrganizationID, &r.Name, &r.Description, &r.Type, &r.Start, &r.ShiftLength, &tz)
@@ -345,19 +459,47 @@ func (s *Store) FindRotationForUpdateTx(ctx context.Context, tx *sql.Tx, rotatio
 	return &r, nil
 }
 
-func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string) error {
+func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return err
 	}
-	err = validate.ManyUUID("RotationID", ids, 50)
+	parsedIDs, err := validate.ParseManyUUID("RotationID", ids, 50)
 	if err != nil {
 		return err
 	}
 
+	if len(ids) == 0 {
+		return nil
+	}
+	if organizationID != nil && *organizationID == uuid.Nil {
+		return validation.NewFieldError("OrganizationID", "must be specified")
+	}
+
+	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
+	for _, id := range parsedIDs {
+		want[id] = struct{}{}
+	}
+
 	return s.withTxLock(ctx, tx, func(tx *sql.Tx) error {
-		_, err := tx.StmtContext(ctx, s.deleteRotation).ExecContext(ctx, sqlutil.UUIDArray(ids))
-		return err
+		stmt := s.deleteRotation
+		args := []any{sqlutil.UUIDArray(ids)}
+		if organizationID != nil {
+			stmt = s.deleteRotationOrg
+			args = append(args, *organizationID)
+		}
+		result, err := tx.StmtContext(ctx, stmt).ExecContext(ctx, args...)
+		if err != nil || organizationID == nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != int64(len(want)) {
+			return sql.ErrNoRows
+		}
+		return nil
 	})
 }
 

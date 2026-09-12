@@ -54,7 +54,7 @@ func (a *ContactMethod) StatusUpdates(ctx context.Context, obj *contactmethod.Co
 }
 
 func (a *ContactMethod) FormattedValue(ctx context.Context, obj *contactmethod.ContactMethod) (string, error) {
-	info, err := a.DestReg.DisplayInfo(ctx, obj.Dest)
+	info, err := (*App)(a).destinationDisplayInfo(ctx, obj.Dest)
 	if err != nil {
 		return "", err
 	}

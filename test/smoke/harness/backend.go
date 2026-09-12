@@ -4,7 +4,78 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"time"
 )
+
+type expectedBackendError struct {
+	substring string
+	matched   chan struct{}
+}
+
+func (h *Harness) shouldIgnoreBackendError(msg string) bool {
+	h.mx.Lock()
+	defer h.mx.Unlock()
+
+	for i, expected := range h.expectedBackendErrors {
+		if !strings.Contains(msg, expected.substring) {
+			continue
+		}
+		copy(h.expectedBackendErrors[i:], h.expectedBackendErrors[i+1:])
+		h.expectedBackendErrors[len(h.expectedBackendErrors)-1] = nil
+		h.expectedBackendErrors = h.expectedBackendErrors[:len(h.expectedBackendErrors)-1]
+		close(expected.matched)
+		return true
+	}
+	for _, substring := range h.ignoreErrors {
+		if strings.Contains(msg, substring) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExpectBackendError allows exactly one backend error containing substr and
+// returns a function that waits for that expectation to be consumed.
+func (h *Harness) ExpectBackendError(substr string) func() {
+	h.t.Helper()
+	expected := &expectedBackendError{substring: substr, matched: make(chan struct{})}
+	h.mx.Lock()
+	h.expectedBackendErrors = append(h.expectedBackendErrors, expected)
+	h.mx.Unlock()
+
+	return func() {
+		h.t.Helper()
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-expected.matched:
+			return
+		case <-timer.C:
+		}
+
+		h.mx.Lock()
+		pending := false
+		for i, candidate := range h.expectedBackendErrors {
+			if candidate != expected {
+				continue
+			}
+			copy(h.expectedBackendErrors[i:], h.expectedBackendErrors[i+1:])
+			h.expectedBackendErrors[len(h.expectedBackendErrors)-1] = nil
+			h.expectedBackendErrors = h.expectedBackendErrors[:len(h.expectedBackendErrors)-1]
+			pending = true
+			break
+		}
+		h.mx.Unlock()
+		if pending {
+			h.t.Errorf("expected backend error containing %q", substr)
+			return
+		}
+
+		// The log watcher consumed the expectation immediately before the timer
+		// fired and will close matched after removing it.
+		<-expected.matched
+	}
+}
 
 func (h *Harness) watchBackendLogs(r io.Reader) {
 	dec := json.NewDecoder(r)
@@ -16,17 +87,6 @@ func (h *Harness) watchBackendLogs(r io.Reader) {
 		SQL          string
 		ProviderType string
 		URL          string
-	}
-
-	ignore := func(msg string) bool {
-		h.mx.Lock()
-		defer h.mx.Unlock()
-		for _, s := range h.ignoreErrors {
-			if strings.Contains(msg, s) {
-				return true
-			}
-		}
-		return false
 	}
 
 	h.IgnoreErrorsWith("rotation advanced late")
@@ -44,7 +104,7 @@ func (h *Harness) watchBackendLogs(r io.Reader) {
 			break
 		}
 
-		if ignore(entry.Error) {
+		if h.shouldIgnoreBackendError(entry.Error) {
 			entry.Level = "ignore[" + entry.Level + "]"
 		}
 		if entry.Level == "error" || entry.Level == "fatal" {

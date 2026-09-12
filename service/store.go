@@ -16,13 +16,19 @@ import (
 type Store struct {
 	db *sql.DB
 
-	findOne     *sql.Stmt
-	findOneUp   *sql.Stmt
-	findMany    *sql.Stmt
-	findAllByEP *sql.Stmt
-	insert      *sql.Stmt
-	update      *sql.Stmt
-	delete      *sql.Stmt
+	findOne        *sql.Stmt
+	findOneOrg     *sql.Stmt
+	findOneUp      *sql.Stmt
+	findOneUpOrg   *sql.Stmt
+	findMany       *sql.Stmt
+	findManyOrg    *sql.Stmt
+	findAllByEP    *sql.Stmt
+	findAllByEPOrg *sql.Stmt
+	insert         *sql.Stmt
+	update         *sql.Stmt
+	updateOrg      *sql.Stmt
+	delete         *sql.Stmt
+	deleteOrg      *sql.Stmt
 }
 
 func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
@@ -47,6 +53,24 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		WHERE
 			s.id = $1
 	`)
+	s.findOneOrg = p(`
+		SELECT
+			s.id,
+			s.organization_id,
+			s.name,
+			s.description,
+			s.escalation_policy_id,
+			e.name,
+			fav is distinct from null,
+			s.maintenance_expires_at
+		FROM
+			services s
+		JOIN escalation_policies e ON e.id = s.escalation_policy_id
+		LEFT JOIN user_favorites fav ON s.id = fav.tgt_service_id AND fav.user_id = $2
+		WHERE
+			s.id = $1 AND
+			s.organization_id = $3
+	`)
 	s.findOneUp = p(`
 		SELECT
 			s.id,
@@ -56,6 +80,17 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			s.escalation_policy_id
 		FROM services s
 		WHERE s.id = $1
+		FOR UPDATE
+	`)
+	s.findOneUpOrg = p(`
+		SELECT
+			s.id,
+			s.organization_id,
+			s.name,
+			s.description,
+			s.escalation_policy_id
+		FROM services s
+		WHERE s.id = $1 AND s.organization_id = $2
 		FOR UPDATE
 	`)
 	s.findMany = p(`
@@ -75,6 +110,24 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		WHERE
 			s.id = any($1)
 	`)
+	s.findManyOrg = p(`
+		SELECT
+			s.id,
+			s.organization_id,
+			s.name,
+			s.description,
+			s.escalation_policy_id,
+			e.name,
+			fav is distinct from null,
+			s.maintenance_expires_at
+		FROM
+			services s
+		JOIN escalation_policies e ON e.id = s.escalation_policy_id
+		LEFT JOIN user_favorites fav ON s.id = fav.tgt_service_id AND fav.user_id = $2
+		WHERE
+			s.id = any($1) AND
+			s.organization_id = $3
+	`)
 
 	s.findAllByEP = p(`
 		SELECT
@@ -93,14 +146,50 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			e.id = $1 AND
 			e.id = s.escalation_policy_id
 	`)
+	s.findAllByEPOrg = p(`
+		SELECT
+			s.id,
+			s.organization_id,
+			s.name,
+			s.description,
+			s.escalation_policy_id,
+			e.name,
+			false,
+			s.maintenance_expires_at
+		FROM
+			services s,
+			escalation_policies e
+		WHERE
+			e.id = $1 AND
+			e.id = s.escalation_policy_id AND
+			s.organization_id = $2
+	`)
 	s.insert = p(`INSERT INTO services (id,organization_id,name,description,escalation_policy_id) VALUES ($1,$2,$3,$4,$5)`)
 	s.update = p(`UPDATE services SET name = $2, description = $3, escalation_policy_id = $4, maintenance_expires_at = $5 WHERE id = $1`)
+	s.updateOrg = p(`UPDATE services SET name = $2, description = $3, escalation_policy_id = $4, maintenance_expires_at = $5 WHERE id = $1 AND organization_id = $6`)
 	s.delete = p(`DELETE FROM services WHERE id = any($1)`)
+	s.deleteOrg = p(`
+		DELETE FROM services s
+		WHERE s.id = any($1)
+			AND s.organization_id = $2
+			AND (
+				SELECT count(*)
+				FROM (
+					SELECT DISTINCT requested_id
+					FROM unnest($1::uuid[]) AS requested(requested_id)
+				) requested
+			) = (
+				SELECT count(*)
+				FROM services matched
+				WHERE matched.id = any($1)
+					AND matched.organization_id = $2
+			)
+	`)
 
 	return s, prep.Err
 }
 
-func (s *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string) (*Service, error) {
+func (s *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string, organizationID *uuid.UUID) (*Service, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -109,8 +198,21 @@ func (s *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string) (*S
 	if err != nil {
 		return nil, err
 	}
+	stmt := s.findOneUp
+	args := []any{id}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findOneUpOrg
+		args = append(args, *organizationID)
+	}
+	if tx != nil {
+		stmt = tx.StmtContext(ctx, stmt)
+	}
+
 	var svc Service
-	err = tx.StmtContext(ctx, s.findOneUp).QueryRowContext(ctx, id).Scan(
+	err = stmt.QueryRowContext(ctx, args...).Scan(
 		&svc.ID,
 		&svc.OrganizationID,
 		&svc.Name,
@@ -124,7 +226,7 @@ func (s *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string) (*S
 }
 
 // FindMany returns slice of Service objects given a slice of serviceIDs
-func (s *Store) FindMany(ctx context.Context, ids []string) ([]Service, error) {
+func (s *Store) FindMany(ctx context.Context, ids []string, organizationID *uuid.UUID) ([]Service, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -137,7 +239,16 @@ func (s *Store) FindMany(ctx context.Context, ids []string) ([]Service, error) {
 		return nil, err
 	}
 
-	rows, err := s.findMany.QueryContext(ctx, sqlutil.UUIDArray(ids), permission.UserNullUUID(ctx))
+	stmt := s.findMany
+	args := []any{sqlutil.UUIDArray(ids), permission.UserNullUUID(ctx)}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findManyOrg
+		args = append(args, *organizationID)
+	}
+	rows, err := stmt.QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -171,21 +282,46 @@ func (s *Store) CreateServiceTx(ctx context.Context, tx *sql.Tx, svc *Service) (
 	return n, nil
 }
 
-func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string) error {
+func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return err
 	}
-	err = validate.ManyUUID("ServiceID", ids, 50)
+	parsedIDs, err := validate.ParseManyUUID("ServiceID", ids, 50)
 	if err != nil {
 		return err
 	}
+	if len(ids) == 0 {
+		return nil
+	}
+	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
+	for _, id := range parsedIDs {
+		want[id] = struct{}{}
+	}
 	stmt := s.delete
+	args := []any{sqlutil.UUIDArray(ids)}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.deleteOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
-	_, err = stmt.ExecContext(ctx, sqlutil.UUIDArray(ids))
-	return err
+	result, err := stmt.ExecContext(ctx, args...)
+	if err != nil || organizationID == nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != int64(len(want)) {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func wrap(tx *sql.Tx, s *sql.Stmt) *sql.Stmt {
@@ -195,7 +331,7 @@ func wrap(tx *sql.Tx, s *sql.Stmt) *sql.Stmt {
 	return tx.Stmt(s)
 }
 
-func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, svc *Service) error {
+func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, svc *Service, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return err
@@ -216,11 +352,30 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, svc *Service) error {
 		Valid: !n.MaintenanceExpiresAt.IsZero(),
 	}
 
-	_, err = wrap(tx, s.update).ExecContext(ctx, n.ID, n.Name, n.Description, n.EscalationPolicyID, mExp)
-	return err
+	stmt := s.update
+	args := []any{n.ID, n.Name, n.Description, n.EscalationPolicyID, mExp}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.updateOrg
+		args = append(args, *organizationID)
+	}
+	result, err := wrap(tx, stmt).ExecContext(ctx, args...)
+	if err != nil || organizationID == nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
-func (s *Store) FindOneForUser(ctx context.Context, userID, serviceID string) (*Service, error) {
+func (s *Store) FindOneForUser(ctx context.Context, userID, serviceID string, organizationID *uuid.UUID) (*Service, error) {
 	err := validate.UUID("ServiceID", serviceID)
 	if err != nil {
 		return nil, err
@@ -244,7 +399,16 @@ func (s *Store) FindOneForUser(ctx context.Context, userID, serviceID string) (*
 		return nil, err
 	}
 
-	row := s.findOne.QueryRowContext(ctx, serviceID, uid)
+	stmt := s.findOne
+	args := []any{serviceID, uid}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findOneOrg
+		args = append(args, *organizationID)
+	}
+	row := stmt.QueryRowContext(ctx, args...)
 	var svc Service
 	err = scanFrom(&svc, row.Scan)
 	if err != nil {
@@ -254,9 +418,9 @@ func (s *Store) FindOneForUser(ctx context.Context, userID, serviceID string) (*
 	return &svc, nil
 }
 
-func (s *Store) FindOne(ctx context.Context, id string) (*Service, error) {
+func (s *Store) FindOne(ctx context.Context, id string, organizationID *uuid.UUID) (*Service, error) {
 	// old method just calls new method
-	return s.FindOneForUser(ctx, "", id)
+	return s.FindOneForUser(ctx, "", id, organizationID)
 }
 
 func scanFrom(s *Service, f func(args ...interface{}) error) error {
@@ -290,13 +454,22 @@ func scanAllFrom(rows *sql.Rows) (services []Service, err error) {
 	return services, nil
 }
 
-func (s *Store) FindAllByEP(ctx context.Context, epID string) ([]Service, error) {
+func (s *Store) FindAllByEP(ctx context.Context, epID string, organizationID *uuid.UUID) ([]Service, error) {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := s.findAllByEP.QueryContext(ctx, epID)
+	stmt := s.findAllByEP
+	args := []any{epID}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findAllByEPOrg
+		args = append(args, *organizationID)
+	}
+	rows, err := stmt.QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
