@@ -253,6 +253,14 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 				return validation.AddPrefix("newEscalationPolicy.", err)
 			}
 			svc.EscalationPolicyID = ep.ID
+		} else {
+			_, err := m.PolicyStore.FindOnePolicyTx(ctx, tx, svc.EscalationPolicyID, &svc.OrganizationID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return validation.NewFieldError("EscalationPolicyID", "does not exist")
+			}
+			if err != nil {
+				return err
+			}
 		}
 
 		result, err = m.ServiceStore.CreateServiceTx(ctx, tx, svc)
@@ -333,6 +341,20 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 
 	if input.MaintenanceExpiresAt != nil {
 		svc.MaintenanceExpiresAt = *input.MaintenanceExpiresAt
+	}
+
+	if input.EscalationPolicyID != nil && organizationID != nil {
+		// Preserve Service validation before resolving a replacement reference.
+		if _, err := svc.Normalize(); err != nil {
+			return false, err
+		}
+		_, err := a.PolicyStore.FindOnePolicyTx(ctx, tx, svc.EscalationPolicyID, &svc.OrganizationID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, validation.NewFieldError("EscalationPolicyID", "does not exist")
+		}
+		if err != nil {
+			return false, err
+		}
 	}
 
 	err = a.ServiceStore.UpdateTx(ctx, tx, svc, organizationID)
