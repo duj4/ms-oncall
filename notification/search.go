@@ -45,6 +45,11 @@ type MessageLog struct {
 
 // SearchOptions allow filtering and paginating the list of messages.
 type SearchOptions struct {
+	// OrganizationID scopes the optional live Service projection for ordinary
+	// authenticated-human requests. Its zero value preserves the existing
+	// trusted/internal compatibility path.
+	OrganizationID uuid.UUID `json:"-"`
+
 	Search string       `json:"s,omitempty"`
 	After  SearchCursor `json:"a,omitempty"`
 
@@ -72,12 +77,15 @@ var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()
 	SELECT
 		om.id, om.created_at, om.last_status_at, om.message_type, om.last_status, om.status_details,
 		om.src_value, om.alert_id, om.provider_msg_id,
-		om.user_id, u.name, om.contact_method_id, om.channel_id, om.service_id, s.name,
+		om.user_id, u.name, om.contact_method_id, om.channel_id, {{if .OrganizationScoped}}s.id{{else}}om.service_id{{end}}, s.name,
 		om.sent_at, om.retry_count
 	{{end}}
 	FROM outgoing_messages om
 	LEFT JOIN users u ON om.user_id = u.id
 	LEFT JOIN services s ON om.service_id = s.id
+	{{if .OrganizationScoped}}
+		AND s.organization_id = :organizationID
+	{{end}}
 	LEFT JOIN user_contact_methods cm ON om.contact_method_id = cm.id
 	LEFT JOIN notification_channels nc ON om.channel_id = nc.id
 	WHERE true
@@ -126,6 +134,8 @@ type renderData struct {
 	TimeSeriesInterval time.Duration
 }
 
+func (opts renderData) OrganizationScoped() bool { return opts.OrganizationID != uuid.Nil }
+
 func (opts renderData) Normalize() (*renderData, error) {
 	if opts.Limit == 0 {
 		opts.Limit = 50
@@ -164,6 +174,7 @@ func (opts renderData) Normalize() (*renderData, error) {
 
 func (opts renderData) QueryArgs() []sql.NamedArg {
 	return []sql.NamedArg{
+		sql.Named("organizationID", opts.OrganizationID),
 		sql.Named("search", opts.Search),
 		sql.Named("cursorCreatedAt", opts.After.CreatedAt),
 		sql.Named("createdAfter", opts.CreatedAfter),

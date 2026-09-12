@@ -152,6 +152,13 @@ func (q *Query) MessageLogs(ctx context.Context, opts *graphql2.MessageLogSearch
 	if searchOpts.Limit == 0 {
 		searchOpts.Limit = 50
 	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if organizationID != nil {
+		searchOpts.OrganizationID = *organizationID
+	}
 
 	searchOpts.Limit++
 	logs, err := q.NotificationStore.Search(ctx, &searchOpts)

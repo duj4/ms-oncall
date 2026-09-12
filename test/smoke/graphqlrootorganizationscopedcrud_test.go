@@ -500,28 +500,37 @@ func TestGraphQLUserOnCallOverviewOrganizationScoped(t *testing.T) {
 	h := harness.NewHarness(t, scopedRootCRUDSQL, "")
 	defer h.Close()
 
-	// Materialize the canonical Org A human before referring to it from the
-	// current on-call table.
+	// Materialize the canonical Org A human before using it in a direct-user
+	// escalation action. Direct-user actions are stable source data from which
+	// the Escalation Manager derives the current on-call table.
 	h.GraphQLToken(harness.DefaultGraphQLAdminUserID)
 	_, err := h.App().DB().Exec(`
 		INSERT INTO escalation_policy_steps (id, escalation_policy_id, delay)
 		VALUES ($1, $2, 0)
 	`, h.UUID("policy-b1-step"), h.UUID("policy-b1"))
 	require.NoError(t, err)
-	setCurrentOnCall := func() {
+	_, err = h.App().DB().Exec(`
+		INSERT INTO escalation_policy_actions (escalation_policy_step_id, user_id)
+		VALUES ($1, $2), ($3, $4)
+	`, h.UUID("policy-a1-step"), harness.DefaultGraphQLAdminUserID, h.UUID("policy-b1-step"), h.UUID("scoped-user-b"))
+	require.NoError(t, err)
+
+	assertCurrentOnCall := func() {
 		t.Helper()
-		_, err := h.App().DB().Exec(`
-			DELETE FROM ep_step_on_call_users
-			WHERE user_id IN ($1, $2)
-		`, harness.DefaultGraphQLAdminUserID, h.UUID("scoped-user-b"))
+		var orgACount, orgBCount int
+		err := h.App().DB().QueryRow(`
+			SELECT
+				count(*) FILTER (WHERE ep_step_id = $1 AND user_id = $2),
+				count(*) FILTER (WHERE ep_step_id = $3 AND user_id = $4)
+			FROM ep_step_on_call_users
+			WHERE end_time IS NULL
+		`, h.UUID("policy-a1-step"), harness.DefaultGraphQLAdminUserID, h.UUID("policy-b1-step"), h.UUID("scoped-user-b")).Scan(&orgACount, &orgBCount)
 		require.NoError(t, err)
-		_, err = h.App().DB().Exec(`
-			INSERT INTO ep_step_on_call_users (ep_step_id, user_id)
-			VALUES ($1, $2), ($3, $4)
-		`, h.UUID("policy-a1-step"), harness.DefaultGraphQLAdminUserID, h.UUID("policy-b1-step"), h.UUID("scoped-user-b"))
-		require.NoError(t, err)
+		require.Equal(t, 1, orgACount, "Org A source assignment must remain active")
+		require.Equal(t, 1, orgBCount, "Org B source assignment must remain active")
 	}
-	setCurrentOnCall()
+	h.Trigger()
+	assertCurrentOnCall()
 
 	humanResponse := h.GraphQLQueryT(t, fmt.Sprintf(`
 		query {
@@ -574,6 +583,7 @@ func TestGraphQLUserOnCallOverviewOrganizationScoped(t *testing.T) {
 	require.ElementsMatch(t, []string{h.UUID("service-a1"), h.UUID("service-delete-a"), h.UUID("service-mixed-a")}, sameOrgServiceIDs)
 	require.Zero(t, humanResult.CrossUser.OnCallOverview.ServiceCount)
 	require.Empty(t, humanResult.CrossUser.OnCallOverview.ServiceAssignments)
+	assertCurrentOnCall()
 
 	const queryDocument = `
 		query OnCallCompatibility($userID: ID!) {
@@ -615,7 +625,8 @@ func TestGraphQLUserOnCallOverviewOrganizationScoped(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+created.CreateGQLAPIKey.Token)
 	req.Header.Set("Content-Type", "application/json")
-	setCurrentOnCall()
+	h.Trigger()
+	assertCurrentOnCall()
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -643,6 +654,146 @@ func TestGraphQLUserOnCallOverviewOrganizationScoped(t *testing.T) {
 		h.UUID("service-delete-b"),
 		h.UUID("service-mixed-b"),
 	}, nonHumanServiceIDs)
+	assertCurrentOnCall()
+}
+
+type scopedSmokeMessageLogNode struct {
+	ID          string  `json:"id"`
+	ServiceID   *string `json:"serviceID"`
+	ServiceName *string `json:"serviceName"`
+}
+
+func requireScopedSmokeMessageLogNodes(t *testing.T, nodes []scopedSmokeMessageLogNode, h *harness.Harness, crossServiceVisible bool) {
+	t.Helper()
+
+	byID := make(map[string]scopedSmokeMessageLogNode, len(nodes))
+	for _, node := range nodes {
+		byID[node.ID] = node
+	}
+	require.Len(t, byID, 3)
+
+	own := byID[h.UUID("message-log-own")]
+	require.NotNil(t, own.ServiceID)
+	require.Equal(t, h.UUID("service-a1"), *own.ServiceID)
+	require.NotNil(t, own.ServiceName)
+	require.Equal(t, "Human Scoped Service 01", *own.ServiceName)
+
+	cross := byID[h.UUID("message-log-cross")]
+	if crossServiceVisible {
+		require.NotNil(t, cross.ServiceID)
+		require.Equal(t, h.UUID("service-b1"), *cross.ServiceID)
+		require.NotNil(t, cross.ServiceName)
+		require.Equal(t, "Human Scoped Service 02", *cross.ServiceName)
+	} else {
+		require.Nil(t, cross.ServiceID)
+		require.Nil(t, cross.ServiceName)
+	}
+
+	withoutService := byID[h.UUID("message-log-without-service")]
+	require.Nil(t, withoutService.ServiceID)
+	require.Nil(t, withoutService.ServiceName)
+}
+
+func TestGraphQLMessageLogsOrganizationScoped(t *testing.T) {
+	h := harness.NewHarness(t, scopedRootCRUDSQL, "")
+	defer h.Close()
+
+	h.GraphQLToken(harness.DefaultGraphQLAdminUserID)
+	_, err := h.App().DB().Exec(`
+		INSERT INTO user_contact_methods (id, user_id, name, type, value, disabled)
+		VALUES ($1, $2, 'Scoped message-log destination', 'EMAIL', 'scoped-message-log@example.invalid', false)
+	`, h.UUID("message-log-contact-method"), harness.DefaultGraphQLAdminUserID)
+	require.NoError(t, err)
+	_, err = h.App().DB().Exec(`
+		INSERT INTO outgoing_messages (
+			id, message_type, created_at, sent_at, contact_method_id, last_status, user_id, service_id
+		) VALUES
+			($1, 'test_notification', '2026-09-10 00:01:00Z', '2026-09-10 00:01:01Z', $2, 'delivered', $3, $4),
+			($5, 'test_notification', '2026-09-10 00:02:00Z', '2026-09-10 00:02:01Z', $2, 'delivered', $3, $6),
+			($7, 'test_notification', '2026-09-10 00:03:00Z', '2026-09-10 00:03:01Z', $2, 'delivered', $3, NULL)
+	`,
+		h.UUID("message-log-own"), h.UUID("message-log-contact-method"),
+		harness.DefaultGraphQLAdminUserID, h.UUID("service-a1"),
+		h.UUID("message-log-cross"), h.UUID("service-b1"),
+		h.UUID("message-log-without-service"),
+	)
+	require.NoError(t, err)
+
+	humanResponse := h.GraphQLQueryT(t, fmt.Sprintf(`
+		query {
+			ownService: service(id: %q) { id name }
+			crossService: service(id: %q) { id name }
+			messageLogs(input: {first: 10}) { nodes { id serviceID serviceName } }
+			debugMessages(input: {first: 10}) { id serviceID serviceName }
+		}
+	`, h.UUID("service-a1"), h.UUID("service-b1")))
+	require.Empty(t, humanResponse.Errors)
+	var humanResult struct {
+		OwnService   *struct{ ID, Name string } `json:"ownService"`
+		CrossService *struct{ ID, Name string } `json:"crossService"`
+		MessageLogs  struct {
+			Nodes []scopedSmokeMessageLogNode `json:"nodes"`
+		} `json:"messageLogs"`
+		DebugMessages []scopedSmokeMessageLogNode `json:"debugMessages"`
+	}
+	require.NoError(t, json.Unmarshal(humanResponse.Data, &humanResult))
+	require.NotNil(t, humanResult.OwnService)
+	require.Equal(t, h.UUID("service-a1"), humanResult.OwnService.ID)
+	require.Nil(t, humanResult.CrossService)
+	requireScopedSmokeMessageLogNodes(t, humanResult.MessageLogs.Nodes, h, false)
+	requireScopedSmokeMessageLogNodes(t, humanResult.DebugMessages, h, false)
+
+	const queryDocument = `
+		query MessageLogCompatibility {
+			messageLogs(input: {first: 10}) { nodes { id serviceID serviceName } }
+			debugMessages(input: {first: 10}) { id serviceID serviceName }
+		}
+	`
+	createResponse := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
+		mutation CreateMessageLogCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
+			createGQLAPIKey(input: {
+				name: "message-log-scope-compatibility"
+				description: "message-log scope compatibility smoke"
+				expiresAt: $expires
+				role: admin
+				query: $query
+			}) { token }
+		}
+	`, "CreateMessageLogCompatibilityKey", map[string]any{
+		"expires": time.Now().Add(time.Hour).Format(time.RFC3339),
+		"query":   queryDocument,
+	})
+	require.Empty(t, createResponse.Errors)
+	var created struct {
+		CreateGQLAPIKey struct{ Token string }
+	}
+	require.NoError(t, json.Unmarshal(createResponse.Data, &created))
+	require.NotEmpty(t, created.CreateGQLAPIKey.Token)
+
+	requestBody, err := json.Marshal(map[string]any{"operationName": "MessageLogCompatibility"})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, h.URL()+"/api/graphql", bytes.NewReader(requestBody))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+created.CreateGQLAPIKey.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var compatibilityResult struct {
+		Data struct {
+			MessageLogs struct {
+				Nodes []scopedSmokeMessageLogNode `json:"nodes"`
+			} `json:"messageLogs"`
+			DebugMessages []scopedSmokeMessageLogNode `json:"debugMessages"`
+		} `json:"data"`
+		Errors []struct{ Message string } `json:"errors"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&compatibilityResult))
+	require.Empty(t, compatibilityResult.Errors)
+	requireScopedSmokeMessageLogNodes(t, compatibilityResult.Data.MessageLogs.Nodes, h, true)
+	requireScopedSmokeMessageLogNodes(t, compatibilityResult.Data.DebugMessages, h, true)
 }
 
 func scopedSmokeRowCount(t *testing.T, h *harness.Harness, table, id string) int {
