@@ -663,6 +663,27 @@ type scopedSmokeMessageLogNode struct {
 	ServiceName *string `json:"serviceName"`
 }
 
+type scopedSmokeMessageLogConnection struct {
+	Nodes    []scopedSmokeMessageLogNode `json:"nodes"`
+	PageInfo struct {
+		HasNextPage bool `json:"hasNextPage"`
+	} `json:"pageInfo"`
+	Stats struct {
+		TimeSeries []struct {
+			Value float64 `json:"value"`
+		} `json:"timeSeries"`
+	} `json:"stats"`
+}
+
+func requireScopedSmokeMessageLogIDs(t *testing.T, nodes []scopedSmokeMessageLogNode, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		got = append(got, node.ID)
+	}
+	require.Equal(t, want, got)
+}
+
 func requireScopedSmokeMessageLogNodes(t *testing.T, nodes []scopedSmokeMessageLogNode, h *harness.Harness, crossServiceVisible bool) {
 	t.Helper()
 
@@ -701,8 +722,10 @@ func TestGraphQLMessageLogsOrganizationScoped(t *testing.T) {
 	h.GraphQLToken(harness.DefaultGraphQLAdminUserID)
 	_, err := h.App().DB().Exec(`
 		INSERT INTO user_contact_methods (id, user_id, name, type, value, disabled)
-		VALUES ($1, $2, 'Scoped message-log destination', 'EMAIL', 'scoped-message-log@example.invalid', false)
-	`, h.UUID("message-log-contact-method"), harness.DefaultGraphQLAdminUserID)
+		VALUES
+			($1, $2, 'Scoped service message-log destination', 'EMAIL', 'scoped-service-message-log@example.invalid', false),
+			($3, $2, 'No-Service message-log destination', 'EMAIL', 'no-service-message-log@example.invalid', false)
+	`, h.UUID("message-log-contact-method"), harness.DefaultGraphQLAdminUserID, h.UUID("message-log-no-service-contact-method"))
 	require.NoError(t, err)
 	_, err = h.App().DB().Exec(`
 		INSERT INTO outgoing_messages (
@@ -710,12 +733,12 @@ func TestGraphQLMessageLogsOrganizationScoped(t *testing.T) {
 		) VALUES
 			($1, 'test_notification', '2026-09-10 00:01:00Z', '2026-09-10 00:01:01Z', $2, 'delivered', $3, $4),
 			($5, 'test_notification', '2026-09-10 00:02:00Z', '2026-09-10 00:02:01Z', $2, 'delivered', $3, $6),
-			($7, 'test_notification', '2026-09-10 00:03:00Z', '2026-09-10 00:03:01Z', $2, 'delivered', $3, NULL)
+			($7, 'test_notification', '2026-09-10 00:03:00Z', '2026-09-10 00:03:01Z', $8, 'delivered', $3, NULL)
 	`,
 		h.UUID("message-log-own"), h.UUID("message-log-contact-method"),
 		harness.DefaultGraphQLAdminUserID, h.UUID("service-a1"),
 		h.UUID("message-log-cross"), h.UUID("service-b1"),
-		h.UUID("message-log-without-service"),
+		h.UUID("message-log-without-service"), h.UUID("message-log-no-service-contact-method"),
 	)
 	require.NoError(t, err)
 
@@ -723,29 +746,90 @@ func TestGraphQLMessageLogsOrganizationScoped(t *testing.T) {
 		query {
 			ownService: service(id: %q) { id name }
 			crossService: service(id: %q) { id name }
-			messageLogs(input: {first: 10}) { nodes { id serviceID serviceName } }
+			messageLogs(input: {first: 10}) {
+				nodes { id serviceID serviceName }
+				pageInfo { hasNextPage }
+			}
+			crossServiceSearch: messageLogs(input: {
+				first: 10
+				search: "Human Scoped Service 02"
+				createdAfter: "2026-09-10T00:00:00Z"
+				createdBefore: "2026-09-10T01:00:00Z"
+			}) {
+				nodes { id serviceID serviceName }
+				pageInfo { hasNextPage }
+				stats {
+					timeSeries(input: {
+						bucketDuration: "PT1H"
+						bucketOrigin: "2026-09-10T00:00:00Z"
+					}) { value }
+				}
+			}
+			sameServiceSearch: messageLogs(input: {first: 10, search: "Human Scoped Service 01"}) {
+				nodes { id serviceID serviceName }
+				pageInfo { hasNextPage }
+			}
+			noServiceSearch: messageLogs(input: {first: 10, search: "no-service-message-log@example.invalid"}) {
+				nodes { id serviceID serviceName }
+				pageInfo { hasNextPage }
+			}
 			debugMessages(input: {first: 10}) { id serviceID serviceName }
 		}
 	`, h.UUID("service-a1"), h.UUID("service-b1")))
 	require.Empty(t, humanResponse.Errors)
 	var humanResult struct {
-		OwnService   *struct{ ID, Name string } `json:"ownService"`
-		CrossService *struct{ ID, Name string } `json:"crossService"`
-		MessageLogs  struct {
-			Nodes []scopedSmokeMessageLogNode `json:"nodes"`
-		} `json:"messageLogs"`
-		DebugMessages []scopedSmokeMessageLogNode `json:"debugMessages"`
+		OwnService         *struct{ ID, Name string }      `json:"ownService"`
+		CrossService       *struct{ ID, Name string }      `json:"crossService"`
+		MessageLogs        scopedSmokeMessageLogConnection `json:"messageLogs"`
+		CrossServiceSearch scopedSmokeMessageLogConnection `json:"crossServiceSearch"`
+		SameServiceSearch  scopedSmokeMessageLogConnection `json:"sameServiceSearch"`
+		NoServiceSearch    scopedSmokeMessageLogConnection `json:"noServiceSearch"`
+		DebugMessages      []scopedSmokeMessageLogNode     `json:"debugMessages"`
 	}
 	require.NoError(t, json.Unmarshal(humanResponse.Data, &humanResult))
 	require.NotNil(t, humanResult.OwnService)
 	require.Equal(t, h.UUID("service-a1"), humanResult.OwnService.ID)
 	require.Nil(t, humanResult.CrossService)
 	requireScopedSmokeMessageLogNodes(t, humanResult.MessageLogs.Nodes, h, false)
+	requireScopedSmokeMessageLogIDs(t, humanResult.MessageLogs.Nodes,
+		h.UUID("message-log-without-service"),
+		h.UUID("message-log-cross"),
+		h.UUID("message-log-own"),
+	)
+	require.False(t, humanResult.MessageLogs.PageInfo.HasNextPage)
+
+	requireScopedSmokeMessageLogIDs(t, humanResult.CrossServiceSearch.Nodes, h.UUID("message-log-cross"))
+	require.Nil(t, humanResult.CrossServiceSearch.Nodes[0].ServiceID)
+	require.Nil(t, humanResult.CrossServiceSearch.Nodes[0].ServiceName)
+	require.False(t, humanResult.CrossServiceSearch.PageInfo.HasNextPage)
+	require.Len(t, humanResult.CrossServiceSearch.Stats.TimeSeries, 1)
+	require.Equal(t, float64(1), humanResult.CrossServiceSearch.Stats.TimeSeries[0].Value)
+
+	requireScopedSmokeMessageLogIDs(t, humanResult.SameServiceSearch.Nodes, h.UUID("message-log-own"))
+	require.NotNil(t, humanResult.SameServiceSearch.Nodes[0].ServiceID)
+	require.Equal(t, h.UUID("service-a1"), *humanResult.SameServiceSearch.Nodes[0].ServiceID)
+	require.NotNil(t, humanResult.SameServiceSearch.Nodes[0].ServiceName)
+	require.Equal(t, "Human Scoped Service 01", *humanResult.SameServiceSearch.Nodes[0].ServiceName)
+	require.False(t, humanResult.SameServiceSearch.PageInfo.HasNextPage)
+
+	requireScopedSmokeMessageLogIDs(t, humanResult.NoServiceSearch.Nodes, h.UUID("message-log-without-service"))
+	require.Nil(t, humanResult.NoServiceSearch.Nodes[0].ServiceID)
+	require.Nil(t, humanResult.NoServiceSearch.Nodes[0].ServiceName)
+	require.False(t, humanResult.NoServiceSearch.PageInfo.HasNextPage)
 	requireScopedSmokeMessageLogNodes(t, humanResult.DebugMessages, h, false)
+	requireScopedSmokeMessageLogIDs(t, humanResult.DebugMessages,
+		h.UUID("message-log-without-service"),
+		h.UUID("message-log-cross"),
+		h.UUID("message-log-own"),
+	)
 
 	const queryDocument = `
 		query MessageLogCompatibility {
 			messageLogs(input: {first: 10}) { nodes { id serviceID serviceName } }
+			crossServiceSearch: messageLogs(input: {first: 10, search: "Human Scoped Service 02"}) {
+				nodes { id serviceID serviceName }
+				pageInfo { hasNextPage }
+			}
 			debugMessages(input: {first: 10}) { id serviceID serviceName }
 		}
 	`
@@ -783,16 +867,21 @@ func TestGraphQLMessageLogsOrganizationScoped(t *testing.T) {
 
 	var compatibilityResult struct {
 		Data struct {
-			MessageLogs struct {
-				Nodes []scopedSmokeMessageLogNode `json:"nodes"`
-			} `json:"messageLogs"`
-			DebugMessages []scopedSmokeMessageLogNode `json:"debugMessages"`
+			MessageLogs        scopedSmokeMessageLogConnection `json:"messageLogs"`
+			CrossServiceSearch scopedSmokeMessageLogConnection `json:"crossServiceSearch"`
+			DebugMessages      []scopedSmokeMessageLogNode     `json:"debugMessages"`
 		} `json:"data"`
 		Errors []struct{ Message string } `json:"errors"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&compatibilityResult))
 	require.Empty(t, compatibilityResult.Errors)
 	requireScopedSmokeMessageLogNodes(t, compatibilityResult.Data.MessageLogs.Nodes, h, true)
+	requireScopedSmokeMessageLogIDs(t, compatibilityResult.Data.CrossServiceSearch.Nodes, h.UUID("message-log-cross"))
+	require.NotNil(t, compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceID)
+	require.Equal(t, h.UUID("service-b1"), *compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceID)
+	require.NotNil(t, compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceName)
+	require.Equal(t, "Human Scoped Service 02", *compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceName)
+	require.False(t, compatibilityResult.Data.CrossServiceSearch.PageInfo.HasNextPage)
 	requireScopedSmokeMessageLogNodes(t, compatibilityResult.Data.DebugMessages, h, true)
 }
 
