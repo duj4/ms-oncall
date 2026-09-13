@@ -42,7 +42,7 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 		return false, err
 	}
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, schedID, organizationID) // lock schedule
+		sched, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, schedID, organizationID) // lock schedule
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("scheduleID", "schedule not found")
 		}
@@ -53,6 +53,17 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 		rules, err := m.RuleStore.FindByTargetTx(ctx, tx, schedID, input.Target)
 		if err != nil {
 			return errors.Wrap(err, "fetch existing rules")
+		}
+		if organizationID != nil && input.Target.Type == assignment.TargetTypeRotation && len(input.Rules) > 0 {
+			// FindByTargetTx validates the target before resolving the reference.
+			// Empty rules only remove a relationship and need no target authority.
+			_, err := m.RotationStore.FindRotationForUpdateTx(ctx, tx, input.Target.ID, &sched.OrganizationID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return validation.NewFieldError("TargetID", "does not exist")
+			}
+			if err != nil {
+				return err
+			}
 		}
 		rulesByID := make(map[string]*rule.Rule, len(rules))
 		for i := range rules {
