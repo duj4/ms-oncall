@@ -3,6 +3,7 @@ package graphqlapp
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -80,6 +81,11 @@ func contains(ids []string, id string) bool {
 }
 
 func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql2.CreateEscalationPolicyStepInput) (step *escalation.Step, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	if input.Actions != nil {
 		// validate delay so we return a new coded error (when using actions)
 		err := validate.Range("input.delayMinutes", input.DelayMinutes, 1, 9000)
@@ -115,6 +121,24 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 		}
 		if input.EscalationPolicyID != nil {
 			s.PolicyID = *input.EscalationPolicyID
+		}
+
+		if organizationID != nil {
+			// Preserve CreateStepTx's permission and validation ordering before
+			// resolving the parent. Authorization needs no parent mutation lock.
+			if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
+				return err
+			}
+			if _, err := s.Normalize(); err != nil {
+				return err
+			}
+			_, err := m.PolicyStore.FindOnePolicyTx(ctx, tx, s.PolicyID, organizationID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return validation.NewFieldError("EscalationPolicyID", "does not exist")
+			}
+			if err != nil {
+				return err
+			}
 		}
 
 		step, err = m.PolicyStore.CreateStepTx(ctx, tx, s)
@@ -288,8 +312,16 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 }
 
 func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql2.UpdateEscalationPolicyStepInput) (bool, error) {
-	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		step, err := m.PolicyStore.FindOneStepForUpdateTx(ctx, tx, input.ID) // get delay
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		step, err := m.PolicyStore.FindOneStepForUpdateTx(ctx, tx, input.ID, organizationID)
+		if organizationID != nil && errors.Is(err, sql.ErrNoRows) {
+			return validation.NewFieldError("EscalationPolicyStepID", "does not exist")
+		}
 		if err != nil {
 			return err
 		}

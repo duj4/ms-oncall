@@ -49,13 +49,14 @@ type Store struct {
 	deletePolicy                 *sql.Stmt
 	deletePolicyOrg              *sql.Stmt
 
-	findOneStepForUpdate *sql.Stmt
-	findAllSteps         *sql.Stmt
-	findAllOnCallSteps   *sql.Stmt
-	createStep           *sql.Stmt
-	updateStepDelay      *sql.Stmt
-	updateStepNumber     *sql.Stmt
-	deleteStep           *sql.Stmt
+	findOneStepForUpdate    *sql.Stmt
+	findOneStepForUpdateOrg *sql.Stmt
+	findAllSteps            *sql.Stmt
+	findAllOnCallSteps      *sql.Stmt
+	createStep              *sql.Stmt
+	updateStepDelay         *sql.Stmt
+	updateStepNumber        *sql.Stmt
+	deleteStep              *sql.Stmt
 }
 
 func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
@@ -182,7 +183,14 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 		`),
 
 		findOneStepForUpdate: p.P(`SELECT id, escalation_policy_id, delay, step_number FROM escalation_policy_steps WHERE id = $1 FOR UPDATE`),
-		findAllSteps:         p.P(`SELECT id, escalation_policy_id, delay, step_number FROM escalation_policy_steps WHERE escalation_policy_id = $1 ORDER BY step_number`),
+		findOneStepForUpdateOrg: p.P(`
+			SELECT step.id, step.escalation_policy_id, step.delay, step.step_number
+			FROM escalation_policy_steps step
+			JOIN escalation_policies policy ON policy.id = step.escalation_policy_id
+			WHERE step.id = $1 AND policy.organization_id = $2
+			FOR UPDATE OF step
+		`),
+		findAllSteps: p.P(`SELECT id, escalation_policy_id, delay, step_number FROM escalation_policy_steps WHERE escalation_policy_id = $1 ORDER BY step_number`),
 		findAllOnCallSteps: p.P(`
 			SELECT step.id, step.escalation_policy_id, step.delay, step.step_number
 			FROM ep_step_on_call_users oc
@@ -474,8 +482,9 @@ func (s *Store) FindAllPoliciesBySchedule(ctx context.Context, scheduleID string
 	return policies, nil
 }
 
-// FindOneStepForUpdateTx returns a step locked within the tx for update.
-func (s *Store) FindOneStepForUpdateTx(ctx context.Context, tx *sql.Tx, id string) (*Step, error) {
+// FindOneStepForUpdateTx returns a step locked within the tx for update,
+// optionally scoped through its parent policy's Organization without locking the policy.
+func (s *Store) FindOneStepForUpdateTx(ctx context.Context, tx *sql.Tx, id string, organizationID *uuid.UUID) (*Step, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -487,11 +496,19 @@ func (s *Store) FindOneStepForUpdateTx(ctx context.Context, tx *sql.Tx, id strin
 	}
 
 	stmt := s.findOneStepForUpdate
+	args := []any{id}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findOneStepForUpdateOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	row := stmt.QueryRowContext(ctx, id)
+	row := stmt.QueryRowContext(ctx, args...)
 	var st Step
 	err = row.Scan(&st.ID, &st.PolicyID, &st.DelayMinutes, &st.StepNumber)
 	if err != nil {
