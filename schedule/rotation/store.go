@@ -361,6 +361,11 @@ func (s *Store) FindMany(ctx context.Context, ids []string, organizationID *uuid
 }
 
 func (s *Store) FindRotation(ctx context.Context, id string, organizationID *uuid.UUID) (*Rotation, error) {
+	return s.FindRotationTx(ctx, nil, id, organizationID)
+}
+
+// FindRotationTx reads a Rotation without locking it or its participant/state tables.
+func (s *Store) FindRotationTx(ctx context.Context, tx *sql.Tx, id string, organizationID *uuid.UUID) (*Rotation, error) {
 	err := validate.UUID("RotationID", id)
 	if err != nil {
 		return nil, err
@@ -378,6 +383,9 @@ func (s *Store) FindRotation(ctx context.Context, id string, organizationID *uui
 		}
 		stmt = s.findRotationOrg
 		args = append(args, *organizationID)
+	}
+	if tx != nil {
+		stmt = tx.StmtContext(ctx, stmt)
 	}
 	row := stmt.QueryRowContext(ctx, args...)
 	var r Rotation

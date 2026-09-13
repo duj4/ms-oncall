@@ -2,12 +2,16 @@ package smoke
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/auth"
 	"github.com/target/goalert/test/smoke/harness"
@@ -258,4 +262,185 @@ func TestGraphQLScheduleRotationSameOrganization(t *testing.T) {
 		}
 		require.Equal(t, before, snapshot(t))
 	})
+}
+
+func TestGraphQLScheduleRotationMixedDeleteLockOrder(t *testing.T) {
+	t.Parallel()
+	h := harness.NewHarness(t, scheduleRotationOrganizationSQL+`
+		INSERT INTO users (id, name, email, role)
+		VALUES ({{uuid "user-delete"}}, 'Schedule Rotation Deleting User', '', 'user');
+		INSERT INTO rotations (id, organization_id, name, description, type, start_time, shift_length, time_zone)
+		VALUES ({{uuid "rotation-other"}}, {{smokeOrganizationID}}, 'Other Rotation To Delete', '', 'daily', now(), 1, 'Etc/UTC');
+		INSERT INTO schedule_rules (schedule_id, tgt_rotation_id)
+		VALUES ({{uuid "schedule-a"}}, {{uuid "rotation-a"}});
+	`, "")
+	defer h.Close()
+
+	scheduleID, rotationID, otherRotationID := h.UUID("schedule-a"), h.UUID("rotation-a"), h.UUID("rotation-other")
+	require.NotEqual(t, rotationID, otherRotationID)
+	// Use distinct admitted humans in Organization A: HTTP requests from the
+	// same authentication source are intentionally serialized by middleware.
+	updateToken := h.GraphQLToken(h.UUID("user-a"))
+	deleteToken := h.GraphQLToken(h.UUID("user-delete"))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// Use separate test connections, with the same configuration, so the
+	// barrier and observer cannot exhaust the application's small pgx pool.
+	pooled, err := h.App().DB().Conn(ctx)
+	require.NoError(t, err)
+	var connectionConfig *pgx.ConnConfig
+	err = pooled.Raw(func(raw any) error {
+		connectionConfig = raw.(*stdlib.Conn).Conn().Config()
+		return nil
+	})
+	require.NoError(t, pooled.Close())
+	require.NoError(t, err)
+	gateConnection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	require.NoError(t, err)
+	defer gateConnection.Close(ctx)
+
+	// Pause the real mixed deletion after it takes its participant/state locks,
+	// but before it can delete R2 and attempt to acquire Schedule S.
+	gate, err := gateConnection.Begin(ctx)
+	require.NoError(t, err)
+	defer gate.Rollback(ctx)
+	var gatePID int
+	require.NoError(t, gate.QueryRow(ctx, `SELECT pg_backend_pid() FROM rotations WHERE id = $1 FOR UPDATE`, otherRotationID).Scan(&gatePID))
+	observer, err := pgx.ConnectConfig(ctx, connectionConfig)
+	require.NoError(t, err)
+	defer observer.Close(ctx)
+
+	type mutationResult struct {
+		response harness.QLResponse
+		status   int
+		err      error
+	}
+	var requests sync.WaitGroup
+	defer func() {
+		// Release the barrier and stop/join both requests even if an assertion fails.
+		_ = gate.Rollback(ctx)
+		cancel()
+		requests.Wait()
+	}()
+	startMutation := func(token, document string) <-chan mutationResult {
+		t.Helper()
+		body, err := json.Marshal(map[string]string{"query": document})
+		require.NoError(t, err)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.URL()+"/api/graphql", bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		done := make(chan mutationResult, 1)
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			var result mutationResult
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				result.err = err
+			} else {
+				defer resp.Body.Close()
+				result.status = resp.StatusCode
+				result.err = json.NewDecoder(resp.Body).Decode(&result.response)
+			}
+			done <- result
+		}()
+		return done
+	}
+
+	deletion := startMutation(deleteToken, fmt.Sprintf(`mutation {
+		deleteAll(input: [{type: rotation, id: %q}, {type: schedule, id: %q}])
+	}`, otherRotationID, scheduleID))
+	var deletionPID int
+	var observationErr error
+	require.Eventually(t, func() bool {
+		observationErr = observer.QueryRow(ctx, `
+			SELECT coalesce(max(a.pid), 0)
+			FROM pg_stat_activity a
+			WHERE a.datname = current_database() AND $1 = ANY(pg_blocking_pids(a.pid))
+			AND EXISTS (
+				SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.granted
+				AND l.relation = 'rotation_participants'::regclass AND l.mode = 'ExclusiveLock'
+			)
+			AND EXISTS (
+				SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.granted
+				AND l.relation = 'rotation_state'::regclass AND l.mode = 'ExclusiveLock'
+			)
+		`, gatePID).Scan(&deletionPID)
+		return observationErr != nil || deletionPID != 0
+	}, 5*time.Second, 10*time.Millisecond, "deleteAll must hold its Rotation locks while waiting on the R2 barrier")
+	require.NoError(t, observationErr)
+
+	update := startMutation(updateToken, fmt.Sprintf(`mutation {
+		updateScheduleTarget(input: {scheduleID: %q, target: {type: rotation, id: %q}, rules: [{}, {}]})
+	}`, scheduleID, rotationID))
+	var updateResult mutationResult
+	var updateFinished, validationBlocked bool
+	require.Eventually(t, func() bool {
+		select {
+		case updateResult = <-update:
+			updateFinished = true
+			return true
+		default:
+		}
+		observationErr = observer.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_locks l
+				WHERE NOT l.granted AND l.mode = 'ExclusiveLock'
+				AND l.relation IN ('rotation_participants'::regclass, 'rotation_state'::regclass)
+				AND $1 = ANY(pg_blocking_pids(l.pid))
+			)
+		`, deletionPID).Scan(&validationBlocked)
+		return observationErr != nil || validationBlocked
+	}, 5*time.Second, 10*time.Millisecond, "updating S/R1 must finish while the unrelated R2 deletion is paused")
+	require.NoError(t, observationErr)
+
+	if validationBlocked {
+		// On the first candidate commit, releasing R2 completes the cycle:
+		// update holds S and waits for deletion's broad Rotation locks, while
+		// deletion waits for S. This branch preserves a reproducible control.
+		t.Log("Rotation validation requested a broad ExclusiveLock while holding Schedule S")
+	}
+	require.NoError(t, gate.Rollback(ctx))
+	if !updateFinished {
+		select {
+		case updateResult = <-update:
+		case <-ctx.Done():
+			t.Fatal("update request did not settle:", ctx.Err())
+		}
+	}
+	var deleteResult mutationResult
+	select {
+	case deleteResult = <-deletion:
+	case <-ctx.Done():
+		t.Fatal("delete request did not settle:", ctx.Err())
+	}
+
+	require.False(t, validationBlocked, "Rotation reference validation must not acquire participant/state ExclusiveLocks")
+	require.True(t, updateFinished, "update must commit before the R2 barrier is released")
+	for _, result := range []mutationResult{updateResult, deleteResult} {
+		require.NoError(t, result.err)
+		require.Equal(t, http.StatusOK, result.status)
+		require.Empty(t, result.response.Errors)
+	}
+	require.JSONEq(t, `{"updateScheduleTarget": true}`, string(updateResult.response.Data))
+	require.JSONEq(t, `{"deleteAll": true}`, string(deleteResult.response.Data))
+
+	// The serialized outcome is update S/R1, then delete R2/S. Inspect source
+	// tables directly, independently of GraphQL resolver filtering.
+	var schedules, deletedRotations, retainedRotations, rules, crossOrganization, dangling int
+	err = observer.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM schedules WHERE id = $1),
+			(SELECT count(*) FROM rotations WHERE id = $2),
+			(SELECT count(*) FROM rotations WHERE id = $3),
+			(SELECT count(*) FROM schedule_rules WHERE schedule_id = $1),
+			(SELECT count(*) FROM schedule_rules sr
+			 JOIN schedules s ON s.id = sr.schedule_id JOIN rotations r ON r.id = sr.tgt_rotation_id
+			 WHERE s.organization_id != r.organization_id),
+			(SELECT count(*) FROM schedule_rules sr LEFT JOIN rotations r ON r.id = sr.tgt_rotation_id
+			 WHERE sr.tgt_rotation_id IS NOT NULL AND r.id IS NULL)
+	`, scheduleID, otherRotationID, rotationID).Scan(&schedules, &deletedRotations, &retainedRotations, &rules, &crossOrganization, &dangling)
+	require.NoError(t, err)
+	require.Equal(t, []int{0, 0, 1, 0, 0, 0}, []int{schedules, deletedRotations, retainedRotations, rules, crossOrganization, dangling})
 }

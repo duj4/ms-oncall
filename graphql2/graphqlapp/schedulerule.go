@@ -57,7 +57,7 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 		if organizationID != nil && input.Target.Type == assignment.TargetTypeRotation && len(input.Rules) > 0 {
 			// FindByTargetTx validates the target before resolving the reference.
 			// Empty rules only remove a relationship and need no target authority.
-			_, err := m.RotationStore.FindRotationForUpdateTx(ctx, tx, input.Target.ID, &sched.OrganizationID)
+			_, err := m.RotationStore.FindRotationTx(ctx, tx, input.Target.ID, &sched.OrganizationID)
 			if errors.Is(err, sql.ErrNoRows) {
 				return validation.NewFieldError("TargetID", "does not exist")
 			}
