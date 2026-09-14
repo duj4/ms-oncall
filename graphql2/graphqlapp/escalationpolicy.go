@@ -80,6 +80,45 @@ func contains(ids []string, id string) bool {
 	return false
 }
 
+// validateEscalationPolicyActionTargetTx checks only the current action after
+// source authorization. Call it in request order to preserve earlier errors.
+func (m *Mutation) validateEscalationPolicyActionTargetTx(ctx context.Context, tx *sql.Tx, action gadb.DestV1, organizationID *uuid.UUID) error {
+	if organizationID == nil {
+		return nil
+	}
+	var targetID string
+	switch action.Type {
+	case schedule.DestTypeSchedule:
+		targetID = action.Arg(schedule.FieldScheduleID)
+	case rotation.DestTypeRotation:
+		targetID = action.Arg(rotation.FieldRotationID)
+	default:
+		return nil
+	}
+	// Match AddStepActionTx's malformed UUID validation before scoped lookup.
+	id, err := validate.ParseUUID("ID", targetID)
+	if err != nil {
+		return err
+	}
+	// Relationship authorization needs no target mutation lock. Existing FKs
+	// protect target existence/deletion, and ordinary CRUD cannot change its
+	// Organization ownership.
+	switch action.Type {
+	case schedule.DestTypeSchedule:
+		var schedules []schedule.Schedule
+		schedules, err = m.ScheduleStore.FindManyTx(ctx, tx, []string{id.String()}, organizationID)
+		if err == nil && len(schedules) == 0 {
+			err = sql.ErrNoRows
+		}
+	case rotation.DestTypeRotation:
+		_, err = m.RotationStore.FindRotationTx(ctx, tx, id.String(), organizationID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return validation.NewFieldError("ID", "does not exist")
+	}
+	return err
+}
+
 func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql2.CreateEscalationPolicyStepInput) (step *escalation.Step, err error) {
 	organizationID, err := rootStoreOrganizationID(ctx)
 	if err != nil {
@@ -176,6 +215,9 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 		for i, action := range input.Actions {
 			if action.Type == user.DestTypeUser && action.Arg(user.FieldUserID) == "__current_user" {
 				action.SetArg(user.FieldUserID, userID)
+			}
+			if err := m.validateEscalationPolicyActionTargetTx(ctx, tx, action, organizationID); err != nil {
+				return validation.AddPrefix("Actions["+strconv.Itoa(i)+"].", err)
 			}
 			err = m.PolicyStore.AddStepActionTx(ctx, tx, step.ID, action)
 			if err != nil {
@@ -364,6 +406,11 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 				alreadyExists := slices.ContainsFunc(existing, func(e gadb.DestV1) bool {
 					return reflect.DeepEqual(e, action)
 				})
+				// Retained targets belong to the requested final set too. Omitted
+				// targets were removed above and need no target authorization.
+				if err := m.validateEscalationPolicyActionTargetTx(ctx, tx, action, organizationID); err != nil {
+					return err
+				}
 				if alreadyExists {
 					// already exists, skip
 					continue
