@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"text/template"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
@@ -28,6 +29,9 @@ var intKeySearchTemplate = template.Must(template.New("integration-key-search").
 		key.id, key.name, key.type, key.service_id
 	FROM integration_keys key
 	WHERE true
+	{{if .OrganizationID.Valid}}
+		AND EXISTS (SELECT 1 FROM services s WHERE s.id = key.service_id AND s.organization_id = :organizationID)
+	{{end}}
 	{{if .Omit}}
 		AND not key.id = any(:omit)
 	{{end}}
@@ -40,7 +44,10 @@ var intKeySearchTemplate = template.Must(template.New("integration-key-search").
 	LIMIT {{.Limit}}
 `))
 
-type intKeyRenderData InKeySearchOptions
+type intKeyRenderData struct {
+	InKeySearchOptions
+	OrganizationID uuid.NullUUID
+}
 
 func (opts intKeyRenderData) Normalize() (*intKeyRenderData, error) {
 	if opts.Limit == 0 {
@@ -72,12 +79,13 @@ func (opts intKeyRenderData) QueryArgs() []sql.NamedArg {
 
 	return []sql.NamedArg{
 		sql.Named("search", opts.SearchStr()),
+		sql.Named("organizationID", opts.OrganizationID),
 		sql.Named("after", opts.After),
 		sql.Named("omit", sqlutil.StringArray(opts.Omit)),
 	}
 }
 
-func (s *Store) Search(ctx context.Context, opts *InKeySearchOptions) ([]IntegrationKey, error) {
+func (s *Store) Search(ctx context.Context, opts *InKeySearchOptions, organizationID *uuid.UUID) ([]IntegrationKey, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -85,7 +93,11 @@ func (s *Store) Search(ctx context.Context, opts *InKeySearchOptions) ([]Integra
 	if opts == nil {
 		opts = &InKeySearchOptions{}
 	}
-	data, err := (*intKeyRenderData)(opts).Normalize()
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := (intKeyRenderData{InKeySearchOptions: *opts, OrganizationID: scope}).Normalize()
 	if err != nil {
 		return nil, err
 	}

@@ -33,7 +33,11 @@ func (k *KeyConfig) OneRule(ctx context.Context, key *gadb.UIKConfigV1, ruleID s
 }
 
 func (q *Query) IntegrationKey(ctx context.Context, id string) (*integrationkey.IntegrationKey, error) {
-	return q.IntKeyStore.FindOne(ctx, id)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return q.IntKeyStore.FindOne(ctx, id, organizationID)
 }
 
 func (q *Query) ActionInputValidate(ctx context.Context, input gadb.UIKActionV1) (bool, error) {
@@ -45,9 +49,22 @@ func (q *Query) ActionInputValidate(ctx context.Context, input gadb.UIKActionV1)
 	return true, nil
 }
 
+// authorizeIntegrationKey must run before token or configuration access, including
+// field resolvers invoked with a raw parent. Ownership checks never lock Service.
+func (a *App) authorizeIntegrationKey(ctx context.Context, dbtx gadb.DBTX, id uuid.UUID) error {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return err
+	}
+	return a.IntKeyStore.CheckOrganization(ctx, dbtx, id, organizationID)
+}
+
 func (m *Mutation) GenerateKeyToken(ctx context.Context, keyID string) (string, error) {
 	id, err := validate.ParseUUID("ID", keyID)
 	if err != nil {
+		return "", err
+	}
+	if err := (*App)(m).authorizeIntegrationKey(ctx, m.DB, id); err != nil {
 		return "", err
 	}
 	return m.IntKeyStore.GenerateToken(ctx, m.DB, id)
@@ -59,6 +76,9 @@ func (m *Mutation) DeleteSecondaryToken(ctx context.Context, keyID string) (bool
 		return false, err
 	}
 
+	if err := (*App)(m).authorizeIntegrationKey(ctx, m.DB, id); err != nil {
+		return false, err
+	}
 	err = m.IntKeyStore.DeleteSecondaryToken(ctx, m.DB, id)
 	if err != nil {
 		return false, err
@@ -73,6 +93,9 @@ func (m *Mutation) PromoteSecondaryToken(ctx context.Context, keyID string) (boo
 		return false, err
 	}
 
+	if err := (*App)(m).authorizeIntegrationKey(ctx, m.DB, id); err != nil {
+		return false, err
+	}
 	err = m.IntKeyStore.PromoteSecondaryToken(ctx, m.DB, id)
 	if err != nil {
 		return false, err
@@ -87,6 +110,9 @@ func (key *IntegrationKey) TokenInfo(ctx context.Context, raw *integrationkey.In
 		return nil, err
 	}
 
+	if err := (*App)(key).authorizeIntegrationKey(ctx, key.DB, id); err != nil {
+		return nil, err
+	}
 	prim, sec, err := key.IntKeyStore.TokenHints(ctx, key.DB, id)
 	if err != nil {
 		return nil, err
@@ -105,6 +131,9 @@ func (m *Mutation) UpdateKeyConfig(ctx context.Context, input graphql2.UpdateKey
 			return err
 		}
 
+		if err := (*App)(m).authorizeIntegrationKey(ctx, tx, id); err != nil {
+			return err
+		}
 		cfg, err := m.IntKeyStore.Config(ctx, tx, id)
 		if err != nil {
 			return err
@@ -184,6 +213,10 @@ func (m *Mutation) UpdateKeyConfig(ctx context.Context, input graphql2.UpdateKey
 }
 
 func (m *Mutation) CreateIntegrationKey(ctx context.Context, input graphql2.CreateIntegrationKeyInput) (key *integrationkey.IntegrationKey, err error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var serviceID string
 	if input.ServiceID != nil {
 		serviceID = *input.ServiceID
@@ -197,7 +230,7 @@ func (m *Mutation) CreateIntegrationKey(ctx context.Context, input graphql2.Crea
 		if input.ExternalSystemName != nil {
 			key.ExternalSystemName = *input.ExternalSystemName
 		}
-		key, err = m.IntKeyStore.Create(ctx, tx, key)
+		key, err = m.IntKeyStore.Create(ctx, tx, key, organizationID)
 		return err
 	})
 	return key, err
@@ -209,6 +242,9 @@ func (key *IntegrationKey) Config(ctx context.Context, raw *integrationkey.Integ
 		return nil, err
 	}
 
+	if err := (*App)(key).authorizeIntegrationKey(ctx, key.DB, id); err != nil {
+		return nil, err
+	}
 	return key.IntKeyStore.Config(ctx, key.DB, id)
 }
 
@@ -264,8 +300,13 @@ func (q *Query) IntegrationKeys(ctx context.Context, input *graphql2.Integration
 		opts.Limit = 15
 	}
 
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	opts.Limit++
-	intKeys, err := q.IntKeyStore.Search(ctx, &opts)
+	// Cursor state contains search criteria only; authority is a separate argument.
+	intKeys, err := q.IntKeyStore.Search(ctx, &opts, organizationID)
 	if err != nil {
 		return nil, err
 	}

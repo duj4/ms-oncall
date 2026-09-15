@@ -13,31 +13,57 @@ INSERT INTO integration_keys(id, name, type, service_id, external_system_name)
 
 -- name: IntKeyFindOne :one
 SELECT
-    id,
-    name,
-    type,
-    service_id,
-    external_system_name
+    integration_keys.id,
+    integration_keys.name,
+    integration_keys.type,
+    integration_keys.service_id,
+    integration_keys.external_system_name
 FROM
     integration_keys
 WHERE
-    id = $1;
+    integration_keys.id = $1
+    AND (sqlc.narg(organization_id)::uuid IS NULL
+        OR EXISTS (SELECT 1 FROM services s
+            WHERE s.id = integration_keys.service_id AND s.organization_id = sqlc.narg(organization_id)));
 
 -- name: IntKeyFindByService :many
 SELECT
-    id,
-    name,
-    type,
-    service_id,
-    external_system_name
+    integration_keys.id,
+    integration_keys.name,
+    integration_keys.type,
+    integration_keys.service_id,
+    integration_keys.external_system_name
 FROM
     integration_keys
 WHERE
-    service_id = $1;
+    integration_keys.service_id = $1
+    AND (sqlc.narg(organization_id)::uuid IS NULL
+        OR EXISTS (SELECT 1 FROM services s
+            WHERE s.id = integration_keys.service_id AND s.organization_id = sqlc.narg(organization_id)));
 
 -- name: IntKeyDelete :exec
 DELETE FROM integration_keys
 WHERE id = ANY (@ids::uuid[]);
+
+-- name: IntKeyCheckServiceOrganization :one
+SELECT id FROM services
+WHERE id = @service_id AND organization_id = @organization_id;
+
+-- name: IntKeyCheckOrganization :one
+SELECT k.id FROM integration_keys k
+JOIN services s ON s.id = k.service_id
+WHERE k.id = @id AND s.organization_id = @organization_id;
+
+-- name: IntKeyDeleteOrganization :execrows
+DELETE FROM integration_keys k
+USING services s
+WHERE k.id = ANY (@ids::uuid[])
+    AND s.id = k.service_id AND s.organization_id = @organization_id
+    AND (SELECT count(DISTINCT requested_id) FROM unnest(@ids::uuid[]) AS requested(requested_id)) = (
+        SELECT count(*) FROM integration_keys matched
+        JOIN services parent ON parent.id = matched.service_id
+        WHERE matched.id = ANY (@ids::uuid[]) AND parent.organization_id = @organization_id
+    );
 
 -- name: IntKeyGetConfig :one
 SELECT
@@ -138,4 +164,3 @@ WHERE
 -- name: IntKeyInsertSignalMessage :exec
 INSERT INTO pending_signals(dest_id, service_id, params)
     VALUES ($1, $2, $3);
-

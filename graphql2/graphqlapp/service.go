@@ -202,7 +202,11 @@ func (s *Service) OnCallUsers(ctx context.Context, raw *service.Service) ([]onca
 }
 
 func (s *Service) IntegrationKeys(ctx context.Context, raw *service.Service) ([]integrationkey.IntegrationKey, error) {
-	return s.IntKeyStore.FindAllByService(ctx, raw.ID)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.IntKeyStore.FindAllByService(ctx, raw.ID, organizationID)
 }
 
 func (s *Service) HeartbeatMonitors(ctx context.Context, raw *service.Service) ([]heartbeat.Monitor, error) {

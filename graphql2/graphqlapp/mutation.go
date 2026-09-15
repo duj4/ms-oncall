@@ -176,7 +176,8 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 		case assignment.TargetTypeService,
 			assignment.TargetTypeSchedule,
 			assignment.TargetTypeRotation,
-			assignment.TargetTypeEscalationPolicy:
+			assignment.TargetTypeEscalationPolicy,
+			assignment.TargetTypeIntegrationKey:
 			hasRootTarget = true
 		}
 		if hasRootTarget {
@@ -248,7 +249,7 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeEscalationPolicy:
 			err = errors.Wrap(a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, organizationID), "delete escalation policies")
 		case assignment.TargetTypeIntegrationKey:
-			err = errors.Wrap(a.IntKeyStore.DeleteMany(ctx, tx, ids), "delete integration keys")
+			err = errors.Wrap(a.IntKeyStore.DeleteMany(ctx, tx, ids, organizationID), "delete integration keys")
 		case assignment.TargetTypeSchedule:
 			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete schedules")
 		case assignment.TargetTypeCalendarSubscription:
