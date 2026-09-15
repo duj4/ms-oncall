@@ -99,7 +99,7 @@ func (s *Store) GenerateToken(ctx context.Context, db gadb.DBTX, id uuid.UUID) (
 		return "", err
 	}
 
-	key, err := gadb.New(db).IntKeyFindOne(ctx, id)
+	key, err := gadb.New(db).IntKeyFindOne(ctx, gadb.IntKeyFindOneParams{ID: id})
 	if err != nil {
 		return "", err
 	}

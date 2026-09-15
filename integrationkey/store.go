@@ -78,7 +78,7 @@ func (s *Store) GetServiceID(ctx context.Context, id string, t Type) (string, er
 	return serviceID.String(), nil
 }
 
-func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, i *IntegrationKey) (*IntegrationKey, error) {
+func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, i *IntegrationKey, organizationID *uuid.UUID) (*IntegrationKey, error) {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return nil, err
@@ -96,6 +96,23 @@ func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, i *IntegrationKey) (
 	serviceUUID, err := uuid.Parse(n.ServiceID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Preserve local validation precedence; ownership is checked only when the
+	// owning Service is needed for persistence, in the caller's transaction.
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		_, err = gadb.New(dbtx).IntKeyCheckServiceOrganization(ctx, gadb.IntKeyCheckServiceOrganizationParams{
+			ServiceID: serviceUUID, OrganizationID: *organizationID,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, validation.NewFieldError("ServiceID", "does not exist")
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	keyUUID := uuid.New()
@@ -123,11 +140,11 @@ func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, i *IntegrationKey) (
 	return n, nil
 }
 
-func (s *Store) Delete(ctx context.Context, dbtx gadb.DBTX, id string) error {
-	return s.DeleteMany(ctx, dbtx, []string{id})
+func (s *Store) Delete(ctx context.Context, dbtx gadb.DBTX, id string, organizationID *uuid.UUID) error {
+	return s.DeleteMany(ctx, dbtx, []string{id}, organizationID)
 }
 
-func (s *Store) DeleteMany(ctx context.Context, dbtx gadb.DBTX, ids []string) error {
+func (s *Store) DeleteMany(ctx context.Context, dbtx gadb.DBTX, ids []string, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return err
@@ -138,11 +155,31 @@ func (s *Store) DeleteMany(ctx context.Context, dbtx gadb.DBTX, ids []string) er
 		return err
 	}
 
-	err = gadb.New(dbtx).IntKeyDelete(ctx, uuids)
-	return err
+	if organizationID == nil {
+		return gadb.New(dbtx).IntKeyDelete(ctx, uuids)
+	}
+	if *organizationID == uuid.Nil {
+		return validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	want := make(map[uuid.UUID]struct{}, len(uuids))
+	for _, id := range uuids {
+		want[id] = struct{}{}
+	}
+	// The count predicate prevents partial deletion even without a caller Tx.
+	// DeleteAll also rolls back earlier target groups on a mismatch.
+	rows, err := gadb.New(dbtx).IntKeyDeleteOrganization(ctx, gadb.IntKeyDeleteOrganizationParams{
+		Ids: uuids, OrganizationID: *organizationID,
+	})
+	if err != nil {
+		return err
+	}
+	if rows != int64(len(want)) {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
-func (s *Store) FindOne(ctx context.Context, id string) (*IntegrationKey, error) {
+func (s *Store) FindOne(ctx context.Context, id string, organizationID *uuid.UUID) (*IntegrationKey, error) {
 	keyUUID, err := validate.ParseUUID("IntegrationKeyID", id)
 	if err != nil {
 		return nil, err
@@ -153,7 +190,11 @@ func (s *Store) FindOne(ctx context.Context, id string) (*IntegrationKey, error)
 		return nil, err
 	}
 
-	row, err := gadb.New(s.db).IntKeyFindOne(ctx, keyUUID)
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return nil, err
+	}
+	row, err := gadb.New(s.db).IntKeyFindOne(ctx, gadb.IntKeyFindOneParams{ID: keyUUID, OrganizationID: scope})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -171,7 +212,7 @@ func (s *Store) FindOne(ctx context.Context, id string) (*IntegrationKey, error)
 	}, nil
 }
 
-func (s *Store) FindAllByService(ctx context.Context, serviceID string) ([]IntegrationKey, error) {
+func (s *Store) FindAllByService(ctx context.Context, serviceID string, organizationID *uuid.UUID) ([]IntegrationKey, error) {
 	serviceUUID, err := validate.ParseUUID("ServiceID", serviceID)
 	if err != nil {
 		return nil, err
@@ -182,7 +223,11 @@ func (s *Store) FindAllByService(ctx context.Context, serviceID string) ([]Integ
 		return nil, err
 	}
 
-	rows, err := gadb.New(s.db).IntKeyFindByService(ctx, serviceUUID)
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := gadb.New(s.db).IntKeyFindByService(ctx, gadb.IntKeyFindByServiceParams{ServiceID: serviceUUID, OrganizationID: scope})
 	if err != nil {
 		return nil, err
 	}
@@ -198,4 +243,33 @@ func (s *Store) FindAllByService(ctx context.Context, serviceID string) ([]Integ
 		}
 	}
 	return keys, nil
+}
+
+// CheckOrganization authorizes a key through its immutable owning Service before
+// an application boundary reads or mutates sensitive token/configuration state.
+// Nil preserves the bounded non-human compatibility path without additional SQL.
+func (s *Store) CheckOrganization(ctx context.Context, dbtx gadb.DBTX, id uuid.UUID, organizationID *uuid.UUID) error {
+	if organizationID == nil {
+		return nil
+	}
+	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+		return err
+	}
+	if *organizationID == uuid.Nil {
+		return validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	_, err := gadb.New(dbtx).IntKeyCheckOrganization(ctx, gadb.IntKeyCheckOrganizationParams{
+		ID: id, OrganizationID: *organizationID,
+	})
+	return err
+}
+
+func organizationScope(id *uuid.UUID) (uuid.NullUUID, error) {
+	if id == nil {
+		return uuid.NullUUID{}, nil
+	}
+	if *id == uuid.Nil {
+		return uuid.NullUUID{}, validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	return uuid.NullUUID{UUID: *id, Valid: true}, nil
 }

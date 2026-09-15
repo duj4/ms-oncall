@@ -2722,6 +2722,41 @@ func (q *Queries) HBUpdate(ctx context.Context, arg HBUpdateParams) error {
 	return err
 }
 
+const intKeyCheckOrganization = `-- name: IntKeyCheckOrganization :one
+SELECT k.id FROM integration_keys k
+JOIN services s ON s.id = k.service_id
+WHERE k.id = $1 AND s.organization_id = $2
+`
+
+type IntKeyCheckOrganizationParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) IntKeyCheckOrganization(ctx context.Context, arg IntKeyCheckOrganizationParams) (uuid.UUID, error) {
+	row := q.db.QueryRowContext(ctx, intKeyCheckOrganization, arg.ID, arg.OrganizationID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const intKeyCheckServiceOrganization = `-- name: IntKeyCheckServiceOrganization :one
+SELECT id FROM services
+WHERE id = $1 AND organization_id = $2
+`
+
+type IntKeyCheckServiceOrganizationParams struct {
+	ServiceID      uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) IntKeyCheckServiceOrganization(ctx context.Context, arg IntKeyCheckServiceOrganizationParams) (uuid.UUID, error) {
+	row := q.db.QueryRowContext(ctx, intKeyCheckServiceOrganization, arg.ServiceID, arg.OrganizationID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const intKeyCreate = `-- name: IntKeyCreate :exec
 INSERT INTO integration_keys(id, name, type, service_id, external_system_name)
     VALUES ($1, $2, $3, $4, $5)
@@ -2766,6 +2801,31 @@ func (q *Queries) IntKeyDeleteConfig(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const intKeyDeleteOrganization = `-- name: IntKeyDeleteOrganization :execrows
+DELETE FROM integration_keys k
+USING services s
+WHERE k.id = ANY ($1::uuid[])
+    AND s.id = k.service_id AND s.organization_id = $2
+    AND (SELECT count(DISTINCT requested_id) FROM unnest($1::uuid[]) AS requested(requested_id)) = (
+        SELECT count(*) FROM integration_keys matched
+        JOIN services parent ON parent.id = matched.service_id
+        WHERE matched.id = ANY ($1::uuid[]) AND parent.organization_id = $2
+    )
+`
+
+type IntKeyDeleteOrganizationParams struct {
+	Ids            []uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) IntKeyDeleteOrganization(ctx context.Context, arg IntKeyDeleteOrganizationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, intKeyDeleteOrganization, pq.Array(arg.Ids), arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const intKeyDeleteSecondaryToken = `-- name: IntKeyDeleteSecondaryToken :exec
 UPDATE
     uik_config
@@ -2783,16 +2843,24 @@ func (q *Queries) IntKeyDeleteSecondaryToken(ctx context.Context, id uuid.UUID) 
 
 const intKeyFindByService = `-- name: IntKeyFindByService :many
 SELECT
-    id,
-    name,
-    type,
-    service_id,
-    external_system_name
+    integration_keys.id,
+    integration_keys.name,
+    integration_keys.type,
+    integration_keys.service_id,
+    integration_keys.external_system_name
 FROM
     integration_keys
 WHERE
-    service_id = $1
+    integration_keys.service_id = $1
+    AND ($2::uuid IS NULL
+        OR EXISTS (SELECT 1 FROM services s
+            WHERE s.id = integration_keys.service_id AND s.organization_id = $2))
 `
+
+type IntKeyFindByServiceParams struct {
+	ServiceID      uuid.UUID
+	OrganizationID uuid.NullUUID
+}
 
 type IntKeyFindByServiceRow struct {
 	ID                 uuid.UUID
@@ -2802,8 +2870,8 @@ type IntKeyFindByServiceRow struct {
 	ExternalSystemName sql.NullString
 }
 
-func (q *Queries) IntKeyFindByService(ctx context.Context, serviceID uuid.UUID) ([]IntKeyFindByServiceRow, error) {
-	rows, err := q.db.QueryContext(ctx, intKeyFindByService, serviceID)
+func (q *Queries) IntKeyFindByService(ctx context.Context, arg IntKeyFindByServiceParams) ([]IntKeyFindByServiceRow, error) {
+	rows, err := q.db.QueryContext(ctx, intKeyFindByService, arg.ServiceID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -2833,16 +2901,24 @@ func (q *Queries) IntKeyFindByService(ctx context.Context, serviceID uuid.UUID) 
 
 const intKeyFindOne = `-- name: IntKeyFindOne :one
 SELECT
-    id,
-    name,
-    type,
-    service_id,
-    external_system_name
+    integration_keys.id,
+    integration_keys.name,
+    integration_keys.type,
+    integration_keys.service_id,
+    integration_keys.external_system_name
 FROM
     integration_keys
 WHERE
-    id = $1
+    integration_keys.id = $1
+    AND ($2::uuid IS NULL
+        OR EXISTS (SELECT 1 FROM services s
+            WHERE s.id = integration_keys.service_id AND s.organization_id = $2))
 `
+
+type IntKeyFindOneParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.NullUUID
+}
 
 type IntKeyFindOneRow struct {
 	ID                 uuid.UUID
@@ -2852,8 +2928,8 @@ type IntKeyFindOneRow struct {
 	ExternalSystemName sql.NullString
 }
 
-func (q *Queries) IntKeyFindOne(ctx context.Context, id uuid.UUID) (IntKeyFindOneRow, error) {
-	row := q.db.QueryRowContext(ctx, intKeyFindOne, id)
+func (q *Queries) IntKeyFindOne(ctx context.Context, arg IntKeyFindOneParams) (IntKeyFindOneRow, error) {
+	row := q.db.QueryRowContext(ctx, intKeyFindOne, arg.ID, arg.OrganizationID)
 	var i IntKeyFindOneRow
 	err := row.Scan(
 		&i.ID,
