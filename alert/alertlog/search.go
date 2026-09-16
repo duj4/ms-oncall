@@ -10,6 +10,7 @@ import (
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/util/sqlutil"
+	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 
 	"github.com/pkg/errors"
@@ -62,6 +63,11 @@ var searchTemplate = template.Must(template.New("search").Parse(`
 	JOIN alerts a ON a.id = log.alert_id and a.service_id = :serviceID
 	{{- end}}
 	WHERE TRUE
+		AND (:organizationID::uuid IS NULL OR EXISTS (
+			SELECT 1 FROM alerts live_alert
+			JOIN services svc ON svc.id = live_alert.service_id
+			WHERE live_alert.id = log.alert_id AND svc.organization_id = :organizationID
+		))
 	{{- if .FilterAlertIDs}}
 		AND log.alert_id = ANY(:alertIDs)
 	{{- end}}
@@ -75,7 +81,10 @@ var searchTemplate = template.Must(template.New("search").Parse(`
 	LIMIT {{.Limit}}
 `))
 
-type renderData SearchOptions
+type renderData struct {
+	SearchOptions
+	organizationID *uuid.UUID
+}
 
 func (opts renderData) Normalize() (*renderData, error) {
 	if opts.Limit == 0 {
@@ -95,6 +104,7 @@ func (opts renderData) Normalize() (*renderData, error) {
 
 func (opts renderData) QueryArgs() []sql.NamedArg {
 	return []sql.NamedArg{
+		sql.Named("organizationID", opts.organizationID),
 		sql.Named("afterID", opts.After.ID),
 		sql.Named("alertIDs", sqlutil.IntArray(opts.FilterAlertIDs)),
 		sql.Named("since", opts.Since),
@@ -104,6 +114,11 @@ func (opts renderData) QueryArgs() []sql.NamedArg {
 
 // Search will return a list of matching log entries
 func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]Entry, error) {
+	return s.SearchScoped(ctx, opts, nil)
+}
+
+// SearchScoped keeps Organization authority separate from cursor/search state.
+func (s *Store) SearchScoped(ctx context.Context, opts *SearchOptions, organizationID *uuid.UUID) ([]Entry, error) {
 	if opts == nil {
 		opts = &SearchOptions{}
 	}
@@ -113,7 +128,10 @@ func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]Entry, error
 		return nil, err
 	}
 
-	data, err := (*renderData)(opts).Normalize()
+	if organizationID != nil && *organizationID == uuid.Nil {
+		return nil, validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	data, err := (renderData{SearchOptions: *opts, organizationID: organizationID}).Normalize()
 	if err != nil {
 		return nil, err
 	}
