@@ -69,6 +69,9 @@ func (a *AlertLogEntry) Timestamp(ctx context.Context, obj *alertlog.Entry) (*ti
 }
 
 func (a *AlertLogEntry) Message(ctx context.Context, obj *alertlog.Entry) (string, error) {
+	if err := (*App)(a).authorizeAlert(ctx, obj.AlertID()); err != nil {
+		return "", err
+	}
 	e := *obj
 	return e.String(ctx), nil
 }
@@ -181,6 +184,9 @@ func (a *AlertLogEntry) createdState(ctx context.Context, obj *alertlog.Entry) (
 }
 
 func (a *AlertLogEntry) State(ctx context.Context, obj *alertlog.Entry) (*graphql2.NotificationState, error) {
+	if err := (*App)(a).authorizeAlert(ctx, obj.AlertID()); err != nil {
+		return nil, err
+	}
 	switch obj.Type() {
 	case alertlog.TypeCreated:
 		return a.createdState(ctx, obj)
@@ -230,6 +236,11 @@ func (q *Query) mergeFavorites(ctx context.Context, svcs []string) ([]string, er
 }
 
 func (q *Query) Alerts(ctx context.Context, opts *graphql2.AlertSearchOptions) (conn *graphql2.AlertConnection, err error) {
+	organizationID, scopeErr := rootStoreOrganizationID(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+
 	if opts == nil {
 		opts = new(graphql2.AlertSearchOptions)
 	}
@@ -316,7 +327,7 @@ func (q *Query) Alerts(ctx context.Context, opts *graphql2.AlertSearchOptions) (
 
 	s.Limit++
 
-	alerts, err := q.AlertStore.Search(ctx, &s)
+	alerts, err := q.AlertStore.SearchScoped(ctx, &s, organizationID)
 	if err != nil {
 		return conn, err
 	}
@@ -367,7 +378,11 @@ func (a *Alert) State(ctx context.Context, raw *alert.Alert) (*alert.State, erro
 }
 
 func (a *Alert) Service(ctx context.Context, raw *alert.Alert) (*service.Service, error) {
-	return (*App)(a).FindOneService(ctx, raw.ServiceID)
+	current, err := (*App)(a).currentAlertParent(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	return (*App)(a).FindOneService(ctx, current.ServiceID)
 }
 
 func (a *Alert) Metrics(ctx context.Context, raw *alert.Alert) (*alertmetrics.Metric, error) {
@@ -375,6 +390,11 @@ func (a *Alert) Metrics(ctx context.Context, raw *alert.Alert) (*alertmetrics.Me
 }
 
 func (m *Mutation) CloseMatchingAlert(ctx context.Context, input graphql2.CloseMatchingAlertInput) (bool, error) {
+	organizationID, scopeErr := rootStoreOrganizationID(ctx)
+	if scopeErr != nil {
+		return false, scopeErr
+	}
+
 	a := &alert.Alert{
 		ServiceID: input.ServiceID,
 		Status:    alert.StatusClosed,
@@ -390,11 +410,16 @@ func (m *Mutation) CloseMatchingAlert(ctx context.Context, input graphql2.CloseM
 		a.Dedup = alert.NewUserDedup(*input.Dedup)
 	}
 
-	a, _, err := m.AlertStore.CreateOrUpdate(ctx, a)
+	a, _, err := m.AlertStore.CreateOrUpdateScoped(ctx, a, organizationID)
 	return a != nil, err
 }
 
 func (m *Mutation) CreateAlert(ctx context.Context, input graphql2.CreateAlertInput) (*alert.Alert, error) {
+	organizationID, scopeErr := rootStoreOrganizationID(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+
 	// An alert when created will always have triggered status
 	a := &alert.Alert{
 		ServiceID: input.ServiceID,
@@ -432,7 +457,7 @@ func (m *Mutation) CreateAlert(ctx context.Context, input graphql2.CreateAlertIn
 	var newAlert *alert.Alert
 	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		newAlert, err = m.AlertStore.CreateTx(ctx, tx, a)
+		newAlert, err = m.AlertStore.CreateTxScoped(ctx, tx, a, organizationID)
 		if err != nil {
 			return err
 		}
@@ -468,10 +493,15 @@ func (a *Alert) NoiseReason(ctx context.Context, raw *alert.Alert) (*string, err
 }
 
 func (m *Mutation) SetAlertNoiseReason(ctx context.Context, input graphql2.SetAlertNoiseReasonInput) (bool, error) {
-	err := m.AlertStore.UpdateFeedback(ctx, &alert.Feedback{
+	organizationID, scopeErr := rootStoreOrganizationID(ctx)
+	if scopeErr != nil {
+		return false, scopeErr
+	}
+
+	err := m.AlertStore.UpdateFeedbackScoped(ctx, &alert.Feedback{
 		ID:          input.AlertID,
 		NoiseReason: input.NoiseReason,
-	})
+	}, organizationID)
 	if err != nil {
 		return false, err
 	}
@@ -483,6 +513,23 @@ func (a *Alert) RecentEvents(ctx context.Context, obj *alert.Alert, opts *graphq
 }
 
 func (a *App) RecentAlertEvents(ctx context.Context, opts *graphql2.AlertRecentEventsOptions, s alertlog.SearchOptions) (*graphql2.AlertLogEntryConnection, error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if organizationID != nil {
+		for _, id := range s.FilterAlertIDs {
+			if err := a.AlertStore.CheckOrganization(ctx, a.DB, id, organizationID); err != nil {
+				return nil, err
+			}
+		}
+		if s.FilterServiceID != nil {
+			if _, err := a.ServiceStore.FindOne(ctx, s.FilterServiceID.String(), organizationID); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if opts == nil {
 		opts = new(graphql2.AlertRecentEventsOptions)
 	}
@@ -504,7 +551,7 @@ func (a *App) RecentAlertEvents(ctx context.Context, opts *graphql2.AlertRecentE
 
 	s.Limit++
 
-	logs, err := a.AlertLogStore.Search(ctx, &s)
+	logs, err := a.AlertLogStore.SearchScoped(ctx, &s, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -534,9 +581,13 @@ func (a *Alert) PendingNotifications(ctx context.Context, obj *alert.Alert) ([]g
 		return nil, err
 	}
 
+	current, err := (*App)(a).currentAlertParent(ctx, obj)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := gadb.New(a.DB).AllPendingMsgDests(ctx, gadb.AllPendingMsgDestsParams{
 		AlertID:   int64(obj.ID),
-		ServiceID: uuid.MustParse(obj.ServiceID),
+		ServiceID: uuid.MustParse(current.ServiceID),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -591,15 +642,25 @@ func (a *Alert) PendingNotifications(ctx context.Context, obj *alert.Alert) ([]g
 }
 
 func (m *Mutation) EscalateAlerts(ctx context.Context, ids []int) ([]alert.Alert, error) {
-	ids, err := m.AlertStore.EscalateMany(ctx, ids)
+	organizationID, scopeErr := rootStoreOrganizationID(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+
+	ids, err := m.AlertStore.EscalateManyScoped(ctx, ids, organizationID)
 	if err != nil {
 		return nil, err
 	}
 
-	return m.AlertStore.FindMany(ctx, ids)
+	return m.AlertStore.FindManyScoped(ctx, ids, organizationID)
 }
 
 func (m *Mutation) UpdateAlerts(ctx context.Context, args graphql2.UpdateAlertsInput) ([]alert.Alert, error) {
+	organizationID, scopeErr := rootStoreOrganizationID(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+
 	if args.NewStatus != nil && args.NoiseReason != nil {
 		return nil, validation.NewGenericError("cannot set both 'newStatus' and 'noiseReason'")
 	}
@@ -619,7 +680,7 @@ func (m *Mutation) UpdateAlerts(ctx context.Context, args graphql2.UpdateAlertsI
 			status = alert.StatusClosed
 		}
 
-		updatedIDs, err = m.AlertStore.UpdateManyAlertStatus(ctx, status, args.AlertIDs, nil)
+		updatedIDs, err = m.AlertStore.UpdateManyAlertStatusScoped(ctx, status, args.AlertIDs, nil, organizationID)
 		if err != nil {
 			return nil, err
 		}
@@ -627,16 +688,21 @@ func (m *Mutation) UpdateAlerts(ctx context.Context, args graphql2.UpdateAlertsI
 
 	if args.NoiseReason != nil {
 		var err error
-		updatedIDs, err = m.AlertStore.UpdateManyAlertFeedback(ctx, *args.NoiseReason, args.AlertIDs)
+		updatedIDs, err = m.AlertStore.UpdateManyAlertFeedbackScoped(ctx, *args.NoiseReason, args.AlertIDs, organizationID)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return m.AlertStore.FindMany(ctx, updatedIDs)
+	return m.AlertStore.FindManyScoped(ctx, updatedIDs, organizationID)
 }
 
 func (m *Mutation) UpdateAlertsByService(ctx context.Context, args graphql2.UpdateAlertsByServiceInput) (bool, error) {
+	organizationID, scopeErr := rootStoreOrganizationID(ctx)
+	if scopeErr != nil {
+		return false, scopeErr
+	}
+
 	var status alert.Status
 
 	switch args.NewStatus {
@@ -646,7 +712,7 @@ func (m *Mutation) UpdateAlertsByService(ctx context.Context, args graphql2.Upda
 		status = alert.StatusClosed
 	}
 
-	err := m.AlertStore.UpdateStatusByService(ctx, args.ServiceID, status)
+	err := m.AlertStore.UpdateStatusByServiceScoped(ctx, args.ServiceID, status, organizationID)
 	if err != nil {
 		return false, err
 	}
@@ -676,4 +742,41 @@ func (a *Alert) MetaValue(ctx context.Context, alert *alert.Alert, key string) (
 	}
 
 	return md[key], nil
+}
+
+// authorizeAlert protects derived fields even when a raw parent bypassed a
+// materializer. The nil compatibility path does not touch the database.
+func (a *App) authorizeAlert(ctx context.Context, id int) error {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return err
+	}
+	if organizationID == nil {
+		return nil
+	}
+	return a.AlertStore.CheckOrganization(ctx, a.DB, id, organizationID)
+}
+
+// currentAlertParent never trusts a caller-supplied ServiceID for human access.
+func (a *App) currentAlertParent(ctx context.Context, raw *alert.Alert) (*alert.Alert, error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if organizationID == nil {
+		return raw, nil
+	}
+	return a.AlertStore.FindOneScoped(ctx, raw.ID, organizationID)
+}
+
+func (a *App) authorizeAlertService(ctx context.Context, id uuid.UUID) error {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return err
+	}
+	if organizationID == nil {
+		return nil
+	}
+	_, err = a.ServiceStore.FindOne(ctx, id.String(), organizationID)
+	return err
 }

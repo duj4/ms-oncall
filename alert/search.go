@@ -8,6 +8,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/util/sqlutil"
@@ -102,6 +103,9 @@ var searchTemplate = template.Must(template.New("alert-search").Funcs(search.Hel
 		a.dedup_key
 	FROM alerts a
 	WHERE true
+		AND (:organizationID::uuid IS NULL OR EXISTS (
+			SELECT 1 FROM services svc WHERE svc.id = a.service_id AND svc.organization_id = :organizationID
+		))
 	{{ if .Omit }}
 		AND not a.id = any(:omit)
 	{{ end }}
@@ -150,7 +154,10 @@ var searchTemplate = template.Must(template.New("alert-search").Funcs(search.Hel
 	LIMIT {{.Limit}}
 `))
 
-type renderData SearchOptions
+type renderData struct {
+	SearchOptions
+	organizationID *uuid.UUID
+}
 
 func (opts renderData) SortStr() string {
 	switch opts.Sort {
@@ -207,6 +214,7 @@ func (opts renderData) QueryArgs() []sql.NamedArg {
 	}
 
 	return []sql.NamedArg{
+		sql.Named("organizationID", opts.organizationID),
 		sql.Named("search", opts.Search),
 		sql.Named("searchID", searchID),
 		sql.Named("status", stat),
@@ -260,6 +268,11 @@ func (s *Store) serviceNameSearch(ctx context.Context, data *renderData) error {
 }
 
 func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]Alert, error) {
+	return s.SearchScoped(ctx, opts, nil)
+}
+
+// SearchScoped keeps Organization authority separate from cursor/search state.
+func (s *Store) SearchScoped(ctx context.Context, opts *SearchOptions, organizationID *uuid.UUID) ([]Alert, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return nil, err
@@ -268,7 +281,10 @@ func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]Alert, error
 		opts = new(SearchOptions)
 	}
 
-	data, err := (*renderData)(opts).Normalize()
+	if err := checkOrganizationID(organizationID); err != nil {
+		return nil, err
+	}
+	data, err := (renderData{SearchOptions: *opts, organizationID: organizationID}).Normalize()
 	if err != nil {
 		return nil, err
 	}

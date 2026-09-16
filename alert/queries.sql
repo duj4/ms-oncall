@@ -158,3 +158,20 @@ FROM
 WHERE
     a.id = @id::bigint;
 
+-- name: Alert_CheckOrganization :one
+-- Current ownership is inherited through Service; authorization takes no lock.
+SELECT a.id
+FROM alerts a
+JOIN services s ON s.id = a.service_id
+WHERE a.id = @id::bigint AND s.organization_id = @organization_id::uuid;
+
+-- name: Alert_CheckServiceOrganization :one
+SELECT id
+FROM services
+WHERE id = @id::uuid AND organization_id = @organization_id::uuid;
+
+-- name: Alert_OrganizationIDs :many
+SELECT a.id
+FROM alerts a
+JOIN services s ON s.id = a.service_id
+WHERE a.id = ANY (@ids::bigint[]) AND s.organization_id = @organization_id::uuid;

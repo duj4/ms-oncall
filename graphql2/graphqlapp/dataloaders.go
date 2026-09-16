@@ -59,7 +59,13 @@ type AlertStatsParam struct {
 // Each loader is configured with appropriate batch settings and ID extraction functions.
 func (a *App) registerLoaders(ctx context.Context) context.Context {
 	ctx = context.WithValue(ctx, requestLoadersKey, &loaders{
-		Alert:      dataloader.NewStoreLoader(ctx, a.AlertStore.FindMany, func(a alert.Alert) int { return a.ID }),
+		Alert: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []int) ([]alert.Alert, error) {
+			organizationID, err := rootStoreOrganizationID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return a.AlertStore.FindManyScoped(ctx, ids, organizationID)
+		}, func(a alert.Alert) int { return a.ID }),
 		AlertState: dataloader.NewStoreLoader(ctx, a.AlertStore.State, func(s alert.State) int { return s.ID }),
 		EP: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]escalation.Policy, error) {
 			organizationID, err := rootStoreOrganizationID(ctx)
@@ -184,6 +190,10 @@ func (a *App) closeLoaders(ctx context.Context) {
 }
 
 func (a *App) FindAlertStats(ctx context.Context, params AlertStatsParam, serviceID uuid.UUID) ([]gadb.ServiceAlertStatsRow, error) {
+	if err := a.authorizeAlertService(ctx, serviceID); err != nil {
+		return nil, err
+	}
+
 	loader := loadersFrom(ctx).AlertStats
 	if loader == nil {
 		return gadb.New(a.DB).ServiceAlertStats(ctx, gadb.ServiceAlertStatsParams{
@@ -199,6 +209,10 @@ func (a *App) FindAlertStats(ctx context.Context, params AlertStatsParam, servic
 }
 
 func (app *App) FindAlertCountByStatus(ctx context.Context, serviceID uuid.UUID) ([]gadb.ServiceAlertCountsRow, error) {
+	if err := app.authorizeAlertService(ctx, serviceID); err != nil {
+		return nil, err
+	}
+
 	loader := loadersFrom(ctx).AlertsByStatus
 	if loader == nil {
 		return gadb.New(app.DB).ServiceAlertCounts(ctx, []uuid.UUID{serviceID})
@@ -208,6 +222,10 @@ func (app *App) FindAlertCountByStatus(ctx context.Context, serviceID uuid.UUID)
 }
 
 func (app *App) FindOneAlertMetadata(ctx context.Context, id int) (map[string]string, error) {
+	if err := app.authorizeAlert(ctx, id); err != nil {
+		return nil, err
+	}
+
 	loader := loadersFrom(ctx).AlertMetadata
 	if loader == nil {
 		return app.AlertStore.Metadata(ctx, app.DB, id)
@@ -238,6 +256,10 @@ func (app *App) FindOneNotificationMessageStatus(ctx context.Context, id string)
 }
 
 func (app *App) FindOneAlertFeedback(ctx context.Context, id int) (*alert.Feedback, error) {
+	if err := app.authorizeAlert(ctx, id); err != nil {
+		return nil, err
+	}
+
 	loader := loadersFrom(ctx).AlertFeedback
 	if loader == nil {
 		feedback, err := app.AlertStore.Feedback(ctx, []int{id})
@@ -289,6 +311,10 @@ func (app *App) FindOneUser(ctx context.Context, id string) (*user.User, error) 
 }
 
 func (app *App) FindOneAlertMetric(ctx context.Context, id int) (*alertmetrics.Metric, error) {
+	if err := app.authorizeAlert(ctx, id); err != nil {
+		return nil, err
+	}
+
 	loader := loadersFrom(ctx).AlertMetrics
 	if loader == nil {
 		m, err := app.AlertMetricsStore.FindMetrics(ctx, []int{id})
@@ -351,6 +377,10 @@ func (app *App) FindOneService(ctx context.Context, id string) (*service.Service
 }
 
 func (app *App) FindOneAlertState(ctx context.Context, alertID int) (*alert.State, error) {
+	if err := app.authorizeAlert(ctx, alertID); err != nil {
+		return nil, err
+	}
+
 	loader := loadersFrom(ctx).AlertState
 	if loader == nil {
 		epState, err := app.AlertStore.State(ctx, []int{alertID})
@@ -367,9 +397,13 @@ func (app *App) FindOneAlertState(ctx context.Context, alertID int) (*alert.Stat
 }
 
 func (app *App) FindOneAlert(ctx context.Context, id int) (*alert.Alert, error) {
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	loader := loadersFrom(ctx).Alert
 	if loader == nil {
-		return app.AlertStore.FindOne(ctx, id)
+		return app.AlertStore.FindOneScoped(ctx, id, organizationID)
 	}
 
 	return loader.FetchOne(ctx, id)

@@ -498,6 +498,44 @@ func (q *Queries) Alert_AlertHasEPState(ctx context.Context, alertID int64) (boo
 	return has_ep_state, err
 }
 
+const alert_CheckOrganization = `-- name: Alert_CheckOrganization :one
+SELECT a.id
+FROM alerts a
+JOIN services s ON s.id = a.service_id
+WHERE a.id = $1::bigint AND s.organization_id = $2::uuid
+`
+
+type Alert_CheckOrganizationParams struct {
+	ID             int64
+	OrganizationID uuid.UUID
+}
+
+// Current ownership is inherited through Service; authorization takes no lock.
+func (q *Queries) Alert_CheckOrganization(ctx context.Context, arg Alert_CheckOrganizationParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, alert_CheckOrganization, arg.ID, arg.OrganizationID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const alert_CheckServiceOrganization = `-- name: Alert_CheckServiceOrganization :one
+SELECT id
+FROM services
+WHERE id = $1::uuid AND organization_id = $2::uuid
+`
+
+type Alert_CheckServiceOrganizationParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) Alert_CheckServiceOrganization(ctx context.Context, arg Alert_CheckServiceOrganizationParams) (uuid.UUID, error) {
+	row := q.db.QueryRowContext(ctx, alert_CheckServiceOrganization, arg.ID, arg.OrganizationID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const alert_GetAlertFeedback = `-- name: Alert_GetAlertFeedback :many
 SELECT
     alert_id,
@@ -686,6 +724,41 @@ FOR UPDATE
 func (q *Queries) Alert_LockService(ctx context.Context, serviceID uuid.UUID) error {
 	_, err := q.db.ExecContext(ctx, alert_LockService, serviceID)
 	return err
+}
+
+const alert_OrganizationIDs = `-- name: Alert_OrganizationIDs :many
+SELECT a.id
+FROM alerts a
+JOIN services s ON s.id = a.service_id
+WHERE a.id = ANY ($1::bigint[]) AND s.organization_id = $2::uuid
+`
+
+type Alert_OrganizationIDsParams struct {
+	Ids            []int64
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) Alert_OrganizationIDs(ctx context.Context, arg Alert_OrganizationIDsParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, alert_OrganizationIDs, pq.Array(arg.Ids), arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const alert_RequestAlertEscalationByTime = `-- name: Alert_RequestAlertEscalationByTime :one

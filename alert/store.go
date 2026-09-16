@@ -79,6 +79,9 @@ func NewStore(ctx context.Context, db *sql.DB, logDB *alertlog.Store, evt *event
 				a.dedup_key
 			FROM alerts a
 			WHERE a.id = ANY ($1)
+				AND ($2::uuid IS NULL OR EXISTS (
+					SELECT 1 FROM services svc WHERE svc.id = a.service_id AND svc.organization_id = $2
+				))
 		`),
 		createUpdNew: p(`
 			WITH existing as (
@@ -311,6 +314,12 @@ func (s *Store) Escalate(ctx context.Context, alertID int, currentLevel int) err
 }
 
 func (s *Store) EscalateMany(ctx context.Context, alertIDs []int) ([]int, error) {
+	return s.EscalateManyScoped(ctx, alertIDs, nil)
+}
+
+// EscalateManyScoped applies server-supplied Service Organization authority.
+// Nil preserves the existing non-human compatibility path.
+func (s *Store) EscalateManyScoped(ctx context.Context, alertIDs []int, organizationID *uuid.UUID) ([]int, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return nil, err
@@ -322,6 +331,12 @@ func (s *Store) EscalateMany(ctx context.Context, alertIDs []int) ([]int, error)
 
 	err = validate.Range("AlertIDs", len(alertIDs), 1, 1)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.CheckOrganization(ctx, s.db, alertIDs[0], organizationID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, validation.NewGenericError("alert not found")
+		}
 		return nil, err
 	}
 	err = s.EscalateAsOf(ctx, alertIDs[0], time.Time{})
@@ -343,6 +358,12 @@ type EventAlertStatusUpdate struct {
 }
 
 func (s *Store) UpdateStatusByService(ctx context.Context, serviceID string, status Status) error {
+	return s.UpdateStatusByServiceScoped(ctx, serviceID, status, nil)
+}
+
+// UpdateStatusByServiceScoped applies server-supplied Service Organization authority.
+// Nil preserves the existing non-human compatibility path.
+func (s *Store) UpdateStatusByServiceScoped(ctx context.Context, serviceID string, status Status, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.Admin, permission.User)
 	if err != nil {
 		return err
@@ -363,6 +384,10 @@ func (s *Store) UpdateStatusByService(ctx context.Context, serviceID string, sta
 		return err
 	}
 	defer sqlutil.Rollback(ctx, "alert: update status by service", tx)
+
+	if err := s.checkServiceOrganization(ctx, tx, serviceID, organizationID); err != nil {
+		return err
+	}
 
 	t := alertlog.TypeAcknowledged
 	if status == StatusClosed {
@@ -411,6 +436,12 @@ func (s *Store) UpdateStatusByService(ctx context.Context, serviceID string, sta
 }
 
 func (s *Store) UpdateManyAlertStatus(ctx context.Context, status Status, alertIDs []int, logMeta interface{}) ([]int, error) {
+	return s.UpdateManyAlertStatusScoped(ctx, status, alertIDs, logMeta, nil)
+}
+
+// UpdateManyAlertStatusScoped applies server-supplied Service Organization authority.
+// Nil preserves the existing non-human compatibility path.
+func (s *Store) UpdateManyAlertStatusScoped(ctx context.Context, status Status, alertIDs []int, logMeta interface{}, organizationID *uuid.UUID) ([]int, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return nil, err
@@ -424,6 +455,11 @@ func (s *Store) UpdateManyAlertStatus(ctx context.Context, status Status, alertI
 		validate.Range("AlertIDs", len(alertIDs), 1, maxBatch),
 		validate.OneOf("Status", status, StatusActive, StatusClosed),
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	alertIDs, err = s.organizationAlertIDs(ctx, s.db, alertIDs, organizationID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -485,6 +521,12 @@ func (s *Store) UpdateManyAlertStatus(ctx context.Context, status Status, alertI
 }
 
 func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, a *Alert) (*Alert, error) {
+	return s.CreateTxScoped(ctx, tx, a, nil)
+}
+
+// CreateTxScoped applies server-supplied Service Organization authority.
+// Nil preserves the existing non-human compatibility path.
+func (s *Store) CreateTxScoped(ctx context.Context, tx *sql.Tx, a *Alert, organizationID *uuid.UUID) (*Alert, error) {
 	n, err := a.Normalize() // validation
 	if err != nil {
 		return nil, err
@@ -503,6 +545,9 @@ func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, a *Alert) (*Alert, err
 		return nil, err
 	}
 
+	if err := s.checkServiceOrganization(ctx, tx, n.ServiceID, organizationID); err != nil {
+		return nil, err
+	}
 	err = gadb.New(tx).Alert_LockService(ctx, uuid.MustParse(a.ServiceID))
 	if err != nil {
 		return nil, err
@@ -544,6 +589,12 @@ func (s *Store) _create(ctx context.Context, tx *sql.Tx, a Alert) (*Alert, *aler
 // CreateOrUpdateTx returns `isNew` to indicate if the returned alert was a new one.
 // It is the caller's responsibility to log alert creation if the transaction is committed (and isNew is true).
 func (s *Store) CreateOrUpdateTx(ctx context.Context, tx *sql.Tx, a *Alert) (*Alert, bool, error) {
+	return s.CreateOrUpdateTxScoped(ctx, tx, a, nil)
+}
+
+// CreateOrUpdateTxScoped applies server-supplied Service Organization authority.
+// Nil preserves the existing non-human compatibility path.
+func (s *Store) CreateOrUpdateTxScoped(ctx context.Context, tx *sql.Tx, a *Alert, organizationID *uuid.UUID) (*Alert, bool, error) {
 	err := permission.LimitCheckAny(ctx,
 		permission.System,
 		permission.Admin,
@@ -569,6 +620,9 @@ func (s *Store) CreateOrUpdateTx(ctx context.Context, tx *sql.Tx, a *Alert) (*Al
 		return nil, false, err
 	}
 
+	if err := s.checkServiceOrganization(ctx, tx, n.ServiceID, organizationID); err != nil {
+		return nil, false, err
+	}
 	err = gadb.New(tx).Alert_LockService(ctx, uuid.MustParse(n.ServiceID))
 	if err != nil {
 		return nil, false, err
@@ -630,15 +684,20 @@ func (s *Store) CreateOrUpdateTx(ctx context.Context, tx *sql.Tx, a *Alert) (*Al
 // In the case that Status is closed but a matching alert is not present, nil is returned.
 // Otherwise the current alert is returned.
 func (s *Store) CreateOrUpdate(ctx context.Context, a *Alert) (*Alert, bool, error) {
-	return s.createOrUpdate(ctx, a, nil)
+	return s.CreateOrUpdateScoped(ctx, a, nil)
 }
 
 // CreateOrUpdateWithMeta behaves the same as CreateOrUpdate, but also sets metadata on the alert if it is new.
 func (s *Store) CreateOrUpdateWithMeta(ctx context.Context, a *Alert, meta map[string]string) (*Alert, bool, error) {
-	return s.createOrUpdate(ctx, a, meta)
+	return s.createOrUpdate(ctx, a, meta, nil)
 }
 
-func (s *Store) createOrUpdate(ctx context.Context, a *Alert, meta map[string]string) (*Alert, bool, error) {
+// CreateOrUpdateScoped checks Service authority before reading dedup-specific state.
+func (s *Store) CreateOrUpdateScoped(ctx context.Context, a *Alert, organizationID *uuid.UUID) (*Alert, bool, error) {
+	return s.createOrUpdate(ctx, a, nil, organizationID)
+}
+
+func (s *Store) createOrUpdate(ctx context.Context, a *Alert, meta map[string]string, organizationID *uuid.UUID) (*Alert, bool, error) {
 	err := permission.LimitCheckAny(ctx,
 		permission.System,
 		permission.Admin,
@@ -655,7 +714,7 @@ func (s *Store) createOrUpdate(ctx context.Context, a *Alert, meta map[string]st
 	}
 	defer sqlutil.Rollback(ctx, "alert: upsert", tx)
 
-	n, isNew, err := s.CreateOrUpdateTx(ctx, tx, a)
+	n, isNew, err := s.CreateOrUpdateTxScoped(ctx, tx, a, organizationID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -741,7 +800,13 @@ func (s *Store) UpdateStatus(ctx context.Context, id int, stat Status) error {
 }
 
 func (s *Store) FindOne(ctx context.Context, id int) (*Alert, error) {
-	alerts, err := s.FindMany(ctx, []int{id})
+	return s.FindOneScoped(ctx, id, nil)
+}
+
+// FindOneScoped applies server-supplied Service Organization authority.
+// Nil preserves the existing non-human compatibility path.
+func (s *Store) FindOneScoped(ctx context.Context, id int, organizationID *uuid.UUID) (*Alert, error) {
+	alerts, err := s.FindManyScoped(ctx, []int{id}, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -753,6 +818,12 @@ func (s *Store) FindOne(ctx context.Context, id int) (*Alert, error) {
 }
 
 func (s *Store) FindMany(ctx context.Context, alertIDs []int) ([]Alert, error) {
+	return s.FindManyScoped(ctx, alertIDs, nil)
+}
+
+// FindManyScoped applies server-supplied Service Organization authority.
+// Nil preserves the existing non-human compatibility path.
+func (s *Store) FindManyScoped(ctx context.Context, alertIDs []int, organizationID *uuid.UUID) ([]Alert, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return nil, err
@@ -766,7 +837,10 @@ func (s *Store) FindMany(ctx context.Context, alertIDs []int) ([]Alert, error) {
 		return nil, err
 	}
 
-	rows, err := s.findMany.QueryContext(ctx, sqlutil.IntArray(alertIDs))
+	if err := checkOrganizationID(organizationID); err != nil {
+		return nil, err
+	}
+	rows, err := s.findMany.QueryContext(ctx, sqlutil.IntArray(alertIDs), organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -854,6 +928,11 @@ func (s *Store) Feedback(ctx context.Context, alertIDs []int) ([]Feedback, error
 }
 
 func (s Store) UpdateManyAlertFeedback(ctx context.Context, noiseReason string, alertIDs []int) ([]int, error) {
+	return s.UpdateManyAlertFeedbackScoped(ctx, noiseReason, alertIDs, nil)
+}
+
+// UpdateManyAlertFeedbackScoped authorizes feedback through the live Alert's owning Service.
+func (s Store) UpdateManyAlertFeedbackScoped(ctx context.Context, noiseReason string, alertIDs []int, organizationID *uuid.UUID) ([]int, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -864,6 +943,10 @@ func (s Store) UpdateManyAlertFeedback(ctx context.Context, noiseReason string, 
 		validate.Text("NoiseReason", noiseReason, 1, 255),
 	)
 	if err != nil {
+		return nil, err
+	}
+
+	if _, err := s.organizationAlertIDs(ctx, s.db, alertIDs, organizationID, true); err != nil {
 		return nil, err
 	}
 
@@ -892,6 +975,11 @@ func (s Store) UpdateManyAlertFeedback(ctx context.Context, noiseReason string, 
 }
 
 func (s Store) UpdateFeedback(ctx context.Context, feedback *Feedback) error {
+	return s.UpdateFeedbackScoped(ctx, feedback, nil)
+}
+
+// UpdateFeedbackScoped authorizes feedback through the live Alert's owning Service.
+func (s Store) UpdateFeedbackScoped(ctx context.Context, feedback *Feedback, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return err
@@ -902,6 +990,9 @@ func (s Store) UpdateFeedback(ctx context.Context, feedback *Feedback) error {
 		return err
 	}
 
+	if err := s.CheckOrganization(ctx, s.db, feedback.ID, organizationID); err != nil {
+		return err
+	}
 	err = gadb.New(s.db).Alert_SetAlertFeedback(ctx, gadb.Alert_SetAlertFeedbackParams{
 		AlertID:     int64(feedback.ID),
 		NoiseReason: feedback.NoiseReason,
