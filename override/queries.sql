@@ -8,6 +8,10 @@ WITH AFTER AS (
         user_overrides
     WHERE
         id = sqlc.narg(after_id)::uuid
+        AND (sqlc.narg(organization_id)::uuid ISNULL
+            OR EXISTS (SELECT 1 FROM schedules
+                WHERE schedules.id = user_overrides.tgt_schedule_id
+                AND schedules.organization_id = @organization_id))
 )
 SELECT
     o.id,
@@ -21,6 +25,10 @@ FROM
     LEFT JOIN AFTER ON TRUE
 WHERE (@omit::uuid[] ISNULL
     OR o.id <> ALL (@omit))
+AND (sqlc.narg(organization_id)::uuid ISNULL
+    OR EXISTS (SELECT 1 FROM schedules
+        WHERE schedules.id = o.tgt_schedule_id
+        AND schedules.organization_id = @organization_id))
 AND (sqlc.narg(schedule_id)::uuid ISNULL
     OR o.tgt_schedule_id = @schedule_id)
 AND (@any_user_id::uuid[] ISNULL
@@ -52,4 +60,3 @@ ORDER BY
     o.end_time,
     o.id
 LIMIT 150;
-

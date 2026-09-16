@@ -38,6 +38,11 @@ type SearchCursor struct {
 }
 
 func (s *Store) Search(ctx context.Context, db gadb.DBTX, opts *SearchOptions) ([]UserOverride, error) {
+	return s.SearchScoped(ctx, db, opts, nil)
+}
+
+// SearchScoped keeps server-controlled authority separate from cursor/filter data.
+func (s *Store) SearchScoped(ctx context.Context, db gadb.DBTX, opts *SearchOptions, organizationID *uuid.UUID) ([]UserOverride, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -88,6 +93,10 @@ func (s *Store) Search(ctx context.Context, db gadb.DBTX, opts *SearchOptions) (
 		arg.AfterID = uuid.NullUUID{UUID: id, Valid: true}
 	}
 
+	arg.OrganizationID, err = organizationScope(organizationID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := gadb.New(db).OverrideSearch(ctx, arg)
 	if err != nil {
 		return nil, err

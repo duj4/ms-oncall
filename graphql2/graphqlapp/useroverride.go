@@ -16,12 +16,20 @@ type UserOverride App
 
 func (a *App) UserOverride() graphql2.UserOverrideResolver { return (*UserOverride)(a) }
 func (q *Query) UserOverride(ctx context.Context, id string) (*override.UserOverride, error) {
-	return q.OverrideStore.FindOneUserOverrideTx(ctx, nil, id, false)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return q.OverrideStore.FindOneUserOverrideTxScoped(ctx, nil, id, false, organizationID)
 }
 
 func (m *Mutation) UpdateUserOverride(ctx context.Context, input graphql2.UpdateUserOverrideInput) (bool, error) {
-	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		u, err := m.OverrideStore.FindOneUserOverrideTx(ctx, tx, input.ID, true)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
+	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		u, err := m.OverrideStore.FindOneUserOverrideTxScoped(ctx, tx, input.ID, true, organizationID)
 		if err != nil {
 			return err
 		}
@@ -42,7 +50,7 @@ func (m *Mutation) UpdateUserOverride(ctx context.Context, input graphql2.Update
 			u.RemoveUserID = *input.RemoveUserID
 		}
 
-		return m.OverrideStore.UpdateUserOverrideTx(ctx, tx, u)
+		return m.OverrideStore.UpdateUserOverrideTxScoped(ctx, tx, u, organizationID)
 	})
 	if err != nil {
 		return false, err
@@ -53,6 +61,10 @@ func (m *Mutation) UpdateUserOverride(ctx context.Context, input graphql2.Update
 func (m *Mutation) CreateUserOverride(ctx context.Context, input graphql2.CreateUserOverrideInput) (*override.UserOverride, error) {
 	if input.ScheduleID == nil {
 		return nil, validation.NewFieldError("ScheduleID", "is required")
+	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
 	}
 	u := &override.UserOverride{
 		Target: assignment.ScheduleTarget(*input.ScheduleID),
@@ -65,9 +77,9 @@ func (m *Mutation) CreateUserOverride(ctx context.Context, input graphql2.Create
 	if input.RemoveUserID != nil {
 		u.RemoveUserID = *input.RemoveUserID
 	}
-	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		u, err = m.OverrideStore.CreateUserOverrideTx(ctx, tx, u)
+		u, err = m.OverrideStore.CreateUserOverrideTxScoped(ctx, tx, u, organizationID)
 		return err
 	})
 	if err != nil {
@@ -129,7 +141,11 @@ func (q *Query) UserOverrides(ctx context.Context, input *graphql2.UserOverrideS
 	}
 
 	searchOpts.Limit++
-	overrides, err := q.OverrideStore.Search(ctx, q.DB, &searchOpts)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	overrides, err := q.OverrideStore.SearchScoped(ctx, q.DB, &searchOpts, organizationID)
 	if err != nil {
 		return nil, err
 	}

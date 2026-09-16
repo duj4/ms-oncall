@@ -27,7 +27,8 @@ type Store struct {
 
 	lock *sql.Stmt
 
-	findUOUpdate *sql.Stmt
+	findUOUpdate             *sql.Stmt
+	findScheduleOrganization *sql.Stmt
 }
 
 // NewStore initializes a new DB using an existing sql connection.
@@ -38,6 +39,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		db: db,
 
 		lock: p.P(`LOCK user_overrides IN EXCLUSIVE MODE`),
+		// Authorization must not lock the Schedule: Schedule deletion takes its
+		// row lock before cascading to user_overrides.
+		findScheduleOrganization: p.P(`select 1 from schedules where id = $1 and organization_id = $2`),
 
 		findUOUpdate: p.P(`
 		select
@@ -48,7 +52,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			end_time,
 			tgt_schedule_id
 		from user_overrides
-		where id = $1
+		where id = $1 and ($2::uuid is null or exists (
+			select 1 from schedules where id = user_overrides.tgt_schedule_id and organization_id = $2
+		))
 		for update
 	`),
 		findUO: p.P(`
@@ -60,7 +66,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 				end_time,
 				tgt_schedule_id
 			from user_overrides
-			where id = $1
+			where id = $1 and ($2::uuid is null or exists (
+				select 1 from schedules where id = user_overrides.tgt_schedule_id and organization_id = $2
+			))
 		`),
 		updateUO: p.P(`
 			update user_overrides
@@ -70,7 +78,11 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 				start_time = $4,
 				end_time = $5,
 				tgt_schedule_id = $6
-			where id = $1
+			where id = $1 and ($7::uuid is null or (
+				tgt_schedule_id = $6 and exists (
+					select 1 from schedules where id = user_overrides.tgt_schedule_id and organization_id = $7
+				)
+			))
 		`),
 		createUO: p.P(`
 			insert into user_overrides (
@@ -81,7 +93,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 				end_time,
 				tgt_schedule_id
 			) values ($1, $2, $3, $4, $5, $6)`),
-		deleteUO: p.P(`delete from user_overrides where id = any($1)`),
+		deleteUO: p.P(`delete from user_overrides where id = any($1) and ($2::uuid is null or exists (
+			select 1 from schedules where id = user_overrides.tgt_schedule_id and organization_id = $2
+		))`),
 		findAllUO: p.P(`
 			select
 				id,
@@ -130,11 +144,21 @@ func (s *Store) execContext(ctx context.Context, tx *sql.Tx, stmt *sql.Stmt, arg
 }
 
 func (s *Store) FindOneUserOverrideTx(ctx context.Context, tx *sql.Tx, id string, forUpdate bool) (*UserOverride, error) {
+	return s.FindOneUserOverrideTxScoped(ctx, tx, id, forUpdate, nil)
+}
+
+// FindOneUserOverrideTxScoped resolves ownership through the persisted Schedule.
+// A nil Organization retains the existing non-human compatibility behavior.
+func (s *Store) FindOneUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, id string, forUpdate bool, organizationID *uuid.UUID) (*UserOverride, error) {
 	err := permission.LimitCheckAny(ctx, permission.User, permission.Admin)
 	if err != nil {
 		return nil, err
 	}
 	err = validate.UUID("OverrideID", id)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := organizationScope(organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -144,9 +168,9 @@ func (s *Store) FindOneUserOverrideTx(ctx context.Context, tx *sql.Tx, id string
 	err = s.withTx(ctx, tx, func(tx *sql.Tx) error {
 		var row *sql.Row
 		if forUpdate {
-			row = tx.StmtContext(ctx, s.findUOUpdate).QueryRowContext(ctx, id)
+			row = tx.StmtContext(ctx, s.findUOUpdate).QueryRowContext(ctx, id, scope)
 		} else {
-			row = tx.StmtContext(ctx, s.findUO).QueryRowContext(ctx, id)
+			row = tx.StmtContext(ctx, s.findUO).QueryRowContext(ctx, id, scope)
 		}
 
 		return row.Scan(&o.ID, &add, &rem, &o.Start, &o.End, &schedTgt)
@@ -168,6 +192,12 @@ func (s *Store) FindOneUserOverrideTx(ctx context.Context, tx *sql.Tx, id string
 
 // UpdateUserOverrideTx updates an existing UserOverride, inside an optional transaction.
 func (s *Store) UpdateUserOverrideTx(ctx context.Context, tx *sql.Tx, o *UserOverride) error {
+	return s.UpdateUserOverrideTxScoped(ctx, tx, o, nil)
+}
+
+// UpdateUserOverrideTxScoped authorizes the persisted parent and does not allow
+// a scoped update to reparent an override using a submitted Target.
+func (s *Store) UpdateUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, o *UserOverride, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.User, permission.Admin)
 	if err != nil {
 		return err
@@ -183,6 +213,10 @@ func (s *Store) UpdateUserOverrideTx(ctx context.Context, tx *sql.Tx, o *UserOve
 	if !n.End.After(time.Now()) {
 		return validation.NewFieldError("End", "must be in the future")
 	}
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return err
+	}
 	var add, rem sql.NullString
 	if n.AddUserID != "" {
 		add.Valid = true
@@ -197,7 +231,20 @@ func (s *Store) UpdateUserOverrideTx(ctx context.Context, tx *sql.Tx, o *UserOve
 		schedTgt.Valid = true
 		schedTgt.String = n.Target.TargetID()
 	}
-	return s.execContext(ctx, tx, s.updateUO, n.ID, add, rem, n.Start, n.End, schedTgt)
+	return s.withTx(ctx, tx, func(tx *sql.Tx) error {
+		result, err := tx.StmtContext(ctx, s.updateUO).ExecContext(ctx, n.ID, add, rem, n.Start, n.End, schedTgt, scope)
+		if err != nil || organizationID == nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return validation.NewFieldError("ID", "user override not found")
+		}
+		return nil
+	})
 }
 
 // UpdateUserOverride updates an existing UserOverride.
@@ -207,6 +254,12 @@ func (s *Store) UpdateUserOverride(ctx context.Context, o *UserOverride) error {
 
 // CreateUserOverrideTx adds a UserOverride to the DB with a new ID.
 func (s *Store) CreateUserOverrideTx(ctx context.Context, tx *sql.Tx, o *UserOverride) (*UserOverride, error) {
+	return s.CreateUserOverrideTxScoped(ctx, tx, o, nil)
+}
+
+// CreateUserOverrideTxScoped checks Schedule ownership in the same transaction,
+// after local validation and before insertion can expose conflict state.
+func (s *Store) CreateUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, o *UserOverride, organizationID *uuid.UUID) (*UserOverride, error) {
 	err := permission.LimitCheckAny(ctx, permission.User, permission.Admin)
 	if err != nil {
 		return nil, err
@@ -217,6 +270,10 @@ func (s *Store) CreateUserOverrideTx(ctx context.Context, tx *sql.Tx, o *UserOve
 	}
 	if !n.End.After(time.Now()) {
 		return nil, validation.NewFieldError("End", "must be in the future")
+	}
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return nil, err
 	}
 	n.ID = uuid.New().String()
 	var add, rem sql.NullString
@@ -233,7 +290,20 @@ func (s *Store) CreateUserOverrideTx(ctx context.Context, tx *sql.Tx, o *UserOve
 		schedTgt.Valid = true
 		schedTgt.String = n.Target.TargetID()
 	}
-	err = s.execContext(ctx, tx, s.createUO, n.ID, add, rem, n.Start, n.End, schedTgt)
+	err = s.withTx(ctx, tx, func(tx *sql.Tx) error {
+		if scope.Valid {
+			var found int
+			err := tx.StmtContext(ctx, s.findScheduleOrganization).QueryRowContext(ctx, schedTgt, scope).Scan(&found)
+			if errors.Is(err, sql.ErrNoRows) {
+				return validation.NewFieldError("TargetID", "schedule does not exist")
+			}
+			if err != nil {
+				return err
+			}
+		}
+		_, err := tx.StmtContext(ctx, s.createUO).ExecContext(ctx, n.ID, add, rem, n.Start, n.End, schedTgt)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +313,12 @@ func (s *Store) CreateUserOverrideTx(ctx context.Context, tx *sql.Tx, o *UserOve
 
 // DeleteUserOverride removes a UserOverride from the DB matching the given ID.
 func (s *Store) DeleteUserOverrideTx(ctx context.Context, tx *sql.Tx, ids ...string) error {
+	return s.DeleteUserOverrideTxScoped(ctx, tx, ids, nil)
+}
+
+// DeleteUserOverrideTxScoped requires every distinct requested override to be
+// owned. Callers supplying a transaction must roll it back on error.
+func (s *Store) DeleteUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.User, permission.Admin)
 	if err != nil {
 		return err
@@ -254,8 +330,39 @@ func (s *Store) DeleteUserOverrideTx(ctx context.Context, tx *sql.Tx, ids ...str
 	if err != nil {
 		return err
 	}
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return err
+	}
 
-	return s.execContext(ctx, tx, s.deleteUO, sqlutil.UUIDArray(ids))
+	return s.withTx(ctx, tx, func(tx *sql.Tx) error {
+		result, err := tx.StmtContext(ctx, s.deleteUO).ExecContext(ctx, sqlutil.UUIDArray(ids), scope)
+		if err != nil || organizationID == nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		want := make(map[uuid.UUID]struct{}, len(ids))
+		for _, id := range ids {
+			want[uuid.MustParse(id)] = struct{}{}
+		}
+		if count != int64(len(want)) {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+}
+
+func organizationScope(organizationID *uuid.UUID) (uuid.NullUUID, error) {
+	if organizationID == nil {
+		return uuid.NullUUID{}, nil
+	}
+	if *organizationID == uuid.Nil {
+		return uuid.NullUUID{}, validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	return uuid.NullUUID{UUID: *organizationID, Valid: true}, nil
 }
 
 // FindAllUserOverrides will return all UserOverrides that belong to the provided Target within the provided time range.
