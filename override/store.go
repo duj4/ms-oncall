@@ -29,6 +29,7 @@ type Store struct {
 
 	findUOUpdate             *sql.Stmt
 	findScheduleOrganization *sql.Stmt
+	findCreateUsers          *sql.Stmt
 }
 
 // NewStore initializes a new DB using an existing sql connection.
@@ -42,6 +43,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		// Authorization must not lock the Schedule: Schedule deletion takes its
 		// row lock before cascading to user_overrides.
 		findScheduleOrganization: p.P(`select 1 from schedules where id = $1 and organization_id = $2`),
+		findCreateUsers: p.P(`select
+			exists (select 1 from users where id = $1),
+			exists (select 1 from users where id = $2)`),
 
 		findUOUpdate: p.P(`
 		select
@@ -292,8 +296,26 @@ func (s *Store) CreateUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, o *U
 	}
 	err = s.withTx(ctx, tx, func(tx *sql.Tx) error {
 		if scope.Valid {
+			// Preserve the existing CHECK, then Add/Remove User FK validation
+			// precedence. These checks expose no Schedule or override state.
+			if add.Valid && rem.Valid && uuid.MustParse(add.String) == uuid.MustParse(rem.String) {
+				return validation.NewFieldError("AddUserID", "cannot be the same as the user being replaced")
+			}
+			var addExists, removeExists bool
+			err := tx.StmtContext(ctx, s.findCreateUsers).QueryRowContext(ctx, add, rem).Scan(&addExists, &removeExists)
+			if err != nil {
+				return err
+			}
+			if add.Valid && !addExists {
+				return validation.NewFieldError("AddUserID", "user does not exist")
+			}
+			if rem.Valid && !removeExists {
+				return validation.NewFieldError("RemoveUserID", "user does not exist")
+			}
+			// Both identity and parent lookups are non-locking. Insertion still
+			// enforces FKs and checks conflicts only after parent authorization.
 			var found int
-			err := tx.StmtContext(ctx, s.findScheduleOrganization).QueryRowContext(ctx, schedTgt, scope).Scan(&found)
+			err = tx.StmtContext(ctx, s.findScheduleOrganization).QueryRowContext(ctx, schedTgt, scope).Scan(&found)
 			if errors.Is(err, sql.ErrNoRows) {
 				return validation.NewFieldError("TargetID", "schedule does not exist")
 			}
