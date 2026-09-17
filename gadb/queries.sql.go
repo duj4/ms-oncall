@@ -4482,7 +4482,11 @@ WITH AFTER AS (
     FROM
         user_overrides
     WHERE
-        id = $8::uuid
+        id = $9::uuid
+        AND ($2::uuid ISNULL
+            OR EXISTS (SELECT 1 FROM schedules
+                WHERE schedules.id = user_overrides.tgt_schedule_id
+                AND schedules.organization_id = $2))
 )
 SELECT
     o.id,
@@ -4497,25 +4501,29 @@ FROM
 WHERE ($1::uuid[] ISNULL
     OR o.id <> ALL ($1))
 AND ($2::uuid ISNULL
-    OR o.tgt_schedule_id = $2)
-AND ($3::uuid[] ISNULL
-    OR add_user_id = ANY ($3::uuid[])
-    OR remove_user_id = ANY ($3::uuid[]))
+    OR EXISTS (SELECT 1 FROM schedules
+        WHERE schedules.id = o.tgt_schedule_id
+        AND schedules.organization_id = $2))
+AND ($3::uuid ISNULL
+    OR o.tgt_schedule_id = $3)
 AND ($4::uuid[] ISNULL
-    OR add_user_id = ANY ($4::uuid[]))
+    OR add_user_id = ANY ($4::uuid[])
+    OR remove_user_id = ANY ($4::uuid[]))
 AND ($5::uuid[] ISNULL
-    OR remove_user_id = ANY ($5::uuid[]))
+    OR add_user_id = ANY ($5::uuid[]))
+AND ($6::uuid[] ISNULL
+    OR remove_user_id = ANY ($6::uuid[]))
 AND (
     /* only include overrides that end after the search start */
-    $6::timestamptz ISNULL
-    OR o.end_time > $6)
+    $7::timestamptz ISNULL
+    OR o.end_time > $7)
 AND (
     /* only include overrides that start before/within the search end */
-    $7::timestamptz ISNULL
-    OR o.start_time <= $7)
+    $8::timestamptz ISNULL
+    OR o.start_time <= $8)
 AND (
     /* resume search after specified "cursor" override */
-    $8::uuid ISNULL
+    $9::uuid ISNULL
     OR (o.start_time > after.start_time
         OR (o.start_time = after.start_time
             AND o.end_time > after.end_time)
@@ -4530,14 +4538,15 @@ LIMIT 150
 `
 
 type OverrideSearchParams struct {
-	Omit         []uuid.UUID
-	ScheduleID   uuid.NullUUID
-	AnyUserID    []uuid.UUID
-	AddUserID    []uuid.UUID
-	RemoveUserID []uuid.UUID
-	SearchStart  sql.NullTime
-	SearchEnd    sql.NullTime
-	AfterID      uuid.NullUUID
+	Omit           []uuid.UUID
+	OrganizationID uuid.NullUUID
+	ScheduleID     uuid.NullUUID
+	AnyUserID      []uuid.UUID
+	AddUserID      []uuid.UUID
+	RemoveUserID   []uuid.UUID
+	SearchStart    sql.NullTime
+	SearchEnd      sql.NullTime
+	AfterID        uuid.NullUUID
 }
 
 type OverrideSearchRow struct {
@@ -4552,6 +4561,7 @@ type OverrideSearchRow struct {
 func (q *Queries) OverrideSearch(ctx context.Context, arg OverrideSearchParams) ([]OverrideSearchRow, error) {
 	rows, err := q.db.QueryContext(ctx, overrideSearch,
 		pq.Array(arg.Omit),
+		arg.OrganizationID,
 		arg.ScheduleID,
 		pq.Array(arg.AnyUserID),
 		pq.Array(arg.AddUserID),

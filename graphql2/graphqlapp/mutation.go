@@ -177,7 +177,8 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 			assignment.TargetTypeSchedule,
 			assignment.TargetTypeRotation,
 			assignment.TargetTypeEscalationPolicy,
-			assignment.TargetTypeIntegrationKey:
+			assignment.TargetTypeIntegrationKey,
+			assignment.TargetTypeUserOverride:
 			hasRootTarget = true
 		}
 		if hasRootTarget {
@@ -241,7 +242,7 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		}
 		switch typ {
 		case assignment.TargetTypeUserOverride:
-			err = errors.Wrap(a.OverrideStore.DeleteUserOverrideTx(ctx, tx, ids...), "delete user overrides")
+			err = errors.Wrap(a.OverrideStore.DeleteUserOverrideTxScoped(ctx, tx, ids, organizationID), "delete user overrides")
 		case assignment.TargetTypeUser:
 			err = errors.Wrap(a.UserStore.DeleteManyTx(ctx, tx, ids), "delete users")
 		case assignment.TargetTypeService:
