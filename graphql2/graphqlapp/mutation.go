@@ -61,6 +61,10 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 	if err != nil {
 		return false, err
 	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
 		rules := make([]schedule.OnCallNotificationRule, 0, len(input.Rules))
@@ -83,7 +87,7 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 			rules = append(rules, r.OnCallNotificationRule)
 		}
 
-		return a.ScheduleStore.SetOnCallNotificationRules(ctx, tx, schedID, rules)
+		return a.ScheduleStore.SetOnCallNotificationRulesScoped(ctx, tx, schedID, rules, organizationID)
 	})
 
 	return err == nil, err
@@ -111,13 +115,17 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 		}
 		clearSet = true
 	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
 		if clearSet {
-			return a.ScheduleStore.SetClearTemporarySchedule(ctx, tx, schedID, tmp, *input.ClearStart, *input.ClearEnd)
+			return a.ScheduleStore.SetClearTemporaryScheduleScoped(ctx, tx, schedID, tmp, *input.ClearStart, *input.ClearEnd, organizationID)
 		}
 
-		return a.ScheduleStore.SetTemporarySchedule(ctx, tx, schedID, tmp)
+		return a.ScheduleStore.SetTemporaryScheduleScoped(ctx, tx, schedID, tmp, organizationID)
 	})
 
 	return err == nil, err
@@ -128,9 +136,13 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 	if err != nil {
 		return false, err
 	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-		return a.ScheduleStore.ClearTemporarySchedules(ctx, tx, schedID, input.Start, input.End)
+		return a.ScheduleStore.ClearTemporarySchedulesScoped(ctx, tx, schedID, input.Start, input.End, organizationID)
 	})
 
 	return err == nil, err

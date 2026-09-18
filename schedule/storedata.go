@@ -9,6 +9,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/util/jsonutil"
 	"github.com/target/goalert/util/sqlutil"
+	"github.com/target/goalert/validation"
 )
 
 func (store *Store) scheduleData(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID) (*Data, error) {
@@ -35,7 +36,7 @@ func (store *Store) scheduleData(ctx context.Context, tx *sql.Tx, scheduleID uui
 	return &data, nil
 }
 
-func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, apply func(data *Data) error) error {
+func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, organizationID *uuid.UUID, apply func(data *Data) error) error {
 	var err error
 	externalTx := tx != nil
 	if !externalTx {
@@ -47,6 +48,23 @@ func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, schedule
 	}
 
 	db := gadb.New(store.db).WithTx(tx)
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		// Authorize the parent in the persistence transaction before reading or
+		// locking any Schedule-owned data. This check does not lock the parent.
+		_, err = db.SchedCheckOrganization(ctx, gadb.SchedCheckOrganizationParams{
+			ScheduleID:     scheduleID,
+			OrganizationID: *organizationID,
+		})
+		if err == sql.ErrNoRows {
+			return validation.NewFieldError("ScheduleID", "schedule does not exist")
+		}
+		if err != nil {
+			return err
+		}
+	}
 
 	var rawData json.RawMessage
 	// Select for update, if it does not exist try inserting, if that fails due to a race, re-try select for update
