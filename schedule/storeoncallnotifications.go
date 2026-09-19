@@ -27,7 +27,22 @@ func (store *Store) SetOnCallNotificationRulesScoped(ctx context.Context, tx *sq
 		return err
 	}
 
-	err = validate.Range("Rules", len(rules), 0, onCallNotificationRuleLimit)
+	err = PrepareOnCallNotificationRules(scheduleID, rules)
+	if err != nil {
+		return err
+	}
+
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
+		data.V1.OnCallNotificationRules = rules
+
+		return nil
+	})
+}
+
+// PrepareOnCallNotificationRules validates rules and assigns omitted IDs in place.
+// It does not access Schedule state, authorize a parent, or perform persistence.
+func PrepareOnCallNotificationRules(scheduleID uuid.UUID, rules []OnCallNotificationRule) error {
+	err := validate.Range("Rules", len(rules), 0, onCallNotificationRuleLimit)
 	if err != nil {
 		return err
 	}
@@ -107,11 +122,7 @@ func (store *Store) SetOnCallNotificationRulesScoped(ctx context.Context, tx *sq
 		rules[i].ID.id = nextID()
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
-		data.V1.OnCallNotificationRules = rules
-
-		return nil
-	})
+	return nil
 }
 
 // OnCallNotificationRules returns the current set of OnCallNotificationRules for the provided scheduleID.

@@ -89,10 +89,16 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 			rules = append(rules, r.OnCallNotificationRule)
 		}
 
-		// Destination validation retains its existing order. Returning the
-		// authority error here rolls back any transaction-local channel writes
-		// before the Schedule Store can access parent or child state.
+		// Complete the same safe validation as the Store before returning an
+		// authority error. The transaction rolls back destination writes, and
+		// no Schedule parent or child state has been accessed.
 		if authorityErr != nil {
+			if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+				return err
+			}
+			if err := schedule.PrepareOnCallNotificationRules(schedID, rules); err != nil {
+				return err
+			}
 			return authorityErr
 		}
 		return a.ScheduleStore.SetOnCallNotificationRulesScoped(ctx, tx, schedID, rules, organizationID)
@@ -123,17 +129,28 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 		}
 		clearSet = true
 	}
-	organizationID, err := rootStoreOrganizationID(ctx)
-	if err != nil {
-		// Preserve request-only validation on rejected authority without
-		// entering the Store or changing the valid-authority validation path.
-		if _, validationErr := tmp.Normalize(nil); validationErr != nil {
+	organizationID, authorityErr := rootStoreOrganizationID(ctx)
+	if authorityErr != nil {
+		if a.UserStore == nil {
+			// Missing validation dependencies must not permit unscoped access.
+			return false, authorityErr
+		}
+		if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+			return false, err
+		}
+		// User existence is global exact-base validation, independent of the
+		// Schedule parent. Keep it in Normalize's existing per-shift order.
+		check, err := a.UserStore.UserExists(ctx)
+		if err != nil {
+			return false, err
+		}
+		if _, validationErr := tmp.Normalize(check); validationErr != nil {
 			return false, validationErr
 		}
 		if clearSet && !input.ClearEnd.After(*input.ClearStart) {
 			return false, validation.NewFieldError("ClearEnd", "must be after ClearStart")
 		}
-		return false, err
+		return false, authorityErr
 	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {

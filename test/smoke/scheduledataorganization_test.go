@@ -233,7 +233,7 @@ func scheduleDataHuman(t *testing.T, h *harness.Harness, role permission.Role) c
 }
 
 func scheduleDataApp(h *harness.Harness) *graphqlapp.App {
-	return &graphqlapp.App{DB: h.App().DB(), ScheduleStore: h.App().ScheduleStore, NCStore: h.App().NCStore, DestReg: h.App().DestRegistry}
+	return &graphqlapp.App{DB: h.App().DB(), ScheduleStore: h.App().ScheduleStore, UserStore: h.App().UserStore, NCStore: h.App().NCStore, DestReg: h.App().DestRegistry}
 }
 
 func scheduleDataGraphQL(ctx context.Context, app *graphqlapp.App, id string, temp schedule.TemporarySchedule, op string) error {
