@@ -1,16 +1,23 @@
 package smoke
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/auth"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
+	"github.com/target/goalert/graphql2/graphqlapp"
+	"github.com/target/goalert/notificationchannel"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/test/smoke/harness"
@@ -219,23 +226,53 @@ func TestScheduleDataGraphQLValidationPrecedence(t *testing.T) {
 	}
 }
 
-// Invalid human authority is an admission failure before destination/Store
-// validation. UUID and paired clear-field checks remain resolver-local and
-// precede authority extraction (also covered without a database in graphqlapp).
-func TestScheduleDataInvalidAuthorityPrecedence(t *testing.T) {
-	h := scheduleDataHarness(t)
+func scheduleDataMissingAuthority(t *testing.T, h *harness.Harness) context.Context {
+	t.Helper()
 	session := uuid.NewString()
 	requester, err := auth.NewRequester(h.UUID("user-a"), session)
 	require.NoError(t, err)
-	ctx := auth.WithRequester(permission.UserSourceContext(scheduleDataRequestContext(t), h.UUID("user-a"), permission.RoleUser,
+	return auth.WithRequester(permission.UserSourceContext(scheduleDataRequestContext(t), h.UUID("user-a"), permission.RoleUser,
 		&permission.SourceInfo{Type: permission.SourceTypeAuthProvider, ID: session}), requester)
+}
+
+// Observe query starts, including failed parent checks and child reads/locks.
+// Fixture setup and durable-state checks use the independent harness connection.
+func scheduleDataValidationTrace(t *testing.T, h *harness.Harness, app *graphqlapp.App) (scheduleQueries, channelWrites *atomic.Int32) {
+	t.Helper()
+	scheduleQueries, channelWrites = new(atomic.Int32), new(atomic.Int32)
+	tr := &scheduleDataTrace{before: func(_ context.Context, query string) {
+		if strings.Contains(query, "-- name: Sched") || strings.Contains(query, "schedule_data") {
+			scheduleQueries.Add(1)
+		}
+		if strings.Contains(query, "-- name: NotifChanUpsertDest") {
+			channelWrites.Add(1)
+		}
+	}}
+	app.DB, app.ScheduleStore = scheduleDataTraced(t, h, tr)
+	var err error
+	app.NCStore, err = notificationchannel.NewStore(context.Background(), app.DB, app.DestReg)
+	require.NoError(t, err)
+	return scheduleQueries, channelWrites
+}
+
+// Safe input errors precede missing human authority, but neither safe validation
+// nor authority rejection may enter Schedule parent/data access.
+func TestScheduleDataInvalidAuthorityPrecedence(t *testing.T) {
+	h := scheduleDataHarness(t)
 	app := scheduleDataApp(h)
+	scheduleQueries, channelWrites := scheduleDataValidationTrace(t, h, app)
 	for _, op := range scheduleDataOperations {
 		t.Run(op, func(t *testing.T) {
+			ctx := scheduleDataMissingAuthority(t, h)
 			temp := scheduleDataTemp(h)
 			temp.End = temp.Start
+			want := "invalid value for 'End': must be after Start"
+			if op == "set" || op == "set-clear" {
+				want += "\ninvalid value for 'Shifts[0].Start': must be before End"
+			}
 			var err error
 			if op == "rules" {
+				want = "unknown destination type"
 				_, err = app.Mutation().SetScheduleOnCallNotificationRules(ctx, graphql2.SetScheduleOnCallNotificationRulesInput{
 					ScheduleID: h.UUID("own"), Rules: []graphql2.OnCallNotificationRuleInput{{Dest: gadb.NewDestV1("unknown")}},
 				})
@@ -243,9 +280,64 @@ func TestScheduleDataInvalidAuthorityPrecedence(t *testing.T) {
 				err = scheduleDataGraphQL(ctx, app, h.UUID("own"), temp, op)
 			}
 			scheduleDataRecord(t, scheduleDataOutcome(err))
-			require.True(t, permission.IsPermissionError(err))
+			require.EqualError(t, err, want)
+			require.Zero(t, scheduleQueries.Load(), "safe validation must not access Schedule state")
+			require.Zero(t, channelWrites.Load())
 			require.Empty(t, scheduleDataRaw(t, h, "own"))
+			t.Log("safe error preserved; Schedule queries=0; channel writes=0")
 		})
+	}
+}
+
+func TestScheduleDataInvalidAuthorityAdmission(t *testing.T) {
+	h := scheduleDataHarness(t)
+	app, provider := scheduleDataProviderApp(t, h)
+	scheduleQueries, channelWrites := scheduleDataValidationTrace(t, h, app)
+	for _, authority := range []string{"missing", "zero"} {
+		for _, parent := range []string{"own", "foreign", "missing"} {
+			for _, op := range []string{"set", "set-clear", "clear", "rules", "rules-update"} {
+				t.Run(authority+"/"+parent+"/"+op, func(t *testing.T) {
+					ctx := scheduleDataMissingAuthority(t, h)
+					if authority == "zero" {
+						ctx = executioncontext.WithExecutionContext(ctx, executioncontext.ExecutionContext{})
+					}
+					raw := ""
+					if parent != "missing" {
+						// Decoding this as schedule.Data would fail if admission reached child state.
+						scheduleDataReset(t, h, parent, `{"V1":"invalid schedule data"}`)
+						raw = scheduleDataRaw(t, h, parent)
+					}
+					beforeWrites := channelWrites.Load()
+					var err error
+					if op == "rules" || op == "rules-update" {
+						dest := gadb.NewDestV1(provider.ID(), "id", authority+"-"+parent+"-"+op)
+						if op == "rules-update" {
+							_, err = h.App().DB().Exec(`INSERT INTO notification_channels(id,dest,name) VALUES($1,$2,'original display name')`, uuid.New(), gadb.NullDestV1{Valid: true, DestV1: dest})
+							require.NoError(t, err)
+						}
+						_, err = app.Mutation().SetScheduleOnCallNotificationRules(ctx, graphql2.SetScheduleOnCallNotificationRulesInput{
+							ScheduleID: h.UUID(parent), Rules: []graphql2.OnCallNotificationRuleInput{{Dest: dest}},
+						})
+						require.Equal(t, beforeWrites+1, channelWrites.Load(), "observe the transaction-local destination write")
+						var name string
+						lookup := h.App().DB().QueryRow(`SELECT name FROM notification_channels WHERE dest=$1`, gadb.NullDestV1{Valid: true, DestV1: dest}).Scan(&name)
+						if op == "rules" {
+							require.ErrorIs(t, lookup, sql.ErrNoRows, "destination insert must roll back")
+						} else {
+							require.NoError(t, lookup)
+							require.Equal(t, "original display name", name, "destination update must roll back")
+						}
+					} else {
+						err = scheduleDataGraphQL(ctx, app, h.UUID(parent), scheduleDataTemp(h), op)
+					}
+					require.EqualError(t, err, "access denied: normal Organization scoped authority is required")
+					require.True(t, permission.IsPermissionError(err))
+					require.Zero(t, scheduleQueries.Load(), "authority denial must precede every Schedule query")
+					require.Equal(t, raw, scheduleDataRaw(t, h, parent))
+					t.Log("authority denied; Schedule queries=0; durable Schedule/channel changes=0")
+				})
+			}
+		}
 	}
 }
 

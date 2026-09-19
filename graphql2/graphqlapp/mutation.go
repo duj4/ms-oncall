@@ -14,6 +14,7 @@ import (
 	"github.com/target/goalert/user"
 	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation"
+	"github.com/target/goalert/validation/validate"
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -61,9 +62,10 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 	if err != nil {
 		return false, err
 	}
-	organizationID, err := rootStoreOrganizationID(ctx)
-	if err != nil {
-		return false, err
+	organizationID, authorityErr := rootStoreOrganizationID(ctx)
+	if authorityErr != nil && a.DestReg == nil {
+		// Without a registry, safe destination validation is unavailable.
+		return false, authorityErr
 	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
@@ -87,6 +89,12 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 			rules = append(rules, r.OnCallNotificationRule)
 		}
 
+		// Destination validation retains its existing order. Returning the
+		// authority error here rolls back any transaction-local channel writes
+		// before the Schedule Store can access parent or child state.
+		if authorityErr != nil {
+			return authorityErr
+		}
 		return a.ScheduleStore.SetOnCallNotificationRulesScoped(ctx, tx, schedID, rules, organizationID)
 	})
 
@@ -117,6 +125,14 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 	}
 	organizationID, err := rootStoreOrganizationID(ctx)
 	if err != nil {
+		// Preserve request-only validation on rejected authority without
+		// entering the Store or changing the valid-authority validation path.
+		if _, validationErr := tmp.Normalize(nil); validationErr != nil {
+			return false, validationErr
+		}
+		if clearSet && !input.ClearEnd.After(*input.ClearStart) {
+			return false, validation.NewFieldError("ClearEnd", "must be after ClearStart")
+		}
 		return false, err
 	}
 
@@ -138,6 +154,17 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 	}
 	organizationID, err := rootStoreOrganizationID(ctx)
 	if err != nil {
+		// Match the Store's safe range checks without accessing Schedule data.
+		var futureErr, rangeErr error
+		if time.Until(input.End) <= 5*time.Minute {
+			futureErr = validation.NewFieldError("End", "must be at least 5 min the future")
+		}
+		if !input.End.After(input.Start) {
+			rangeErr = validation.NewFieldError("End", "must be after Start")
+		}
+		if validationErr := validate.Many(futureErr, rangeErr); validationErr != nil {
+			return false, validationErr
+		}
 		return false, err
 	}
 
