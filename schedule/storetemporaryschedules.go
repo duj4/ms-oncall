@@ -67,6 +67,12 @@ func validateFuture(fieldName string, t time.Time) error {
 
 // SetTemporarySchedule will cause the schedule to use only, and exactly, the provided set of shifts between the provided start and end times.
 func (store *Store) SetTemporarySchedule(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, temp TemporarySchedule) error {
+	return store.SetTemporaryScheduleScoped(ctx, tx, scheduleID, temp, nil)
+}
+
+// SetTemporaryScheduleScoped sets shifts after authorizing the parent Schedule's Organization.
+// A nil organizationID retains the unscoped compatibility behavior.
+func (store *Store) SetTemporaryScheduleScoped(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, temp TemporarySchedule, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return err
@@ -82,7 +88,7 @@ func (store *Store) SetTemporarySchedule(ctx context.Context, tx *sql.Tx, schedu
 		return err
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, func(data *Data) error {
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
 		data.V1.TemporarySchedules = setFixedShifts(data.V1.TemporarySchedules, *newTemp)
 		return nil
 	})
@@ -90,6 +96,12 @@ func (store *Store) SetTemporarySchedule(ctx context.Context, tx *sql.Tx, schedu
 
 // SetClearTemporarySchedules works like SetTemporarySchedule after clearing out any existing TemporarySchedules between clearStart and clearEnd.
 func (store *Store) SetClearTemporarySchedule(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, temp TemporarySchedule, clearStart, clearEnd time.Time) error {
+	return store.SetClearTemporaryScheduleScoped(ctx, tx, scheduleID, temp, clearStart, clearEnd, nil)
+}
+
+// SetClearTemporaryScheduleScoped clears and sets shifts after authorizing the parent Schedule's Organization.
+// A nil organizationID retains the unscoped compatibility behavior.
+func (store *Store) SetClearTemporaryScheduleScoped(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, temp TemporarySchedule, clearStart, clearEnd time.Time, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return err
@@ -115,7 +127,7 @@ func (store *Store) SetClearTemporarySchedule(ctx context.Context, tx *sql.Tx, s
 		clearStart = now
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, func(data *Data) error {
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
 		data.V1.TemporarySchedules = deleteFixedShifts(data.V1.TemporarySchedules, clearStart, clearEnd)
 		data.V1.TemporarySchedules = setFixedShifts(data.V1.TemporarySchedules, *newTemp)
 		return nil
@@ -124,6 +136,12 @@ func (store *Store) SetClearTemporarySchedule(ctx context.Context, tx *sql.Tx, s
 
 // ClearTemporarySchedules will clear out (or split, if needed) any defined TemporarySchedules that exist between the start and end time.
 func (store *Store) ClearTemporarySchedules(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, start, end time.Time) error {
+	return store.ClearTemporarySchedulesScoped(ctx, tx, scheduleID, start, end, nil)
+}
+
+// ClearTemporarySchedulesScoped clears shifts after authorizing the parent Schedule's Organization.
+// A nil organizationID retains the unscoped compatibility behavior.
+func (store *Store) ClearTemporarySchedulesScoped(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, start, end time.Time, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return err
@@ -140,7 +158,7 @@ func (store *Store) ClearTemporarySchedules(ctx context.Context, tx *sql.Tx, sch
 		start = time.Now()
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, func(data *Data) error {
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
 		data.V1.TemporarySchedules = deleteFixedShifts(data.V1.TemporarySchedules, start, end)
 		return nil
 	})

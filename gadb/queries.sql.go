@@ -4895,6 +4895,25 @@ func (q *Queries) SWOConnUnlockAll(ctx context.Context) error {
 	return err
 }
 
+const schedCheckOrganization = `-- name: SchedCheckOrganization :one
+SELECT 1
+FROM schedules
+WHERE id = $1
+  AND organization_id = $2
+`
+
+type SchedCheckOrganizationParams struct {
+	ScheduleID     uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) SchedCheckOrganization(ctx context.Context, arg SchedCheckOrganizationParams) (int32, error) {
+	row := q.db.QueryRowContext(ctx, schedCheckOrganization, arg.ScheduleID, arg.OrganizationID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const schedCreate = `-- name: SchedCreate :one
 INSERT INTO schedules (id, organization_id, name, description, time_zone)
 VALUES (DEFAULT, $1, $2, $3, $4)

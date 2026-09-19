@@ -16,12 +16,33 @@ const onCallNotificationRuleLimit = 50
 
 // SetOnCallNotificationRules will set/replace all notification rules for the given schedule ID.
 func (store *Store) SetOnCallNotificationRules(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, rules []OnCallNotificationRule) error {
+	return store.SetOnCallNotificationRulesScoped(ctx, tx, scheduleID, rules, nil)
+}
+
+// SetOnCallNotificationRulesScoped replaces rules after authorizing the parent Schedule's Organization.
+// A nil organizationID retains the unscoped compatibility behavior.
+func (store *Store) SetOnCallNotificationRulesScoped(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, rules []OnCallNotificationRule, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return err
 	}
 
-	err = validate.Range("Rules", len(rules), 0, onCallNotificationRuleLimit)
+	err = PrepareOnCallNotificationRules(scheduleID, rules)
+	if err != nil {
+		return err
+	}
+
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
+		data.V1.OnCallNotificationRules = rules
+
+		return nil
+	})
+}
+
+// PrepareOnCallNotificationRules validates rules and assigns omitted IDs in place.
+// It does not access Schedule state, authorize a parent, or perform persistence.
+func PrepareOnCallNotificationRules(scheduleID uuid.UUID, rules []OnCallNotificationRule) error {
+	err := validate.Range("Rules", len(rules), 0, onCallNotificationRuleLimit)
 	if err != nil {
 		return err
 	}
@@ -101,11 +122,7 @@ func (store *Store) SetOnCallNotificationRules(ctx context.Context, tx *sql.Tx, 
 		rules[i].ID.id = nextID()
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, func(data *Data) error {
-		data.V1.OnCallNotificationRules = rules
-
-		return nil
-	})
+	return nil
 }
 
 // OnCallNotificationRules returns the current set of OnCallNotificationRules for the provided scheduleID.

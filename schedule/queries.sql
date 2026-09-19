@@ -41,6 +41,12 @@ WHERE
                 WHERE
                     user_id = $1));
 
+-- name: SchedCheckOrganization :one
+SELECT 1
+FROM schedules
+WHERE id = sqlc.arg(schedule_id)
+  AND organization_id = sqlc.arg(organization_id);
+
 -- name: SchedFindData :one
 -- Returns the schedule data for a given schedule ID.
 SELECT
