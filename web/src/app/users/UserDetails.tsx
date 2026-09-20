@@ -12,7 +12,7 @@ import { Grid } from '@mui/material'
 import UserNotificationRuleCreateDialog from './UserNotificationRuleCreateDialog'
 import UserContactMethodVerificationDialog from './UserContactMethodVerificationDialog'
 import { GenericError, ObjectNotFound } from '../error-pages'
-import { useSessionInfo } from '../util/RequireConfig'
+import { useConfigValue, useSessionInfo } from '../util/RequireConfig'
 import UserEditDialog from './UserEditDialog'
 import UserDeleteDialog from './UserDeleteDialog'
 import { QuerySetFavoriteButton } from '../util/QuerySetFavoriteButton'
@@ -64,6 +64,9 @@ export default function UserDetails(props: {
 }): JSX.Element {
   const userID = props.userID
   const { userID: currentUserID, isAdmin } = useSessionInfo()
+  const [calendarSubscriptionsDisabled] = useConfigValue(
+    'General.DisableCalendarSubscriptions',
+  )
 
   const [createCM, setCreateCM] = useState(false)
   const [createNR, setCreateNR] = useState(false)
@@ -98,7 +101,7 @@ export default function UserDetails(props: {
     },
   ]
 
-  if (userID === currentUserID) {
+  if (userID === currentUserID && calendarSubscriptionsDisabled === false) {
     links.push({
       label: 'Schedule Calendar Subscriptions',
       url: 'schedule-calendar-subscriptions',

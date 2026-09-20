@@ -7,6 +7,7 @@ import { Typography } from '@mui/material'
 import { CheckCircleOutline as SuccessIcon } from '@mui/icons-material'
 import CalenderSuccessForm from './CalendarSuccessForm'
 import { UserCalendarSubscription } from '../../../schema'
+import RequireConfig from '../../util/RequireConfig'
 
 const mutation = gql`
   mutation ($input: CreateUserCalendarSubscriptionInput!) {
@@ -48,7 +49,7 @@ interface CalendarSubscribeCreateDialogProps {
   scheduleID?: string
 }
 
-export default function CalendarSubscribeCreateDialog(
+function CalendarSubscribeCreateDialogContent(
   props: CalendarSubscribeCreateDialogProps,
 ): ReactNode {
   const [value, setValue] = useState<CalSubFormValue>({
@@ -113,5 +114,18 @@ export default function CalendarSubscribeCreateDialog(
       }
       form={getForm(isComplete, form, status.data)}
     />
+  )
+}
+
+export default function CalendarSubscribeCreateDialog(
+  props: CalendarSubscribeCreateDialogProps,
+): ReactNode {
+  return (
+    <RequireConfig
+      configID='General.DisableCalendarSubscriptions'
+      test={(value) => value === false}
+    >
+      <CalendarSubscribeCreateDialogContent {...props} />
+    </RequireConfig>
   )
 }

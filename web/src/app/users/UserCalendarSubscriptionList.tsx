@@ -7,9 +7,9 @@ import CalendarSubscribeCreateDialog from '../schedules/calendar-subscribe/Calen
 import { Warning } from '../icons'
 import CalendarSubscribeDeleteDialog from '../schedules/calendar-subscribe/CalendarSubscribeDeleteDialog'
 import CalendarSubscribeEditDialog from '../schedules/calendar-subscribe/CalendarSubscribeEditDialog'
-import { GenericError, ObjectNotFound } from '../error-pages'
+import { GenericError, ObjectNotFound, PageNotFound } from '../error-pages'
 import _ from 'lodash'
-import { useConfigValue } from '../util/RequireConfig'
+import RequireConfig, { useConfigValue } from '../util/RequireConfig'
 import { UserCalendarSubscription } from '../../schema'
 import { Time } from '../util/Time'
 import CompList from '../lists/CompList'
@@ -34,7 +34,7 @@ export const calendarSubscriptionsQuery = gql`
   }
 `
 
-export default function UserCalendarSubscriptionList(props: {
+function UserCalendarSubscriptionListContent(props: {
   userID: string
 }): JSX.Element {
   const userID = props.userID
@@ -168,5 +168,19 @@ export default function UserCalendarSubscriptionList(props: {
         />
       )}
     </React.Fragment>
+  )
+}
+
+export default function UserCalendarSubscriptionList(props: {
+  userID: string
+}): JSX.Element {
+  return (
+    <RequireConfig
+      configID='General.DisableCalendarSubscriptions'
+      test={(value) => value === false}
+      else={<PageNotFound />}
+    >
+      <UserCalendarSubscriptionListContent {...props} />
+    </RequireConfig>
   )
 }

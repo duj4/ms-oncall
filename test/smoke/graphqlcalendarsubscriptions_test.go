@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
@@ -22,6 +23,9 @@ type calSubWithID struct {
 
 // TestGraphQLCalendarSubscriptions tests operations on calendar subscriptions API
 func TestGraphQLCalendarSubscriptions(t *testing.T) {
+	if config.CalendarSubscriptionsDisabled() {
+		t.Skip("retained upstream enabled-mode test; MS OnCall Calendar policy is covered in app")
+	}
 	t.Parallel()
 
 	sql := `

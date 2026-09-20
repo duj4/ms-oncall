@@ -11,7 +11,7 @@ type Source interface {
 type Static Config
 
 // Config will return the current value of s.
-func (s Static) Config() Config { return Config(s) }
+func (s Static) Config() Config { return Config(s).withProductPolicy() }
 
 // Handler will return a new http.Handler that provides config to all requests.
 func Handler(next http.Handler, src Source) http.Handler {

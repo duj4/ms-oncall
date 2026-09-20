@@ -248,4 +248,23 @@ function testSubs(screen: ScreenFormat): void {
   })
 }
 
-testScreen('Calendar Subscriptions', testSubs)
+testScreen('Calendar Subscriptions', (screen) => {
+  describe.skip('Retained upstream enabled-mode coverage', () =>
+    testSubs(screen))
+
+  it('hides Calendar product surfaces even after a false config import', () => {
+    cy.updateConfig({ General: { DisableCalendarSubscriptions: false } })
+    cy.createSchedule().then((schedule: Schedule) => {
+      cy.visit(`/schedules/${schedule.id}`)
+      cy.get('[data-cy="subscribe-btn"]').should('not.exist')
+    })
+    cy.visit('/profile')
+    cy.contains('Schedule Calendar Subscriptions').should('not.exist')
+    cy.visit('/profile/schedule-calendar-subscriptions')
+    cy.contains('the page you were trying to reach could not be found').should(
+      'exist',
+    )
+    cy.get('[data-cy="calendar-subscriptions"]').should('not.exist')
+    cy.contains('Create Subscription').should('not.exist')
+  })
+})

@@ -10,6 +10,7 @@ import (
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
+	"github.com/target/goalert/validation"
 )
 
 type UserCalendarSubscription App
@@ -71,6 +72,10 @@ func (m *Mutation) CreateUserCalendarSubscription(ctx context.Context, input gra
 }
 
 func (m *Mutation) UpdateUserCalendarSubscription(ctx context.Context, input graphql2.UpdateUserCalendarSubscriptionInput) (bool, error) {
+	if config.CalendarSubscriptionsDisabled() {
+		return false, validation.NewGenericError("disabled by administrator")
+	}
+
 	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		cs, err := m.CalSubStore.FindOneForUpdate(ctx, tx, input.ID)
 		if err != nil {

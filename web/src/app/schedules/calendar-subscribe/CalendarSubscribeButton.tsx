@@ -5,7 +5,10 @@ import Tooltip from '@mui/material/Tooltip'
 
 import CalendarSubscribeCreateDialog from './CalendarSubscribeCreateDialog'
 import { calendarSubscriptionsQuery } from '../../users/UserCalendarSubscriptionList'
-import { useConfigValue, useSessionInfo } from '../../util/RequireConfig'
+import RequireConfig, {
+  useConfigValue,
+  useSessionInfo,
+} from '../../util/RequireConfig'
 import _ from 'lodash'
 import { UserCalendarSubscription } from '../../../schema'
 
@@ -13,7 +16,7 @@ interface CalendarSubscribeButtonProps {
   scheduleID: string
 }
 
-export default function CalendarSubscribeButton({
+function CalendarSubscribeButtonContent({
   scheduleID,
 }: CalendarSubscribeButtonProps): JSX.Element {
   const [creationDisabled] = useConfigValue(
@@ -75,5 +78,18 @@ export default function CalendarSubscribeButton({
         />
       )}
     </React.Fragment>
+  )
+}
+
+export default function CalendarSubscribeButton(
+  props: CalendarSubscribeButtonProps,
+): JSX.Element {
+  return (
+    <RequireConfig
+      configID='General.DisableCalendarSubscriptions'
+      test={(value) => value === false}
+    >
+      <CalendarSubscribeButtonContent {...props} />
+    </RequireConfig>
   )
 }
