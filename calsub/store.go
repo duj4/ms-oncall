@@ -37,7 +37,7 @@ func NewStore(ctx context.Context, db *sql.DB, apiKeyring keyring.Keyring, oc *o
 // Authorize will return an authorized context associated with the given token. If the token is invalid
 // or otherwise can not be authenticated, an error is returned.
 func (s *Store) Authorize(ctx context.Context, tok authtoken.Token) (context.Context, error) {
-	if tok.Type != authtoken.TypeCalSub {
+	if config.CalendarSubscriptionsDisabled() || tok.Type != authtoken.TypeCalSub {
 		return ctx, permission.Unauthorized()
 	}
 
@@ -64,6 +64,10 @@ func (s *Store) FindOne(ctx context.Context, id string) (*Subscription, error) {
 }
 
 func (s *Store) _FindOne(ctx context.Context, q *gadb.Queries, id string, upd bool) (*Subscription, error) {
+	if config.CalendarSubscriptionsDisabled() {
+		return nil, validation.NewGenericError("disabled by administrator")
+	}
+
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -109,6 +113,10 @@ func (s *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string) (*S
 
 // UpdateTx will update the given calendar subscription with the given input.
 func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, cs *Subscription) error {
+	if config.CalendarSubscriptionsDisabled() {
+		return validation.NewGenericError("disabled by administrator")
+	}
+
 	err := permission.LimitCheckAny(ctx, permission.MatchUser(cs.UserID))
 	if err != nil {
 		return err
@@ -150,8 +158,7 @@ func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, cs *Subscription) (*Su
 		return nil, err
 	}
 
-	cfg := config.FromContext(ctx)
-	if cfg.General.DisableCalendarSubscriptions {
+	if config.CalendarSubscriptionsDisabled() {
 		return nil, validation.NewGenericError("disabled by administrator")
 	}
 
@@ -193,6 +200,10 @@ func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, cs *Subscription) (*Su
 
 // FindAllByUser returns all calendar subscriptions of a user.
 func (s *Store) FindAllByUser(ctx context.Context, userID string) ([]Subscription, error) {
+	if config.CalendarSubscriptionsDisabled() {
+		return nil, validation.NewGenericError("disabled by administrator")
+	}
+
 	err := permission.LimitCheckAny(ctx, permission.MatchUser(userID))
 	if err != nil {
 		return nil, err

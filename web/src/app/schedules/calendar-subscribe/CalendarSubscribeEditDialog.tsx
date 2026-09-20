@@ -7,6 +7,7 @@ import _ from 'lodash'
 import Spinner from '../../loading/components/Spinner'
 import { fieldErrors } from '../../util/errutil'
 import { UserCalendarSubscription } from '../../../schema'
+import RequireConfig from '../../util/RequireConfig'
 
 const query = gql`
   query ($id: ID!) {
@@ -87,7 +88,7 @@ interface CalendarSubscribeEditDialogProps {
  * Load edit data here before rendering edit content to
  * avoid breaking any rules of hooks
  */
-export default function CalendarSubscribeEditDialog(
+function CalendarSubscribeEditDialogData(
   props: CalendarSubscribeEditDialogProps,
 ): ReactNode {
   const [{ data, fetching, error }] = useQuery({
@@ -105,5 +106,18 @@ export default function CalendarSubscribeEditDialog(
       data={data.userCalendarSubscription}
       onClose={props.onClose}
     />
+  )
+}
+
+export default function CalendarSubscribeEditDialog(
+  props: CalendarSubscribeEditDialogProps,
+): ReactNode {
+  return (
+    <RequireConfig
+      configID='General.DisableCalendarSubscriptions'
+      test={(value) => value === false}
+    >
+      <CalendarSubscribeEditDialogData {...props} />
+    </RequireConfig>
   )
 }

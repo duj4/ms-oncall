@@ -8,7 +8,7 @@ var contextKeyConfig = contextKey("config")
 
 // Context returns a new Context that carries the provided Config.
 func (cfg Config) Context(ctx context.Context) context.Context {
-	return context.WithValue(ctx, contextKeyConfig, cfg)
+	return context.WithValue(ctx, contextKeyConfig, cfg.withProductPolicy())
 }
 
 // FromContext will return the Config carried in the provided Context.

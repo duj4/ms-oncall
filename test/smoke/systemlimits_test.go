@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/limit"
 	"github.com/target/goalert/test/smoke/harness"
 )
@@ -148,6 +149,9 @@ func TestSystemLimits(t *testing.T) {
 
 	checkSingleInsert := func(limitID limit.ID, expErrMsg string, addQuery func(index int) string, delQuery func(ids []string) string) {
 		t.Run(string(limitID), func(t *testing.T) {
+			if limitID == limit.CalendarSubscriptionsPerUser && config.CalendarSubscriptionsDisabled() {
+				t.Skip("Calendar creation is hard-disabled before quota enforcement")
+			}
 			/*
 				Sequence:
 				1. create 4

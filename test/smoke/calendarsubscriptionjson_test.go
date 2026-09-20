@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
@@ -22,6 +23,9 @@ var (
 )
 
 func TestCalendarSubscriptionJSON(t *testing.T) {
+	if config.CalendarSubscriptionsDisabled() {
+		t.Skip("retained upstream enabled-mode test; MS OnCall Calendar policy is covered in app")
+	}
 	t.Parallel()
 
 	const sql = `

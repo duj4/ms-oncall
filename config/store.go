@@ -336,5 +336,5 @@ func (s *Store) Config() Config {
 	cfg := s.rawCfg
 
 	s.mx.RUnlock()
-	return cfg
+	return cfg.withProductPolicy()
 }
