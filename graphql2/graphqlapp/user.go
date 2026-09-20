@@ -142,7 +142,11 @@ func (a *User) CalendarSubscriptions(ctx context.Context, obj *user.User) ([]cal
 }
 
 func (a *User) OnCallSteps(ctx context.Context, obj *user.User) ([]escalation.Step, error) {
-	return a.PolicyStore.FindAllOnCallStepsForUserTx(ctx, nil, obj.ID)
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.PolicyStore.FindAllOnCallStepsForUserTx(ctx, nil, obj.ID, organizationID)
 }
 
 func (a *User) AssignedSchedules(ctx context.Context, obj *user.User) (schedules []schedule.Schedule, err error) {
