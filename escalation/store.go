@@ -53,6 +53,7 @@ type Store struct {
 	findOneStepForUpdateOrg *sql.Stmt
 	findAllSteps            *sql.Stmt
 	findAllOnCallSteps      *sql.Stmt
+	findAllOnCallStepsOrg   *sql.Stmt
 	createStep              *sql.Stmt
 	updateStepDelay         *sql.Stmt
 	updateStepNumber        *sql.Stmt
@@ -196,6 +197,14 @@ func NewStore(ctx context.Context, db *sql.DB, cfg Config) (*Store, error) {
 			FROM ep_step_on_call_users oc
 			JOIN escalation_policy_steps step ON step.id = oc.ep_step_id
 			WHERE oc.user_id = $1 AND oc.end_time isnull
+			ORDER BY step.escalation_policy_id, step.step_number
+		`),
+		findAllOnCallStepsOrg: p.P(`
+			SELECT step.id, step.escalation_policy_id, step.delay, step.step_number
+			FROM ep_step_on_call_users oc
+			JOIN escalation_policy_steps step ON step.id = oc.ep_step_id
+			JOIN escalation_policies policy ON policy.id = step.escalation_policy_id
+			WHERE oc.user_id = $1 AND oc.end_time isnull AND policy.organization_id = $2
 			ORDER BY step.escalation_policy_id, step.step_number
 		`),
 
@@ -523,7 +532,7 @@ func (s *Store) FindAllSteps(ctx context.Context, policyID string) ([]Step, erro
 }
 
 // FindAllOnCallStepsForUserTx returns all steps a user is currently on-call for.
-func (s *Store) FindAllOnCallStepsForUserTx(ctx context.Context, tx *sql.Tx, userID string) ([]Step, error) {
+func (s *Store) FindAllOnCallStepsForUserTx(ctx context.Context, tx *sql.Tx, userID string, organizationID *uuid.UUID) ([]Step, error) {
 	err := permission.LimitCheckAny(ctx, permission.All)
 	if err != nil {
 		return nil, err
@@ -534,11 +543,19 @@ func (s *Store) FindAllOnCallStepsForUserTx(ctx context.Context, tx *sql.Tx, use
 	}
 
 	stmt := s.findAllOnCallSteps
+	args := []any{userID}
+	if organizationID != nil {
+		if *organizationID == uuid.Nil {
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
+		}
+		stmt = s.findAllOnCallStepsOrg
+		args = append(args, *organizationID)
+	}
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
 
-	rows, err := stmt.QueryContext(ctx, userID)
+	rows, err := stmt.QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
