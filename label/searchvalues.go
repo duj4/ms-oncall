@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"text/template"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
@@ -23,7 +24,7 @@ type ValueSearchOptions struct {
 var valueSearchTemplate = template.Must(template.New("value-search").Parse(`
 	SELECT DISTINCT ON (lower(value), value) value
 	FROM labels l
-	WHERE key = :key
+	WHERE (key = :key
 	{{if .Omit}}
 		AND not value = any(:omit)
 	{{end}}
@@ -33,11 +34,24 @@ var valueSearchTemplate = template.Must(template.New("value-search").Parse(`
 	{{if .After}}
 		AND lower(l.value) > lower(:after) OR (lower(l.value) = lower(:after) AND l.value > :after)
 	{{end}}
+	)
+	{{if .OrganizationID.Valid}}
+		AND EXISTS (SELECT 1 FROM services s WHERE s.id = l.tgt_service_id AND s.organization_id = :organizationID)
+	{{end}}
 	ORDER BY lower(value), value
 	LIMIT {{.Limit}}
 `))
 
-type valueRenderData ValueSearchOptions
+type valueRenderData struct {
+	ValueSearchOptions
+	OrganizationID uuid.NullUUID
+}
+
+// Validate applies the same input checks as SearchValues without accessing data.
+func (opts ValueSearchOptions) Validate() error {
+	_, err := (valueRenderData{ValueSearchOptions: opts}).Normalize()
+	return err
+}
 
 func (opts valueRenderData) SearchValue() string {
 	if opts.Search == "" {
@@ -77,6 +91,7 @@ func (opts valueRenderData) Normalize() (*valueRenderData, error) {
 func (opts valueRenderData) QueryArgs() []sql.NamedArg {
 
 	return []sql.NamedArg{
+		sql.Named("organizationID", opts.OrganizationID),
 		sql.Named("key", opts.Key),
 		sql.Named("search", opts.SearchValue()),
 		sql.Named("after", opts.After),
@@ -84,7 +99,7 @@ func (opts valueRenderData) QueryArgs() []sql.NamedArg {
 	}
 }
 
-func (s *Store) SearchValues(ctx context.Context, opts *ValueSearchOptions) ([]string, error) {
+func (s *Store) SearchValues(ctx context.Context, opts *ValueSearchOptions, organizationID *uuid.UUID) ([]string, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -92,7 +107,11 @@ func (s *Store) SearchValues(ctx context.Context, opts *ValueSearchOptions) ([]s
 	if opts == nil {
 		opts = &ValueSearchOptions{}
 	}
-	data, err := (*valueRenderData)(opts).Normalize()
+	data, err := (valueRenderData{ValueSearchOptions: *opts}).Normalize()
+	if err != nil {
+		return nil, err
+	}
+	data.OrganizationID, err = organizationScope(organizationID)
 	if err != nil {
 		return nil, err
 	}

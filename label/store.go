@@ -9,6 +9,7 @@ import (
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/permission"
+	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 
 	"github.com/pkg/errors"
@@ -24,7 +25,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) { return &Store{d
 
 // SetTx will set a label for the service. It can be used to set the key-value pair for the label,
 // delete a label or update the value given the label's key.
-func (s *Store) SetTx(ctx context.Context, db gadb.DBTX, label *Label) error {
+// Organization authority is supplied by the application boundary; nil retains
+// the authorized internal/non-human compatibility path. The caller owns tx.
+func (s *Store) SetTx(ctx context.Context, tx *sql.Tx, label *Label, organizationID *uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return err
@@ -35,8 +38,29 @@ func (s *Store) SetTx(ctx context.Context, db gadb.DBTX, label *Label) error {
 		return err
 	}
 
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return err
+	}
+	if scope.Valid {
+		// Authorize the immutable parent ownership in this transaction before
+		// reading or waiting on any Label mutation row. No parent lock is needed.
+		allowed, err := gadb.New(tx).LabelCheckServiceOrganization(ctx, gadb.LabelCheckServiceOrganizationParams{
+			ID: uuid.MustParse(n.Target.TargetID()), OrganizationID: scope.UUID,
+		})
+		if errors.Is(err, sql.ErrNoRows) && n.Value == "" {
+			return nil // Preserve deletion of a missing Service's label as a no-op.
+		}
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return sql.ErrNoRows
+		}
+	}
+
 	if n.Value == "" { // delete if value is empty
-		err = gadb.New(db).LabelDeleteKeyByTarget(ctx, gadb.LabelDeleteKeyByTargetParams{
+		err = gadb.New(tx).LabelDeleteKeyByTarget(ctx, gadb.LabelDeleteKeyByTargetParams{
 			Key:          label.Key,
 			TgtServiceID: uuid.MustParse(label.Target.TargetID()),
 		})
@@ -47,7 +71,7 @@ func (s *Store) SetTx(ctx context.Context, db gadb.DBTX, label *Label) error {
 		return nil
 	}
 
-	err = gadb.New(db).LabelSetByTarget(ctx, gadb.LabelSetByTargetParams{
+	err = gadb.New(tx).LabelSetByTarget(ctx, gadb.LabelSetByTargetParams{
 		Key:          label.Key,
 		Value:        label.Value,
 		TgtServiceID: uuid.MustParse(label.Target.TargetID()),
@@ -60,7 +84,7 @@ func (s *Store) SetTx(ctx context.Context, db gadb.DBTX, label *Label) error {
 }
 
 // FindAllByService finds all labels for a particular service. It returns all key-value pairs.
-func (s *Store) FindAllByService(ctx context.Context, db gadb.DBTX, serviceID string) ([]Label, error) {
+func (s *Store) FindAllByService(ctx context.Context, db gadb.DBTX, serviceID string, organizationID *uuid.UUID) ([]Label, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return nil, err
@@ -71,7 +95,13 @@ func (s *Store) FindAllByService(ctx context.Context, db gadb.DBTX, serviceID st
 		return nil, err
 	}
 
-	rows, err := gadb.New(db).LabelFindAllByTarget(ctx, svc)
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := gadb.New(db).LabelFindAllByTarget(ctx, gadb.LabelFindAllByTargetParams{
+		TgtServiceID: svc, OrganizationID: scope,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -89,11 +119,25 @@ func (s *Store) FindAllByService(ctx context.Context, db gadb.DBTX, serviceID st
 	return labels, nil
 }
 
-func (s *Store) UniqueKeysTx(ctx context.Context, db gadb.DBTX) ([]string, error) {
+func (s *Store) UniqueKeysTx(ctx context.Context, db gadb.DBTX, organizationID *uuid.UUID) ([]string, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return nil, err
 	}
 
-	return gadb.New(db).LabelUniqueKeys(ctx)
+	scope, err := organizationScope(organizationID)
+	if err != nil {
+		return nil, err
+	}
+	return gadb.New(db).LabelUniqueKeys(ctx, scope)
+}
+
+func organizationScope(id *uuid.UUID) (uuid.NullUUID, error) {
+	if id == nil {
+		return uuid.NullUUID{}, nil
+	}
+	if *id == uuid.Nil {
+		return uuid.NullUUID{}, validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	return uuid.NullUUID{UUID: *id, Valid: true}, nil
 }
