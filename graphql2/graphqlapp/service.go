@@ -186,7 +186,17 @@ func (s *Service) Notices(ctx context.Context, raw *service.Service) ([]notice.N
 }
 
 func (s *Service) Labels(ctx context.Context, raw *service.Service) ([]label.Label, error) {
-	return s.LabelStore.FindAllByService(ctx, s.DB, raw.ID)
+	if err := permission.LimitCheckAny(ctx, permission.System, permission.User); err != nil {
+		return nil, err
+	}
+	if _, err := validate.ParseUUID("ServiceID", raw.ID); err != nil {
+		return nil, err
+	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.LabelStore.FindAllByService(ctx, s.DB, raw.ID, organizationID)
 }
 
 func (s *Service) EscalationPolicy(ctx context.Context, raw *service.Service) (*escalation.Policy, error) {

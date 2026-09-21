@@ -7,6 +7,7 @@ import (
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
+	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/validation"
 )
@@ -35,7 +36,17 @@ func (q *Query) LabelKeys(ctx context.Context, input *graphql2.LabelKeySearchOpt
 	}
 
 	opts.Limit++
-	labelKeys, err := q.LabelStore.SearchKeys(ctx, &opts)
+	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+		return nil, err
+	}
+	if err := opts.Validate(); err != nil {
+		return nil, err
+	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	labelKeys, err := q.LabelStore.SearchKeys(ctx, &opts, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +95,17 @@ func (q *Query) LabelValues(ctx context.Context, input *graphql2.LabelValueSearc
 	}
 
 	opts.Limit++
-	values, err := q.LabelStore.SearchValues(ctx, &opts)
+	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+		return nil, err
+	}
+	if err := opts.Validate(); err != nil {
+		return nil, err
+	}
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	values, err := q.LabelStore.SearchValues(ctx, &opts, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -133,9 +154,18 @@ func (q *Query) Labels(ctx context.Context, input *graphql2.LabelSearchOptions) 
 }
 func (m *Mutation) SetLabel(ctx context.Context, input graphql2.SetLabelInput) (bool, error) {
 	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		if err := permission.LimitCheckAny(ctx, permission.System, permission.User); err != nil {
+			return err
+		}
+		organizationID, authorityErr := rootStoreOrganizationID(ctx)
 		cfg := config.FromContext(ctx)
 		if cfg.General.DisableLabelCreation {
-			allLabels, err := m.LabelStore.UniqueKeysTx(ctx, tx)
+			// The existing key check precedes label validation. Invalid human
+			// authority cannot fall back to the global key set to perform it.
+			if authorityErr != nil {
+				return authorityErr
+			}
+			allLabels, err := m.LabelStore.UniqueKeysTx(ctx, tx, organizationID)
 			if err != nil {
 				return err
 			}
@@ -151,11 +181,18 @@ func (m *Mutation) SetLabel(ctx context.Context, input graphql2.SetLabelInput) (
 			}
 		}
 
-		return m.LabelStore.SetTx(ctx, tx, &label.Label{
+		l := &label.Label{
 			Key:    input.Key,
 			Value:  input.Value,
 			Target: input.Target,
-		})
+		}
+		if _, err := l.Normalize(); err != nil {
+			return err
+		}
+		if authorityErr != nil {
+			return authorityErr
+		}
+		return m.LabelStore.SetTx(ctx, tx, l, organizationID)
 	})
 	if err != nil {
 		return false, err

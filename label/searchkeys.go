@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"text/template"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
@@ -27,7 +28,7 @@ type KeySearchOptions struct {
 var keySearchTemplate = template.Must(template.New("key-search").Parse(`
 	SELECT DISTINCT ON (lower(key), key) key
 	FROM labels l
-	WHERE true
+	WHERE (true
 	{{if .Omit}}
 		AND not key = any(:omit)
 	{{end}}
@@ -37,11 +38,24 @@ var keySearchTemplate = template.Must(template.New("key-search").Parse(`
 	{{if .After}}
 		AND lower(l.key) > lower(:after) OR (lower(l.key) = lower(:after) AND l.key > :after)
 	{{end}}
+	)
+	{{if .OrganizationID.Valid}}
+		AND EXISTS (SELECT 1 FROM services s WHERE s.id = l.tgt_service_id AND s.organization_id = :organizationID)
+	{{end}}
 	ORDER BY lower(key), key
 	LIMIT {{.Limit}}
 `))
 
-type keyRenderData KeySearchOptions
+type keyRenderData struct {
+	KeySearchOptions
+	OrganizationID uuid.NullUUID
+}
+
+// Validate applies the same input checks as SearchKeys without accessing data.
+func (opts KeySearchOptions) Validate() error {
+	_, err := (keyRenderData{KeySearchOptions: opts}).Normalize()
+	return err
+}
 
 func (opts keyRenderData) SearchValue() string {
 	if opts.Search == "" {
@@ -81,13 +95,14 @@ func (opts keyRenderData) Normalize() (*keyRenderData, error) {
 func (opts keyRenderData) QueryArgs() []sql.NamedArg {
 
 	return []sql.NamedArg{
+		sql.Named("organizationID", opts.OrganizationID),
 		sql.Named("search", opts.SearchValue()),
 		sql.Named("after", opts.After),
 		sql.Named("omit", sqlutil.StringArray(opts.Omit)),
 	}
 }
 
-func (s *Store) SearchKeys(ctx context.Context, opts *KeySearchOptions) ([]string, error) {
+func (s *Store) SearchKeys(ctx context.Context, opts *KeySearchOptions, organizationID *uuid.UUID) ([]string, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err
@@ -95,7 +110,11 @@ func (s *Store) SearchKeys(ctx context.Context, opts *KeySearchOptions) ([]strin
 	if opts == nil {
 		opts = &KeySearchOptions{}
 	}
-	data, err := (*keyRenderData)(opts).Normalize()
+	data, err := (keyRenderData{KeySearchOptions: *opts}).Normalize()
+	if err != nil {
+		return nil, err
+	}
+	data.OrganizationID, err = organizationScope(organizationID)
 	if err != nil {
 		return nil, err
 	}

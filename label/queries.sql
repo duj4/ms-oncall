@@ -2,16 +2,26 @@
 SELECT DISTINCT
     key
 FROM
-    labels;
+    labels l
+WHERE
+    sqlc.narg(organization_id)::uuid IS NULL
+    OR EXISTS (SELECT 1 FROM services s WHERE s.id = l.tgt_service_id AND s.organization_id = sqlc.narg(organization_id));
 
 -- name: LabelFindAllByTarget :many
 SELECT
     key,
     value
 FROM
-    labels
+    labels l
 WHERE
-    tgt_service_id = $1;
+    tgt_service_id = @tgt_service_id
+    AND (sqlc.narg(organization_id)::uuid IS NULL
+        OR EXISTS (SELECT 1 FROM services s WHERE s.id = l.tgt_service_id AND s.organization_id = sqlc.narg(organization_id)));
+
+-- name: LabelCheckServiceOrganization :one
+SELECT organization_id = @organization_id AS allowed
+FROM services
+WHERE id = @id;
 
 -- name: LabelDeleteKeyByTarget :exec
 DELETE FROM labels
@@ -24,4 +34,3 @@ INSERT INTO labels(key, value, tgt_service_id)
 ON CONFLICT (key, tgt_service_id)
     DO UPDATE SET
         value = $2;
-

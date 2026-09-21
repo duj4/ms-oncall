@@ -3358,6 +3358,24 @@ func (q *Queries) Keyring_UpdateKeyringSecrets(ctx context.Context, arg Keyring_
 	return err
 }
 
+const labelCheckServiceOrganization = `-- name: LabelCheckServiceOrganization :one
+SELECT organization_id = $1 AS allowed
+FROM services
+WHERE id = $2
+`
+
+type LabelCheckServiceOrganizationParams struct {
+	OrganizationID uuid.UUID
+	ID             uuid.UUID
+}
+
+func (q *Queries) LabelCheckServiceOrganization(ctx context.Context, arg LabelCheckServiceOrganizationParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, labelCheckServiceOrganization, arg.OrganizationID, arg.ID)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
 const labelDeleteKeyByTarget = `-- name: LabelDeleteKeyByTarget :exec
 DELETE FROM labels
 WHERE key = $1
@@ -3379,18 +3397,25 @@ SELECT
     key,
     value
 FROM
-    labels
+    labels l
 WHERE
     tgt_service_id = $1
+    AND ($2::uuid IS NULL
+        OR EXISTS (SELECT 1 FROM services s WHERE s.id = l.tgt_service_id AND s.organization_id = $2))
 `
+
+type LabelFindAllByTargetParams struct {
+	TgtServiceID   uuid.UUID
+	OrganizationID uuid.NullUUID
+}
 
 type LabelFindAllByTargetRow struct {
 	Key   string
 	Value string
 }
 
-func (q *Queries) LabelFindAllByTarget(ctx context.Context, tgtServiceID uuid.UUID) ([]LabelFindAllByTargetRow, error) {
-	rows, err := q.db.QueryContext(ctx, labelFindAllByTarget, tgtServiceID)
+func (q *Queries) LabelFindAllByTarget(ctx context.Context, arg LabelFindAllByTargetParams) ([]LabelFindAllByTargetRow, error) {
+	rows, err := q.db.QueryContext(ctx, labelFindAllByTarget, arg.TgtServiceID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -3435,11 +3460,14 @@ const labelUniqueKeys = `-- name: LabelUniqueKeys :many
 SELECT DISTINCT
     key
 FROM
-    labels
+    labels l
+WHERE
+    $1::uuid IS NULL
+    OR EXISTS (SELECT 1 FROM services s WHERE s.id = l.tgt_service_id AND s.organization_id = $1)
 `
 
-func (q *Queries) LabelUniqueKeys(ctx context.Context) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, labelUniqueKeys)
+func (q *Queries) LabelUniqueKeys(ctx context.Context, organizationID uuid.NullUUID) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, labelUniqueKeys, organizationID)
 	if err != nil {
 		return nil, err
 	}
