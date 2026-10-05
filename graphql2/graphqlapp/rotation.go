@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
@@ -31,6 +32,10 @@ func (q *Query) Rotation(ctx context.Context, id string) (*rotation.Rotation, er
 }
 
 func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRotationInput) (result *rotation.Rotation, err error) {
+	if config.LabelsDisabled() && len(input.Labels) != 0 {
+		return nil, label.ErrDisabled
+	}
+
 	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
 	if requestExecutionContext == nil {
 		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
@@ -95,6 +100,10 @@ func (r *Rotation) TimeZone(ctx context.Context, rot *rotation.Rotation) (string
 }
 
 func (r *Rotation) Labels(ctx context.Context, raw *rotation.Rotation) ([]label.Label, error) {
+	if config.LabelsDisabled() {
+		return []label.Label{}, nil
+	}
+
 	return r.LabelStore.FindAllByTarget(ctx, r.DB, assignment.RotationTarget(raw.ID))
 }
 

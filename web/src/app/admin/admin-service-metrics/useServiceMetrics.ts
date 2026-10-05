@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../../util/labelProductPolicy'
 import {
   Alert,
   DestinationType,
@@ -9,6 +10,7 @@ export type TargetMetrics = {
   [type in IntegrationKeyType | DestinationType]: number
 }
 export type ServiceMetrics = {
+  error?: string
   keyTgtTotals: TargetMetrics
   stepTgtTotals: TargetMetrics
   totalStaleAlerts: { [serviceName in string]: number }
@@ -29,6 +31,16 @@ export type ServiceMetricOpts = {
 
 export function useServiceMetrics(opts: ServiceMetricOpts): ServiceMetrics {
   const { services, filters, alerts } = opts
+
+  if (labelsDisabled() && (filters.labelKey || filters.labelValue)) {
+    return {
+      error: 'labels are disabled',
+      keyTgtTotals: {},
+      stepTgtTotals: {},
+      totalStaleAlerts: {},
+      filteredServices: [],
+    }
+  }
 
   const filterServices = (
     services: Service[],

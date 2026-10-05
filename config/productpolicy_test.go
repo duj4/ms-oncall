@@ -23,6 +23,7 @@ func TestCalendarProductPolicyConfigSources(t *testing.T) {
 			t.Helper()
 			require.True(t, cfg.General.DisableCalendarSubscriptions)
 			cfg.General.DisableCalendarSubscriptions = stored
+			cfg.General.DisableLabelCreation = raw.General.DisableLabelCreation
 			require.Equal(t, raw, cfg, "unrelated config must be preserved")
 		}
 		check(Static(raw).Config())

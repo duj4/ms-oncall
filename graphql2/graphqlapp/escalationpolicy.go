@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/escalation"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
@@ -234,6 +235,10 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 }
 
 func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.CreateEscalationPolicyInput) (pol *escalation.Policy, err error) {
+	if config.LabelsDisabled() && len(input.Labels) != 0 {
+		return nil, label.ErrDisabled
+	}
+
 	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
 	if requestExecutionContext == nil {
 		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
@@ -483,6 +488,10 @@ func (step *EscalationPolicy) IsFavorite(ctx context.Context, raw *escalation.Po
 }
 
 func (ep *EscalationPolicy) Labels(ctx context.Context, raw *escalation.Policy) ([]label.Label, error) {
+	if config.LabelsDisabled() {
+		return []label.Label{}, nil
+	}
+
 	return ep.LabelStore.FindAllByTarget(ctx, ep.DB, assignment.EscalationPolicyTarget(raw.ID))
 }
 

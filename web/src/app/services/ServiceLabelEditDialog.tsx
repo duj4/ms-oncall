@@ -1,3 +1,4 @@
+import { withoutLabelUI } from '../util/labelProductPolicy'
 import React, { useState } from 'react'
 import { gql, useQuery, useMutation } from 'urql'
 import { fieldErrors, nonFieldErrors } from '../util/errutil'
@@ -24,7 +25,7 @@ const query = gql`
   }
 `
 
-export default function ServiceLabelEditDialog(props: {
+function ServiceLabelEditDialog(props: {
   serviceID: string
   labelKey: string
   onClose: () => void
@@ -86,3 +87,5 @@ export default function ServiceLabelEditDialog(props: {
     />
   )
 }
+
+export default withoutLabelUI(ServiceLabelEditDialog)

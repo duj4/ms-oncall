@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
@@ -88,6 +89,10 @@ func (q *Query) Schedule(ctx context.Context, id string) (*schedule.Schedule, er
 }
 
 func (s *Schedule) Labels(ctx context.Context, raw *schedule.Schedule) ([]label.Label, error) {
+	if config.LabelsDisabled() {
+		return []label.Label{}, nil
+	}
+
 	return s.LabelStore.FindAllByTarget(ctx, s.DB, assignment.ScheduleTarget(raw.ID))
 }
 
@@ -239,6 +244,10 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 }
 
 func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateScheduleInput) (sched *schedule.Schedule, err error) {
+	if config.LabelsDisabled() && len(input.Labels) != 0 {
+		return nil, label.ErrDisabled
+	}
+
 	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
 	if requestExecutionContext == nil {
 		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")

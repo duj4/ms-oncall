@@ -9,12 +9,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/label"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
 func TestServiceLabelForeignLockRejection(t *testing.T) {
+	if config.LabelsDisabled() {
+		t.Skip("MS OnCall Labels are NOT_CURRENT_PRODUCT_SCOPE / MUST REMAIN DISABLED; retained historical enabled-mode coverage")
+	}
 	h := serviceLabelHarness(t)
 	app := serviceLabelApp(h)
 	for _, value := range []string{"updated", ""} {
@@ -69,6 +73,9 @@ func TestServiceLabelForeignLockRejection(t *testing.T) {
 }
 
 func TestServiceLabelStoreTransactionScope(t *testing.T) {
+	if config.LabelsDisabled() {
+		t.Skip("MS OnCall Labels are NOT_CURRENT_PRODUCT_SCOPE / MUST REMAIN DISABLED; retained historical enabled-mode coverage")
+	}
 	h := serviceLabelHarness(t)
 	s := h.App().LabelStore
 	ctx := permission.SystemContext(t.Context(), "Smoketest")

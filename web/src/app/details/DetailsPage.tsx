@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { cloneElement, forwardRef, ReactNode } from 'react'
 import makeStyles from '@mui/styles/makeStyles'
 import Card from '@mui/material/Card'
@@ -129,7 +130,7 @@ export default function DetailsPage(p: DetailsPageProps): React.JSX.Element {
               />
             </Grid>
 
-            {p.labels && (
+            {!labelsDisabled() && p.labels && (
               <Grid item container spacing={1} sx={{ pl: '16px', pr: '16px' }}>
                 {p.labels.map((l) => (
                   <Grid key={l.key} item>

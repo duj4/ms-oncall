@@ -7,6 +7,8 @@ import (
 	"text/template"
 
 	"github.com/google/uuid"
+	"github.com/target/goalert/config"
+	"github.com/target/goalert/label"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/util/sqlutil"
@@ -122,19 +124,24 @@ func (opts renderData) OrderBy() string {
 func (opts renderData) OrganizationScoped() bool { return opts.OrganizationID != uuid.Nil }
 
 func (opts renderData) IntegrationKey() string {
-	if !strings.Contains(opts.Search, "token=") {
+	if !strings.Contains(opts.Search, "token=") || len(opts.Search) < 42 {
 		return ""
 	}
 	return opts.Search[6:42]
 }
 
-func (opts renderData) LabelKey() string {
+func (opts renderData) labelSearch() string {
 	searchStr := opts.Search
-	if strings.Contains(opts.Search, "token=") {
+	if strings.Contains(opts.Search, "token=") && len(opts.Search) >= 42 {
 		// strip token string
 		searchStr = opts.Search[42:]
 		searchStr = strings.TrimSpace(searchStr)
 	}
+	return searchStr
+}
+
+func (opts renderData) LabelKey() string {
+	searchStr := opts.labelSearch()
 	idx := strings.IndexByte(searchStr, '=')
 	if idx == -1 {
 		return ""
@@ -142,12 +149,7 @@ func (opts renderData) LabelKey() string {
 	return strings.TrimSuffix(searchStr[:idx], "!") // if `!=`` is used
 }
 func (opts renderData) LabelValue() string {
-	searchStr := opts.Search
-	if strings.Contains(opts.Search, "token=") {
-		// strip token string
-		searchStr = opts.Search[42:]
-		searchStr = strings.TrimSpace(searchStr)
-	}
+	searchStr := opts.labelSearch()
 	idx := strings.IndexByte(searchStr, '=')
 	if idx == -1 {
 		return ""
@@ -167,7 +169,20 @@ func (opts renderData) LabelNegate() bool {
 	return opts.Search[idx-1] == '!'
 }
 
+// ValidateLabelPolicy rejects explicit Label predicates, including predicates
+// restored from pagination state, before rendering or executing a query.
+func (opts SearchOptions) ValidateLabelPolicy() error {
+	if config.LabelsDisabled() && renderData(opts).LabelKey() != "" {
+		return label.ErrDisabled
+	}
+	return nil
+}
+
 func (opts renderData) Normalize() (*renderData, error) {
+	if err := SearchOptions(opts).ValidateLabelPolicy(); err != nil {
+		return nil, err
+	}
+
 	if opts.Limit == 0 {
 		opts.Limit = search.DefaultMaxResults
 	}

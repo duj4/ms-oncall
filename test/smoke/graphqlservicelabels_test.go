@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
@@ -12,6 +13,9 @@ import (
 // edited and deleted.
 
 func TestGraphQLServiceLabels(t *testing.T) {
+	if config.LabelsDisabled() {
+		t.Skip("MS OnCall Labels are NOT_CURRENT_PRODUCT_SCOPE / MUST REMAIN DISABLED; retained historical enabled-mode coverage")
+	}
 	t.Parallel()
 
 	// Insert initial one label into db

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/util/sqlutil"
@@ -100,6 +101,10 @@ func (opts valueRenderData) QueryArgs() []sql.NamedArg {
 }
 
 func (s *Store) SearchValues(ctx context.Context, opts *ValueSearchOptions, organizationID *uuid.UUID) ([]string, error) {
+	if config.LabelsDisabled() {
+		return nil, ErrDisabled
+	}
+
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return nil, err

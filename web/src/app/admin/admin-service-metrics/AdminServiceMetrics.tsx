@@ -1,5 +1,12 @@
 import React, { useMemo } from 'react'
-import { Grid, Card, CardHeader, CardContent, Tooltip } from '@mui/material'
+import {
+  Alert,
+  Grid,
+  Card,
+  CardHeader,
+  CardContent,
+  Tooltip,
+} from '@mui/material'
 import { DateTime } from 'luxon'
 import { useServices } from './useServices'
 import { useWorker } from '../../worker'
@@ -53,6 +60,8 @@ export default function AdminServiceMetrics(): React.JSX.Element {
     },
     {} as ServiceMetrics,
   )
+
+  if (metrics.error) return <Alert severity='error'>{metrics.error}</Alert>
 
   const getConfigIssueCounts = (
     services: Service[],

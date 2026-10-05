@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { useState } from 'react'
 import { useQuery, gql } from 'urql'
 import Button from '@mui/material/Button'
@@ -97,7 +98,13 @@ export default function AdminConfig(): React.JSX.Element {
     return <Spinner />
   }
 
-  const configValues: ConfigValue[] = data.config
+  const configValues: ConfigValue[] = data.config.filter(
+    (value: ConfigValue) =>
+      !labelsDisabled() ||
+      !['General.DisableLabelCreation', 'Services.RequiredLabels'].includes(
+        value.id,
+      ),
+  )
 
   const updateValue = (id: string, value: null | string): void => {
     const newVal: ConfigValues = { ...values }

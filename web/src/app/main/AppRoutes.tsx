@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { JSXElementConstructor, useLayoutEffect } from 'react'
 import { gql, useQuery } from 'urql'
 import { Switch, Route, useLocation, RouteProps, useRoute } from 'wouter'
@@ -106,7 +107,9 @@ export const routes: Record<string, JSXElementConstructor<any>> = {
   '/services/:serviceID/heartbeat-monitors': HeartbeatMonitorList,
   '/services/:serviceID/integration-keys': IntegrationKeyList,
   [EXP_ROUTE_UNIV_KEY]: UniversalKeyPage,
-  '/services/:serviceID/labels': ServiceLabelList,
+  '/services/:serviceID/labels': labelsDisabled()
+    ? PageNotFound
+    : ServiceLabelList,
   '/services/:serviceID/alert-metrics': AlertMetrics,
 
   '/users': UserList,

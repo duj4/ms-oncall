@@ -1,3 +1,5 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
+import { PageNotFound } from '../error-pages'
 import React, { ReactElement, Suspense, useState } from 'react'
 import Button from '@mui/material/Button'
 import Grid from '@mui/material/Grid'
@@ -40,9 +42,7 @@ const sortItems = (a: Label, b: Label): number => {
 
 const useStyles = makeStyles({ spacing: { marginBottom: 96 } })
 
-export default function ServiceLabelList(props: {
-  serviceID: string
-}): JSX.Element {
+function ServiceLabelListContent(props: { serviceID: string }): JSX.Element {
   const [create, setCreate] = useState(false)
   const [editKey, setEditKey] = useState<string | null>(null)
   const [deleteKey, setDeleteKey] = useState<string | null>(null)
@@ -140,4 +140,11 @@ export default function ServiceLabelList(props: {
       </Suspense>
     </React.Fragment>
   )
+}
+
+export default function ServiceLabelList(props: {
+  serviceID: string
+}): JSX.Element {
+  if (labelsDisabled()) return <PageNotFound />
+  return <ServiceLabelListContent {...props} />
 }

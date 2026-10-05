@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/auth"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/graphql2/graphqlapp"
@@ -168,6 +169,9 @@ func serviceLabelHTTP(t *testing.T, h *harness.Harness, principal, query string,
 }
 
 func TestGraphQLServiceLabelOrganizationReads(t *testing.T) {
+	if config.LabelsDisabled() {
+		t.Skip("MS OnCall Labels are NOT_CURRENT_PRODUCT_SCOPE / MUST REMAIN DISABLED; retained historical enabled-mode coverage")
+	}
 	h := serviceLabelHarness(t)
 	app := serviceLabelApp(h)
 	ownKeys := []string{"aaa/own", "mix/Alpha", "mix/omega", "org/shared", "test/escape"}
@@ -303,6 +307,9 @@ func TestGraphQLServiceLabelOrganizationReads(t *testing.T) {
 }
 
 func TestGraphQLServiceLabelOrganizationWrites(t *testing.T) {
+	if config.LabelsDisabled() {
+		t.Skip("MS OnCall Labels are NOT_CURRENT_PRODUCT_SCOPE / MUST REMAIN DISABLED; retained historical enabled-mode coverage")
+	}
 	h := serviceLabelHarness(t)
 	app := serviceLabelApp(h)
 	const mutation = `mutation($input:SetLabelInput!) { setLabel(input:$input) }`

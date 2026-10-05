@@ -129,7 +129,8 @@ export function CreateAlertServiceSelect(
     return () => clearTimeout(t)
   }, [searchUserInput])
 
-  const { labelKey, labelValue } = getServiceFilters(searchUserInput)
+  const { labelKey, labelValue, integrationKey } =
+    getServiceFilters(searchUserInput)
 
   const addAll = (e: MouseEvent<HTMLButtonElement>): void => {
     e.stopPropagation()
@@ -215,12 +216,18 @@ export function CreateAlertServiceSelect(
                   />
                 )}
               <ServiceLabelFilterContainer
-                value={{ labelKey, labelValue }}
-                onChange={({ labelKey, labelValue }) =>
+                value={{ labelKey, labelValue, integrationKey }}
+                onChange={({ labelKey, labelValue, integrationKey }) => {
+                  const labelSearch = labelKey
+                    ? `${labelKey}=${labelValue}`
+                    : ''
+                  const keySearch = integrationKey
+                    ? `token=${integrationKey}`
+                    : ''
                   setSearchUserInput(
-                    labelKey ? `${labelKey}=${labelValue}` : '',
+                    [keySearch, labelSearch].filter(Boolean).join(' '),
                   )
-                }
+                }}
                 onReset={() => setSearchUserInput('')}
                 anchorRef={fieldRef}
               />

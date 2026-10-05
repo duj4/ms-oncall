@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/validation"
@@ -60,6 +61,10 @@ func (l *Label) tgtRot() uuid.NullUUID {
 // Organization authority is supplied by the application boundary; nil retains
 // the authorized internal/non-human compatibility path. The caller owns tx.
 func (s *Store) SetTx(ctx context.Context, tx *sql.Tx, label *Label, organizationID *uuid.UUID) error {
+	if config.LabelsDisabled() {
+		return ErrDisabled
+	}
+
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return err
@@ -123,6 +128,10 @@ func (s *Store) SetTx(ctx context.Context, tx *sql.Tx, label *Label, organizatio
 
 // FindAllByService finds all labels for a particular Service using application-bound Organization authority.
 func (s *Store) FindAllByService(ctx context.Context, db gadb.DBTX, serviceID string, organizationID *uuid.UUID) ([]Label, error) {
+	if config.LabelsDisabled() {
+		return nil, ErrDisabled
+	}
+
 	if err := permission.LimitCheckAny(ctx, permission.System, permission.User); err != nil {
 		return nil, err
 	}
@@ -140,6 +149,10 @@ func (s *Store) FindAllByService(ctx context.Context, db gadb.DBTX, serviceID st
 // FindAllByTarget finds labels for the new upstream target surfaces.
 // Their product containment remains a separately authorized adoption slice.
 func (s *Store) FindAllByTarget(ctx context.Context, db gadb.DBTX, t assignment.Target) ([]Label, error) {
+	if config.LabelsDisabled() {
+		return nil, ErrDisabled
+	}
+
 	if err := permission.LimitCheckAny(ctx, permission.System, permission.User); err != nil {
 		return nil, err
 	}
@@ -173,6 +186,10 @@ func (s *Store) findAllByTarget(ctx context.Context, db gadb.DBTX, t assignment.
 }
 
 func (s *Store) UniqueKeysTx(ctx context.Context, db gadb.DBTX, organizationID *uuid.UUID) ([]string, error) {
+	if config.LabelsDisabled() {
+		return nil, ErrDisabled
+	}
+
 	err := permission.LimitCheckAny(ctx, permission.System, permission.User)
 	if err != nil {
 		return nil, err

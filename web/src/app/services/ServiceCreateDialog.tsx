@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { useState } from 'react'
 import { gql, useMutation, CombinedError } from 'urql'
 import FormDialog from '../dialogs/FormDialog'
@@ -86,7 +87,8 @@ export default function ServiceCreateDialog(props: {
     return <Redirect to={`/services/${data.createService.id}`} />
   }
   const labelErr = { key: '', msg: '' }
-  reqLabels.some((key, i) => {
+  const requiredLabels = labelsDisabled() ? [] : reqLabels || []
+  requiredLabels.some((key, i) => {
     labelErr.key = key
     labelErr.msg = errs.getErrorByField('labels[' + i + '].Value') || ''
     return !!labelErr.msg

@@ -457,6 +457,9 @@ func (cfg Config) Validate() error {
 		return validate.OAuthScope(fname, val, "openid")
 	}
 	validateLabels := func(fname string, vals []string) (err error) {
+		if LabelsDisabled() {
+			return nil // Dormant RequiredLabels cannot constrain supported config.
+		}
 		for i, v := range vals {
 			err = validate.Many(err, validate.LabelKey(fmt.Sprintf("%s[%d]", fname, i), v))
 		}

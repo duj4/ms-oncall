@@ -1,3 +1,4 @@
+import { withoutLabelUI } from '../util/labelProductPolicy'
 import { gql } from 'urql'
 import { makeQuerySelect } from './QuerySelect'
 
@@ -14,14 +15,16 @@ interface LabelValueSearchProps {
   name: string
 }
 
-export const LabelValueSelect = makeQuerySelect('LabelValueSelect', {
-  query,
-  extraVariablesFunc: ({
-    labelKey: key,
-    ...props
-  }: {
-    labelKey: string
-    props: LabelValueSearchProps
-  }) => [props, { key }],
-  mapDataNode: (value: string) => ({ label: value, value }),
-})
+export const LabelValueSelect = withoutLabelUI(
+  makeQuerySelect('LabelValueSelect', {
+    query,
+    extraVariablesFunc: ({
+      labelKey: key,
+      ...props
+    }: {
+      labelKey: string
+      props: LabelValueSearchProps
+    }) => [props, { key }],
+    mapDataNode: (value: string) => ({ label: value, value }),
+  }),
+)
