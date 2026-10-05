@@ -99,6 +99,40 @@ workflow after migration changes. Do not maintain it manually.
 
 This foundation contains no Organization persistence or authorization behavior.
 
+## Canonical positions 282–288: exact GoAlert v0.35.0 release
+
+Bundle `goalert-v0.35.0` appends seven byte-identical upstream release migrations
+after immutable accepted positions 1–281. Its source is
+`UPSTREAM_GOALERT / GOALERT_RELEASE`, repository
+`https://github.com/target/goalert`, release `v0.35.0`, commit
+`db9829187a1c1f96a7c57112b74dba54442d7c6b`, with adaptation evidence
+`NONE_BYTE_IDENTICAL_TO_ADOPTED_UPSTREAM_RELEASE`.
+
+The bundle depends exactly on position 281, bundle
+`ms-oncall-resource-root-organization-ownership-persistence-v1`, migration
+`20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql`,
+SHA-256 `a11980ede42e5d9b4d12561f1673865b552d908cb41f6194be37ce6df29e710a`.
+Earlier positions, SQL bytes, bundle/source/dependency bindings, and the
+`provenance_foundation_migration_id` boundary are unchanged. Upstream timestamps
+do not determine their placement in the combined canonical sequence.
+
+| Position | Original and executable identity | SQL SHA-256 |
+| ---: | --- | --- |
+| 282 | `20251003121427-alert-status-direct-event.sql` | `648f9de6f3ac1d95a075bc70deca41e36f6740a086fa2ff671476230388dae02` |
+| 283 | `20251003123243-rotation-direct-event.sql` | `d6a1d203e4cb4642a2e60f84c7cd297c49d9fb95b812ad063a4e7516ccd37d3b` |
+| 284 | `20251003130424-signals-direct-event.sql` | `e9ccc1186977d48524d53af6ea519b62d2b35d1f684e17043811dd72017f9b4d` |
+| 285 | `20251021155802-fix-queue-name.sql` | `43337a03e5550e5021ef09c56893c7c670e0513bb1dd2ec13a8ded828248b1f6` |
+| 286 | `20260624104709-schedule-rotation-ep-labels.sql` | `07546f9c760812aca7914b6ff2c4a84ad8625c66e37f64b9e72d817d1be6c9c6` |
+| 287 | `20260814161833-ep-step-multi-ack.sql` | `769e82c803ea88a1ac9ed1cbe1b384d71d8849bb029cb62e4c05bc3675cb3167` |
+| 288 | `20260911125511-cm-private.sql` | `23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e` |
+
+Canonical history now contains 288 entries and 288 corresponding SQL files,
+ending at `20260911125511-cm-private.sql`. No position 289 or post-release
+forward fix is included. These bindings describe an isolated C1 Integrated
+Candidate; they do not accept v0.35.0 adoption, River correctness, Label
+containment, sendSignal authorization, Gateway compatibility, multi-ack
+semantics, or Private Contact Method privacy. Those remain separate owner gates.
+
 ## Canonical position 276: Organization persistence foundation
 
 Bundle `ms-oncall-organization-default-persistence-foundation-v1` appends one

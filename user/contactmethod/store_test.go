@@ -88,6 +88,7 @@ func (c *contactMethodUpdateTestConn) QueryContext(context.Context, string, []dr
 		nil,
 		"Test-only Contact Method",
 		false,
+		false,
 		"WEBHOOK",
 		testOnlyContactMethodUserID,
 		c.state.currentURL,
@@ -106,7 +107,7 @@ type contactMethodUpdateTestRows struct {
 	done   bool
 }
 
-func (*contactMethodUpdateTestRows) Columns() []string { return make([]string, 11) }
+func (*contactMethodUpdateTestRows) Columns() []string { return make([]string, 12) }
 func (*contactMethodUpdateTestRows) Close() error      { return nil }
 
 func (r *contactMethodUpdateTestRows) Next(values []driver.Value) error {

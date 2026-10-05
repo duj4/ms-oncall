@@ -27,7 +27,6 @@ import (
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/engine"
 	"github.com/target/goalert/escalation"
-	"github.com/target/goalert/event"
 	"github.com/target/goalert/graphql2/graphqlapp"
 	"github.com/target/goalert/heartbeat"
 	"github.com/target/goalert/integrationkey"
@@ -55,7 +54,6 @@ import (
 	"github.com/target/goalert/user/contactmethod"
 	"github.com/target/goalert/user/favorite"
 	"github.com/target/goalert/user/notificationrule"
-	"github.com/target/goalert/util/calllimiter"
 	"github.com/target/goalert/util/log"
 	"github.com/target/goalert/util/sqlutil"
 	"google.golang.org/grpc"
@@ -83,8 +81,6 @@ type App struct {
 	sysAPIL   net.Listener
 	sysAPISrv *grpc.Server
 	hSrv      *health.Server
-
-	EventBus *event.Bus
 
 	srv        *http.Server
 	smtpsrv    *smtpsrv.Server
@@ -160,6 +156,11 @@ func NewApp(c Config, pool *pgxpool.Pool) (*App, error) {
 	}
 
 	var err error
+	httpClient, err := newHTTPClient()
+	if err != nil {
+		return nil, errors.Wrap(err, "init http client")
+	}
+
 	db := stdlib.OpenDBFromPool(pool)
 	permission.SudoContext(context.Background(), func(ctx context.Context) {
 		c.Logger.DebugContext(ctx, "checking switchover_state table")
@@ -207,17 +208,13 @@ func NewApp(c Config, pool *pgxpool.Pool) (*App, error) {
 	})
 
 	app := &App{
-		l:      l,
-		db:     db,
-		pgx:    pool,
-		cfg:    c,
-		doneCh: make(chan struct{}),
-		Logger: c.Logger,
-		httpClient: &http.Client{
-			Transport: calllimiter.RoundTripper(http.DefaultTransport),
-		},
-
-		EventBus: event.NewBus(c.Logger),
+		l:          l,
+		db:         db,
+		pgx:        pool,
+		cfg:        c,
+		doneCh:     make(chan struct{}),
+		Logger:     c.Logger,
+		httpClient: httpClient,
 	}
 
 	if c.StatusAddr != "" {

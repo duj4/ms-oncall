@@ -91,7 +91,7 @@ func TestMSOnCallTailMigrationsUseTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range migrations[len(migrations)-6:] {
+	for _, migration := range migrations[276-1 : 281] {
 		if migration.Up.disableTx || migration.Down.disableTx {
 			t.Fatalf("MS OnCall persistence migration %q must use transactions for Up and Down", migration.ID)
 		}
@@ -99,7 +99,7 @@ func TestMSOnCallTailMigrationsUseTransactions(t *testing.T) {
 			t.Fatalf("MS OnCall persistence migration %q has an empty direction", migration.ID)
 		}
 	}
-	latest := migrations[len(migrations)-1]
+	latest := migrations[281-1]
 	if latest.ID != "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql" {
 		t.Fatalf("latest migration = %q", latest.ID)
 	}
@@ -114,8 +114,8 @@ func TestGenerationRetirementDownRestoresExactPosition278Definition(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	position278 := migrations[len(migrations)-4]
-	position279 := migrations[len(migrations)-3]
+	position278 := migrations[278-1]
+	position279 := migrations[279-1]
 	if position278.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" ||
 		position279.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
 		t.Fatalf("unexpected retirement boundary: position278=%q position279=%q", position278.ID, position279.ID)
@@ -134,7 +134,7 @@ func TestActiveFoundationReconciliationMigrationIsNarrowAndGuardsLossyDown(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	position280 := migrations[len(migrations)-2]
+	position280 := migrations[280-1]
 	if position280.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
 		t.Fatalf("position-280 migration = %q", position280.ID)
 	}
@@ -173,7 +173,7 @@ func TestResourceRootOrganizationOwnershipMigrationIsNarrowAndGuardsLossyDown(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	position281 := migrations[len(migrations)-1]
+	position281 := migrations[281-1]
 	if position281.ID != "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql" {
 		t.Fatalf("position-281 migration = %q", position281.ID)
 	}

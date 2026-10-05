@@ -98,8 +98,9 @@ type Config struct {
 		// https://api.slack.com/docs/token-types#bot
 		AccessToken string `password:"true" info:"Slack app bot user OAuth access token (should start with xoxb-)."`
 
-		SigningSecret       string `password:"true" info:"Signing secret to verify requests from slack."`
-		InteractiveMessages bool   `info:"Enable interactive messages (e.g. buttons)."`
+		SigningSecret                 string `password:"true" info:"Signing secret to verify requests from slack."`
+		InteractiveMessages           bool   `info:"Enable interactive messages (e.g. buttons)."`
+		DisableBroadcastThreadReplies bool   `info:"Disable broadcasting alert status updates in threads to the main channel." public:"true"`
 	}
 
 	Twilio struct {
@@ -137,8 +138,9 @@ type Config struct {
 	}
 
 	Webhook struct {
-		Enable      bool     `public:"true" info:"Enables webhook as a contact method."`
-		AllowedURLs []string `public:"true" info:"If set, allows webhooks for these domains only."`
+		Enable                bool     `public:"true" info:"Enables webhook as a contact method."`
+		AllowedURLs           []string `public:"true" info:"If set, allows webhooks for these domains only. If empty, any URL is allowed, including internal/private network addresses."`
+		BlockPrivateAddresses bool     `info:"If enabled, webhook requests to private, loopback, and link-local addresses (e.g., 10.0.0.0/8, 127.0.0.1, 169.254.169.254) are rejected. The check is applied at connection time, so it also covers DNS names and redirects that resolve to such addresses. If requests are routed through an HTTP proxy, destination policy must be enforced at the proxy."`
 	}
 
 	Feedback struct {

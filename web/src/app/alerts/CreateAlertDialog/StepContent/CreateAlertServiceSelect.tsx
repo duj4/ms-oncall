@@ -5,6 +5,7 @@ import {
   InputAdornment,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
   ListItemIcon,
   Paper,
@@ -73,6 +74,7 @@ export interface CreateAlertServiceSelectProps {
   value: string[]
   onChange: (val: string[]) => void
   error?: Error
+  only?: string[]
 }
 
 export function CreateAlertServiceSelect(
@@ -94,6 +96,7 @@ export function CreateAlertServiceSelect(
         favoritesFirst: true,
         omit: value,
         first: 15,
+        only: props.only,
       },
     },
   })
@@ -234,8 +237,7 @@ export function CreateAlertServiceSelect(
               </ListItem>
             )}
             {searchResults.map((service: Service) => (
-              <ListItem
-                button
+              <ListItemButton
                 data-cy='service-select-item'
                 key={service.id}
                 disabled={value.length >= CREATE_ALERT_LIMIT}
@@ -252,7 +254,7 @@ export function CreateAlertServiceSelect(
                     <FavoriteIcon />
                   </ListItemIcon>
                 )}
-              </ListItem>
+              </ListItemButton>
             ))}
 
             {Boolean(placeholderMsg) && (

@@ -15,7 +15,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(history.entries), 281; got != want {
+	if got, want := len(history.entries), 288; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
 	if got, want := history.provenanceFoundationIndex, 274; got != want {
@@ -43,7 +43,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		t.Fatalf("MS OnCall foundation source binding does not contain the exact parent commit and tree: %s", foundation.SourceBinding)
 	}
 
-	organizationFoundation := history.entries[len(history.entries)-6]
+	organizationFoundation := history.entries[276-1]
 	if organizationFoundation.Position != 276 || organizationFoundation.ID != "20260901100808-ms-oncall-organization-persistence.sql" {
 		t.Fatalf("Organization persistence migration = position %d, ID %q", organizationFoundation.Position, organizationFoundation.ID)
 	}
@@ -74,7 +74,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	assignmentFoundation := history.entries[len(history.entries)-5]
+	assignmentFoundation := history.entries[277-1]
 	if assignmentFoundation.Position != 277 || assignmentFoundation.ID != "20260901220323-ms-oncall-user-organization-assignment-persistence.sql" {
 		t.Fatalf("UserOrganizationAssignment persistence migration = position %d, ID %q", assignmentFoundation.Position, assignmentFoundation.ID)
 	}
@@ -105,7 +105,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	humanSecurityFoundation := history.entries[len(history.entries)-4]
+	humanSecurityFoundation := history.entries[278-1]
 	if humanSecurityFoundation.Position != 278 || humanSecurityFoundation.ID != "20260903184951-ms-oncall-human-security-generation-persistence.sql" {
 		t.Fatalf("human security generation migration = position %d, ID %q", humanSecurityFoundation.Position, humanSecurityFoundation.ID)
 	}
@@ -136,7 +136,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	generationRetirement := history.entries[len(history.entries)-3]
+	generationRetirement := history.entries[279-1]
 	if generationRetirement.Position != 279 || generationRetirement.ID != "20260905230921-ms-oncall-session-generation-binding-human-security-generation-retirement-cleanup-v1.sql" {
 		t.Fatalf("generation retirement migration = position %d, ID %q", generationRetirement.Position, generationRetirement.ID)
 	}
@@ -167,7 +167,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	activeReconciliation := history.entries[len(history.entries)-2]
+	activeReconciliation := history.entries[280-1]
 	if activeReconciliation.Position != 280 || activeReconciliation.ID != "20260907222039-ms-oncall-active-foundation-reconciliation-v1.sql" {
 		t.Fatalf("active reconciliation migration = position %d, ID %q", activeReconciliation.Position, activeReconciliation.ID)
 	}
@@ -198,7 +198,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 		}
 	}
 
-	latest := history.latest()
+	latest := history.entries[281-1]
 	if latest.Position != 281 || latest.ID != "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql" {
 		t.Fatalf("latest canonical migration = position %d, ID %q", latest.Position, latest.ID)
 	}

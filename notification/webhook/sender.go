@@ -14,6 +14,7 @@ import (
 	"github.com/target/goalert/notification"
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/retry"
+	"github.com/target/goalert/util/privnet"
 )
 
 type Sender struct {
@@ -236,6 +237,10 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 		}, nil
 	}
 
+	if cfg.Webhook.BlockPrivateAddresses {
+		ctx = privnet.WithBlockPrivate(ctx)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST", webURL, bytes.NewReader(data))
 	if err != nil {
 		return nil, errors.New("webhook request could not be created")
@@ -264,6 +269,12 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 	resp, err := client.Do(req)
 	if resp != nil && resp.Body != nil {
 		defer drainAndCloseResponseBody(resp.Body)
+	}
+	if errors.Is(err, privnet.ErrPrivateAddress) {
+		return &notification.SentMessage{
+			State:        notification.StateFailedPerm,
+			StateDetails: "destination address is not allowed by administrator",
+		}, nil
 	}
 	if err != nil {
 		return nil, safeRequestError(err)

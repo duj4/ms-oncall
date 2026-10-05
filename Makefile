@@ -54,8 +54,8 @@ PUBLIC_URL := http://localhost:3030$(HTTP_PREFIX)
 export GOALERT_PUBLIC_URL := $(PUBLIC_URL)
 
 # used to enable experimental features, use `goalert --list-experimental` to see available features or check the expflag package
-EXPERIMENTAL :=
-export GOALERT_EXPERIMENTAL := $(EXPERIMENTAL)
+EXPERIMENTAL ?=
+export GOALERT_EXPERIMENTAL ?= $(EXPERIMENTAL)
 
 ifeq ($(CI), 1)
 PROD_CY_PROC = Procfile.cypress.ci
@@ -86,6 +86,9 @@ $(BIN_DIR)/tools/protoc-gen-go $(BIN_DIR)/tools/protoc-gen-go-grpc $(BIN_DIR)/to
 
 $(BIN_DIR)/tools/k6: k6.version
 	go tool gettool -t k6 -v $(shell cat k6.version) -o $@
+
+$(BIN_DIR)/tools/golangci-lint: golangci-lint.version
+	go tool gettool -t golangci-lint -v $(shell cat golangci-lint.version) -o $@
 
 $(BIN_DIR)/tools/protoc: protoc.version
 	go tool gettool -t protoc -v $(shell cat protoc.version) -o $@
@@ -229,10 +232,10 @@ check-js: generate $(NODE_DEPS)
 	$(BIN_DIR)/tools/bun -b run lint
 	$(BIN_DIR)/tools/bun -b run check
 
-check-go: generate 
+check-go: generate $(BIN_DIR)/tools/golangci-lint
 	@go mod tidy
 	# go tool ordermigrations -check
-	go tool golangci-lint run
+	$(BIN_DIR)/tools/golangci-lint run
 
 graphql2/mapconfig.go: $(CFGPARAMS) config/config.go graphql2/generated.go devtools/configparams/*
 	(cd ./graphql2 && go tool configparams -out mapconfig.go && go tool goimports -w ./mapconfig.go) || go generate ./graphql2
@@ -270,7 +273,7 @@ test-components:  $(NODE_DEPS)
 		"$(WAITFOR) tcp://localhost:6008 && $(BIN_DIR)/tools/bun run test-storybook --ci --url http://127.0.0.1:6008 --maxWorkers 2"
 
 storybook: $(NODE_DEPS) # Start the Storybook UI
-	$(BIN_DIR)/tools/bun run storybook
+	$(BIN_DIR)/tools/bun -b run storybook
 
 playwright-run: $(NODE_DEPS) web/src/build/static/app.js bin/goalert.cover web/src/schema.d.ts $(BIN_DIR)/tools/prometheus $(BIN_DIR)/tools/mailpit reset-integration ## Start playwright tests in headless mode
 	rm -rf test/coverage/integration/playwright

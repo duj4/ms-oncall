@@ -1588,6 +1588,61 @@
           "sha256": "a11980ede42e5d9b4d12561f1673865b552d908cb41f6194be37ce6df29e710a"
         }
       ]
+    },
+    {
+      "id": "goalert-v0.35.0",
+      "first_position": 282,
+      "provenance": "UPSTREAM_GOALERT",
+      "source": {
+        "kind": "GOALERT_RELEASE",
+        "repository": "https://github.com/target/goalert",
+        "release": "v0.35.0",
+        "commit": "db9829187a1c1f96a7c57112b74dba54442d7c6b"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-resource-root-organization-ownership-persistence-v1",
+        "migration_id": "20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql",
+        "sha256": "a11980ede42e5d9b4d12561f1673865b552d908cb41f6194be37ce6df29e710a",
+        "evidence": "APPEND_AFTER_IMMUTABLE_ACCEPTED_RESOURCE_ROOT_ORGANIZATION_OWNERSHIP_PERSISTENCE_V1_POSITION_281"
+      },
+      "adaptation_evidence": "NONE_BYTE_IDENTICAL_TO_ADOPTED_UPSTREAM_RELEASE",
+      "entries": [
+        {
+          "id": "20251003121427-alert-status-direct-event.sql",
+          "original_id": "20251003121427-alert-status-direct-event.sql",
+          "sha256": "648f9de6f3ac1d95a075bc70deca41e36f6740a086fa2ff671476230388dae02"
+        },
+        {
+          "id": "20251003123243-rotation-direct-event.sql",
+          "original_id": "20251003123243-rotation-direct-event.sql",
+          "sha256": "d6a1d203e4cb4642a2e60f84c7cd297c49d9fb95b812ad063a4e7516ccd37d3b"
+        },
+        {
+          "id": "20251003130424-signals-direct-event.sql",
+          "original_id": "20251003130424-signals-direct-event.sql",
+          "sha256": "e9ccc1186977d48524d53af6ea519b62d2b35d1f684e17043811dd72017f9b4d"
+        },
+        {
+          "id": "20251021155802-fix-queue-name.sql",
+          "original_id": "20251021155802-fix-queue-name.sql",
+          "sha256": "43337a03e5550e5021ef09c56893c7c670e0513bb1dd2ec13a8ded828248b1f6"
+        },
+        {
+          "id": "20260624104709-schedule-rotation-ep-labels.sql",
+          "original_id": "20260624104709-schedule-rotation-ep-labels.sql",
+          "sha256": "07546f9c760812aca7914b6ff2c4a84ad8625c66e37f64b9e72d817d1be6c9c6"
+        },
+        {
+          "id": "20260814161833-ep-step-multi-ack.sql",
+          "original_id": "20260814161833-ep-step-multi-ack.sql",
+          "sha256": "769e82c803ea88a1ac9ed1cbe1b384d71d8849bb029cb62e4c05bc3675cb3167"
+        },
+        {
+          "id": "20260911125511-cm-private.sql",
+          "original_id": "20260911125511-cm-private.sql",
+          "sha256": "23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e"
+        }
+      ]
     }
   ]
 }

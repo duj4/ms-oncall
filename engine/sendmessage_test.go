@@ -216,6 +216,10 @@ func (db *alertStatusTestDB) rows(query string) (driver.Rows, error) {
 			int64(42), "Synthetic summary", "Synthetic details",
 			"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "manual", "active", now, nil,
 		}
+	case strings.Contains(strings.ToLower(query), "from services"):
+		values = []driver.Value{"Synthetic service", int64(1)}
+	case strings.Contains(strings.ToLower(query), "-- name: alert_getalertmetadata"):
+		values = []driver.Value{nil}
 	case strings.Contains(strings.ToLower(query), "-- name: nfyoriginalmessagestatus"):
 		values = []driver.Value{
 			int64(42), nil, nil, nil, now, nil, nil, nil,
@@ -250,7 +254,7 @@ func TestSendMessageDestinationErrorsRedactWebhookURL(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	alertLogStore, err := alertlog.NewStore(ctx, db, registry)
 	require.NoError(t, err)
-	alertStore, err := alert.NewStore(ctx, db, alertLogStore, nil)
+	alertStore, err := alert.NewStore(ctx, db, alertLogStore)
 	require.NoError(t, err)
 	notificationStore, err := notification.NewStore(ctx, db)
 	require.NoError(t, err)
@@ -329,12 +333,12 @@ func TestSendMessagePropagatesAlertStateToWebhookRequest(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			alertLogStore, err := alertlog.NewStore(ctx, db, registry)
 			require.NoError(t, err)
-			alertStore, err := alert.NewStore(ctx, db, alertLogStore, nil)
+			alertStore, err := alert.NewStore(ctx, db, alertLogStore)
 			require.NoError(t, err)
 			notificationStore, err := notification.NewStore(ctx, db)
 			require.NoError(t, err)
 
-			eng := &Engine{cfg: &Config{
+			eng := &Engine{a: alertStore, b: &backend{db: db}, cfg: &Config{
 				AlertLogStore:       alertLogStore,
 				AlertStore:          alertStore,
 				NotificationStore:   notificationStore,

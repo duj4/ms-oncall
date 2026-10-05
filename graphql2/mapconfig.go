@@ -68,6 +68,7 @@ func MapConfigValues(cfg config.Config) []ConfigValue {
 		{ID: "Slack.AccessToken", Type: ConfigTypeString, Description: "Slack app bot user OAuth access token (should start with xoxb-).", Value: cfg.Slack.AccessToken, Password: true},
 		{ID: "Slack.SigningSecret", Type: ConfigTypeString, Description: "Signing secret to verify requests from slack.", Value: cfg.Slack.SigningSecret, Password: true},
 		{ID: "Slack.InteractiveMessages", Type: ConfigTypeBoolean, Description: "Enable interactive messages (e.g. buttons).", Value: fmt.Sprintf("%t", cfg.Slack.InteractiveMessages)},
+		{ID: "Slack.DisableBroadcastThreadReplies", Type: ConfigTypeBoolean, Description: "Disable broadcasting alert status updates in threads to the main channel.", Value: fmt.Sprintf("%t", cfg.Slack.DisableBroadcastThreadReplies)},
 		{ID: "Twilio.Enable", Type: ConfigTypeBoolean, Description: "Enables sending and processing of Voice and SMS messages through the Twilio notification provider.", Value: fmt.Sprintf("%t", cfg.Twilio.Enable)},
 		{ID: "Twilio.VoiceName", Type: ConfigTypeString, Description: "The Twilio voice to use for Text To Speech for phone calls. See https://www.twilio.com/docs/voice/twiml/say/text-speech#polly-standard-and-neural-voices", Value: cfg.Twilio.VoiceName},
 		{ID: "Twilio.VoiceLanguage", Type: ConfigTypeString, Description: "The Twilio voice language to use for Text To Speech for phone calls. See https://www.twilio.com/docs/voice/twiml/say/text-speech#polly-standard-and-neural-voices", Value: cfg.Twilio.VoiceLanguage},
@@ -88,7 +89,8 @@ func MapConfigValues(cfg config.Config) []ConfigValue {
 		{ID: "SMTP.Username", Type: ConfigTypeString, Description: "Username for authentication.", Value: cfg.SMTP.Username},
 		{ID: "SMTP.Password", Type: ConfigTypeString, Description: "Password for authentication.", Value: cfg.SMTP.Password, Password: true},
 		{ID: "Webhook.Enable", Type: ConfigTypeBoolean, Description: "Enables webhook as a contact method.", Value: fmt.Sprintf("%t", cfg.Webhook.Enable)},
-		{ID: "Webhook.AllowedURLs", Type: ConfigTypeStringList, Description: "If set, allows webhooks for these domains only.", Value: strings.Join(cfg.Webhook.AllowedURLs, "\n")},
+		{ID: "Webhook.AllowedURLs", Type: ConfigTypeStringList, Description: "If set, allows webhooks for these domains only. If empty, any URL is allowed, including internal/private network addresses.", Value: strings.Join(cfg.Webhook.AllowedURLs, "\n")},
+		{ID: "Webhook.BlockPrivateAddresses", Type: ConfigTypeBoolean, Description: "If enabled, webhook requests to private, loopback, and link-local addresses (e.g., 10.0.0.0/8, 127.0.0.1, 169.254.169.254) are rejected. The check is applied at connection time, so it also covers DNS names and redirects that resolve to such addresses. If requests are routed through an HTTP proxy, destination policy must be enforced at the proxy.", Value: fmt.Sprintf("%t", cfg.Webhook.BlockPrivateAddresses)},
 		{ID: "Feedback.Enable", Type: ConfigTypeBoolean, Description: "Enables Feedback link in nav bar.", Value: fmt.Sprintf("%t", cfg.Feedback.Enable)},
 		{ID: "Feedback.OverrideURL", Type: ConfigTypeString, Description: "Use a custom URL for Feedback link in nav bar.", Value: cfg.Feedback.OverrideURL},
 	}
@@ -117,13 +119,14 @@ func MapPublicConfigValues(cfg config.Config) []ConfigValue {
 		{ID: "OIDC.Enable", Type: ConfigTypeBoolean, Description: "Enable OpenID Connect authentication.", Value: fmt.Sprintf("%t", cfg.OIDC.Enable)},
 		{ID: "Mailgun.Enable", Type: ConfigTypeBoolean, Description: "", Value: fmt.Sprintf("%t", cfg.Mailgun.Enable)},
 		{ID: "Slack.Enable", Type: ConfigTypeBoolean, Description: "", Value: fmt.Sprintf("%t", cfg.Slack.Enable)},
+		{ID: "Slack.DisableBroadcastThreadReplies", Type: ConfigTypeBoolean, Description: "Disable broadcasting alert status updates in threads to the main channel.", Value: fmt.Sprintf("%t", cfg.Slack.DisableBroadcastThreadReplies)},
 		{ID: "Twilio.Enable", Type: ConfigTypeBoolean, Description: "Enables sending and processing of Voice and SMS messages through the Twilio notification provider.", Value: fmt.Sprintf("%t", cfg.Twilio.Enable)},
 		{ID: "Twilio.FromNumber", Type: ConfigTypeString, Description: "The Twilio number to use for outgoing notifications.", Value: cfg.Twilio.FromNumber},
 		{ID: "Twilio.MessagingServiceSID", Type: ConfigTypeString, Description: "If set, replaces the use of From Number for SMS notifications.", Value: cfg.Twilio.MessagingServiceSID},
 		{ID: "SMTP.Enable", Type: ConfigTypeBoolean, Description: "Enables email as a contact method.", Value: fmt.Sprintf("%t", cfg.SMTP.Enable)},
 		{ID: "SMTP.From", Type: ConfigTypeString, Description: "The email address messages should be sent from.", Value: cfg.SMTP.From},
 		{ID: "Webhook.Enable", Type: ConfigTypeBoolean, Description: "Enables webhook as a contact method.", Value: fmt.Sprintf("%t", cfg.Webhook.Enable)},
-		{ID: "Webhook.AllowedURLs", Type: ConfigTypeStringList, Description: "If set, allows webhooks for these domains only.", Value: strings.Join(cfg.Webhook.AllowedURLs, "\n")},
+		{ID: "Webhook.AllowedURLs", Type: ConfigTypeStringList, Description: "If set, allows webhooks for these domains only. If empty, any URL is allowed, including internal/private network addresses.", Value: strings.Join(cfg.Webhook.AllowedURLs, "\n")},
 		{ID: "Feedback.Enable", Type: ConfigTypeBoolean, Description: "Enables Feedback link in nav bar.", Value: fmt.Sprintf("%t", cfg.Feedback.Enable)},
 		{ID: "Feedback.OverrideURL", Type: ConfigTypeString, Description: "Use a custom URL for Feedback link in nav bar.", Value: cfg.Feedback.OverrideURL},
 	}
@@ -313,6 +316,12 @@ func ApplyConfigValues(cfg config.Config, vals []ConfigValueInput) (config.Confi
 				return cfg, err
 			}
 			cfg.Slack.InteractiveMessages = val
+		case "Slack.DisableBroadcastThreadReplies":
+			val, err := parseBool(v.ID, v.Value)
+			if err != nil {
+				return cfg, err
+			}
+			cfg.Slack.DisableBroadcastThreadReplies = val
 		case "Twilio.Enable":
 			val, err := parseBool(v.ID, v.Value)
 			if err != nil {
@@ -383,6 +392,12 @@ func ApplyConfigValues(cfg config.Config, vals []ConfigValueInput) (config.Confi
 			cfg.Webhook.Enable = val
 		case "Webhook.AllowedURLs":
 			cfg.Webhook.AllowedURLs = parseStringList(v.Value)
+		case "Webhook.BlockPrivateAddresses":
+			val, err := parseBool(v.ID, v.Value)
+			if err != nil {
+				return cfg, err
+			}
+			cfg.Webhook.BlockPrivateAddresses = val
 		case "Feedback.Enable":
 			val, err := parseBool(v.ID, v.Value)
 			if err != nil {
