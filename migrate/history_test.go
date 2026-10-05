@@ -15,7 +15,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(history.entries), 288; got != want {
+	if got, want := len(history.entries), 289; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
 	if got, want := history.provenanceFoundationIndex, 274; got != want {

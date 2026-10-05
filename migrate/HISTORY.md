@@ -126,12 +126,74 @@ do not determine their placement in the combined canonical sequence.
 | 287 | `20260814161833-ep-step-multi-ack.sql` | `769e82c803ea88a1ac9ed1cbe1b384d71d8849bb029cb62e4c05bc3675cb3167` |
 | 288 | `20260911125511-cm-private.sql` | `23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e` |
 
-Canonical history now contains 288 entries and 288 corresponding SQL files,
-ending at `20260911125511-cm-private.sql`. No position 289 or post-release
-forward fix is included. These bindings describe an isolated C1 Integrated
-Candidate; they do not accept v0.35.0 adoption, River correctness, Label
+The C1 release bundle ends at position 288, `20260911125511-cm-private.sql`.
+These release bindings describe the isolated C1 Integrated Candidate; they do
+not accept v0.35.0 adoption, River correctness, Label
 containment, sendSignal authorization, Gateway compatibility, multi-ack
 semantics, or Private Contact Method privacy. Those remain separate owner gates.
+
+## Canonical position 289: River correctness forward fix
+
+Bundle `ms-oncall-goalert-v035-river-correctness-v1` appends exactly one migration:
+`20260923133000-fix-river-job-guard.sql`, SHA-256
+`54113cfb892166b9881942fac80122384b46da1ed71053e03d88d03149ed89b9`.
+History contains 289 entries and 289 SQL files. Positions 1–288 retain their
+exact identities, SQL bytes, checksums, sources, and dependency/provenance data.
+
+The SQL is byte-identical to the migration introduced by
+[target/goalert PR #4570](https://github.com/target/goalert/pull/4570), commit
+`c24effbaafc1f286b67f7f5de21bb260eab5fd06`. It is a post-release forward fix,
+not part of GoAlert v0.35.0. MS OnCall ports only that commit's isolated delta;
+its parent `fc11567c90a7e0c330df0f10af45d9f4294d1cd8` implements separately gated
+PR #4574 and is not imported. No semantic SQL adaptation is needed. Provenance
+is `MS_ONCALL`, source kind `MS_ONCALL_CHECKPOINT_BASE`; the closed source model
+is unchanged and no `GOALERT_COMMIT` kind is introduced.
+
+The checkpoint is **Core GoAlert v0.35.0 PR #4570 River Correctness and Canonical
+Migration Position 289 V1**. Source repository is `https://github.com/duj4/ms-oncall`.
+It binds to the frozen repaired C1 Core base commit
+`67e8edbcaf5accaf3f764c35b6bc9f52861e47f5`, tree
+`dfbd1c4c446fe0d4f03f0516a04ccd74fe8167cd`, and accepted Project PR #57
+authorization in `https://github.com/duj4/ms-oncall-project`, NORMAL merge commit
+`089e6e427b49e63782d55fc4cae26804e2dab347`, tree
+`0f953839d869a454fe472afdee263a2bb96df1be`. It does not reference its own future
+introducing commit. Project PR #57's publication accounting is unchanged.
+
+The exact dependency is bundle `goalert-v0.35.0`, canonical position 288,
+`20260911125511-cm-private.sql`, SHA-256
+`23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e`.
+The manifest's `adaptation_evidence` explicitly identifies post-release PR #4570,
+its exact commit, the byte-identical SQL relationship, and non-release provenance.
+The permanent provenance-foundation boundary remains position 275, so 289 has
+record origin `CANONICAL_EXECUTION`.
+
+On PostgreSQL, transaction-local `set_config(key_name, 'true', TRUE)` leaves an
+empty-string session placeholder after commit. Empty string is not NULL, so the
+v0.35 `IS NOT NULL` guard incorrectly suppresses later transactions for the same
+queue/ID on a reused physical connection. Position 289 tests `= 'true'` instead:
+duplicates within one transaction remain guarded, and a later transaction can
+enqueue new durable work. The inherited key is queue/ID based; kind and args,
+max attempts 25, priority 2, and commit-time `pg_notify` behavior are preserved.
+The Alert-status, Rotation, and Signal triggers use this same utility function.
+Down restores the exact release definition, including its known reused-session
+defect; no applied history is rewritten.
+
+Associated C2 code ports the StatusMgr single-subscription `FOR UPDATE` lookup
+without `SKIP LOCKED`, so a locked row cannot look deleted, and sets transaction-local
+`lock_timeout = 8000` before the shared processing callback. Lock timeout remains
+an error for retryable River jobs. Exclusive processing transactions are unchanged.
+PostgreSQL regressions cover release failure at 288, correction at 289 on the same
+session, all three actual mutation/trigger paths, duplicate suppression, durable
+jobs and notifications, locked-subscription processing, bounded error/retry,
+rollback, and lack of session timeout leakage. The canonical lab covers
+empty -> 281 -> 288 -> 289, provenance and execution counts, `VerifyAll`,
+`VerifyIsLatest`, repeated no-op upgrade, and disposable-database cleanup.
+
+The highest valid claim is a **local, unpublished C2 River-corrected v0.35
+Integrated Candidate, in review**. This does not implement C3–C10, complete
+v0.35 adoption, solve Background/Engine Organization authority, resume Gateway,
+repair UserFavUnset, or establish production readiness. Fresh Independent Core
+C2 Review and the remaining owner-controlled gates are still required.
 
 ## Canonical position 276: Organization persistence foundation
 

@@ -1643,6 +1643,35 @@
           "sha256": "23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-goalert-v035-river-correctness-v1",
+      "first_position": 289,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "Core GoAlert v0.35.0 PR #4570 River Correctness and Canonical Migration Position 289 V1",
+        "base_commit": "67e8edbcaf5accaf3f764c35b6bc9f52861e47f5",
+        "base_tree": "dfbd1c4c446fe0d4f03f0516a04ccd74fe8167cd",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "089e6e427b49e63782d55fc4cae26804e2dab347",
+        "authorization_tree": "0f953839d869a454fe472afdee263a2bb96df1be"
+      },
+      "depends_on": {
+        "bundle_id": "goalert-v0.35.0",
+        "migration_id": "20260911125511-cm-private.sql",
+        "sha256": "23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e",
+        "evidence": "APPEND_AFTER_EXACT_GOALERT_V0_35_0_RELEASE_BUNDLE_POSITION_288"
+      },
+      "adaptation_evidence": "FORWARD_FIX_OF_TARGET_GOALERT_PR_4570_COMMIT_c24effbaafc1f286b67f7f5de21bb260eab5fd06_BYTE_IDENTICAL_POST_RELEASE_SQL_NOT_V0_35_0_RELEASE_PROVENANCE",
+      "entries": [
+        {
+          "id": "20260923133000-fix-river-job-guard.sql",
+          "original_id": "20260923133000-fix-river-job-guard.sql",
+          "sha256": "54113cfb892166b9881942fac80122384b46da1ed71053e03d88d03149ed89b9"
+        }
+      ]
     }
   ]
 }

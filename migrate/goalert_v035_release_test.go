@@ -21,8 +21,8 @@ func TestGoAlertV035ReleaseCanonicalBundle(t *testing.T) {
 		{"20260814161833-ep-step-multi-ack.sql", "769e82c803ea88a1ac9ed1cbe1b384d71d8849bb029cb62e4c05bc3675cb3167"},
 		{"20260911125511-cm-private.sql", "23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e"},
 	}
-	if len(history.entries) != 281+len(want) {
-		t.Fatalf("canonical entry count = %d, want 288", len(history.entries))
+	if len(history.entries) < 281+len(want) {
+		t.Fatalf("canonical entry count = %d, want at least 288", len(history.entries))
 	}
 	predecessor := history.entries[281-1]
 	for i, expected := range want {
@@ -68,17 +68,25 @@ func TestPostgresGoAlertV035ReleaseUpgrade(t *testing.T) {
 	if count, err := Up(ctx, testURL, history.entries[281-1].Name); err != nil || count != 281 {
 		t.Fatalf("canonical starting state = (%d, %v), want 281", count, err)
 	}
-	if count, err := Up(ctx, testURL, ""); err != nil || count != 7 {
+	if count, err := Up(ctx, testURL, history.entries[288-1].Name); err != nil || count != 7 {
 		t.Fatalf("release upgrade = (%d, %v), want seven applied migrations", count, err)
 	}
-	assertDeterministicProvenanceState(t, ctx, testURL, history)
-	if err := VerifyAll(ctx, testURL); err != nil {
-		t.Fatal(err)
+	releaseHistory := *history
+	releaseHistory.entries = history.entries[:288]
+	assertDeterministicProvenanceState(t, ctx, testURL, &releaseHistory)
+	for name, verify := range map[string]func(context.Context, string) error{
+		"VerifyAll": VerifyAll, "VerifyIsLatest": VerifyIsLatest,
+	} {
+		err := verify(ctx, testURL)
+		if len(history.entries) == 288 {
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), history.latest().Name) {
+			t.Fatalf("%s = %v, want pending forward migration", name, err)
+		}
 	}
-	if err := VerifyIsLatest(ctx, testURL); err != nil {
-		t.Fatal(err)
-	}
-	if count, err := Up(ctx, testURL, ""); err != nil || count != 0 {
+	if count, err := Up(ctx, testURL, history.entries[288-1].Name); err != nil || count != 0 {
 		t.Fatalf("repeated release upgrade = (%d, %v), want no-op", count, err)
 	}
 }

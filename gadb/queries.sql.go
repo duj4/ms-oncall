@@ -6321,7 +6321,6 @@ FROM
 WHERE
     sub.id = $1
 FOR UPDATE
-    SKIP LOCKED
 `
 
 type StatusMgrFindOneRow struct {
