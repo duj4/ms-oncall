@@ -18,6 +18,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/notification"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/service"
@@ -103,7 +104,7 @@ func notificationStateFromSendResult(s notification.Status, formattedSrc string)
 		prefix = "Unknown"
 	}
 
-	details := s.Details
+	details := nfymsg.DiagnosticText(s.Details)
 	if details == "" {
 		details = prefix
 	} else if !strings.EqualFold(prefix, details) {

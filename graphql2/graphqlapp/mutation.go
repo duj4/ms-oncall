@@ -245,7 +245,18 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 }
 
 func (a *Mutation) TestContactMethod(ctx context.Context, id string) (bool, error) {
-	err := a.NotificationStore.SendContactMethodTest(ctx, id)
+	cmID, err := validate.ParseUUID("ContactMethodID", id)
+	if err != nil {
+		return false, err
+	}
+	cm, err := (*App)(a).FindOneCM(ctx, cmID)
+	if err != nil {
+		return false, err
+	}
+	if cm == nil {
+		return false, validation.NewGenericError("contact method not found")
+	}
+	err = a.NotificationStore.SendContactMethodTest(ctx, id)
 	if err != nil {
 		return false, err
 	}

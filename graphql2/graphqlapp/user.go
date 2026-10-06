@@ -130,11 +130,22 @@ func (a *User) Role(ctx context.Context, usr *user.User) (graphql2.UserRole, err
 }
 
 func (a *User) ContactMethods(ctx context.Context, obj *user.User) ([]contactmethod.ContactMethod, error) {
-	cm, _, err := a.CMStore.FindAll(ctx, a.DB, obj.ID)
+	org, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cm, _, err := a.CMStore.FindAll(ctx, a.DB, obj.ID, org)
 	return cm, err
 }
 
 func (a *User) NotificationRules(ctx context.Context, obj *user.User) ([]notificationrule.NotificationRule, error) {
+	org, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.CMStore.AuthorizeUser(ctx, a.DB, obj.ID, org); err != nil {
+		return nil, err
+	}
 	return a.NRStore.FindAll(ctx, obj.ID)
 }
 
@@ -362,6 +373,13 @@ func (q *Query) Users(ctx context.Context, opts *graphql2.UserSearchOptions, fir
 		searchOpts.FavoritesFirst = *opts.FavoritesFirst
 	}
 
+	org, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if org != nil {
+		searchOpts.OrganizationID = *org
+	}
 	searchOpts.Limit++
 	users, err := q.UserStore.Search(ctx, &searchOpts)
 	if err != nil {

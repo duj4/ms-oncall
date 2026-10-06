@@ -17,6 +17,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/notification"
 	"github.com/target/goalert/notification/nfydest"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
 	"github.com/target/goalert/util/log"
@@ -98,8 +99,8 @@ func (s *SMS) SendMessage(ctx context.Context, msg notification.Message) (*notif
 	}
 
 	ctx = log.WithFields(ctx, log.Fields{
-		"Phone": destNumber,
-		"Type":  "TwilioSMS",
+
+		"Type": "TwilioSMS",
 	})
 
 	makeSMSCode := func(alertID int, serviceID string) int {
@@ -183,10 +184,10 @@ func (s *SMS) ServeStatusCallback(w http.ResponseWriter, req *http.Request) {
 	}
 
 	ctx = log.WithFields(ctx, log.Fields{
-		"Status": status,
+		"Status": nfymsg.DiagnosticText(string(status)),
 		"SID":    sid,
-		"Phone":  number,
-		"Type":   "TwilioSMS",
+
+		"Type": "TwilioSMS",
 	})
 	msg := Message{SID: sid, Status: status, From: strings.TrimPrefix(req.FormValue("From"), "rcs:")}
 
@@ -234,8 +235,8 @@ func (s *SMS) ServeMessage(w http.ResponseWriter, req *http.Request) {
 	}
 
 	ctx = log.WithFields(ctx, log.Fields{
-		"Number": from,
-		"Type":   "TwilioSMS",
+
+		"Type": "TwilioSMS",
 	})
 
 	respond := func(isPassive bool, msg string) {
@@ -245,7 +246,7 @@ func (s *SMS) ServeMessage(w http.ResponseWriter, req *http.Request) {
 		}
 
 		if s.limit.ShouldDrop(from) {
-			log.Debugf(ctx, "SMS passive reply limit reached for %s, not replying.", from)
+			log.Debugf(ctx, "SMS passive reply limit reached, not replying.")
 			return
 		}
 
@@ -323,7 +324,7 @@ func (s *SMS) ServeMessage(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			log.Debug(ctx, errors.Wrap(err, "parse code"))
 		} else {
-			ctx = log.WithField(ctx, "Code", code)
+
 			lookupFn = func() (*codeInfo, error) { return s.b.LookupByCode(ctx, from, code) }
 		}
 	} else if m := alertReplyRx.FindStringSubmatch(body); len(m) == 3 {
@@ -354,14 +355,14 @@ func (s *SMS) ServeMessage(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			log.Debug(ctx, errors.Wrap(err, "parse code"))
 		} else {
-			ctx = log.WithField(ctx, "Code", code)
+
 			lookupFn = func() (*codeInfo, error) { return s.b.LookupSvcByCode(ctx, from, code) }
 		}
 	}
 
 	if lookupFn == nil {
 		respond(true, "Sorry, but that isn't a request GoAlert understood. Visit the Web UI for more information. To unsubscribe, reply with STOP.")
-		ctx = log.WithField(ctx, "SMSBody", body)
+
 		log.Debug(ctx, errors.Wrap(err, "parse alert action"))
 		return
 	}

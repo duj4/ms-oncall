@@ -10,6 +10,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/notification"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/validation/validate"
 )
@@ -40,7 +41,7 @@ func msgStatus(stat notification.Status) string {
 	}
 	if stat.Details != "" {
 		str.WriteString(": ")
-		str.WriteString(stat.Details)
+		str.WriteString(nfymsg.DiagnosticText(stat.Details))
 	}
 	return str.String()
 }
@@ -195,7 +196,7 @@ func (q *Query) MessageLogs(ctx context.Context, opts *graphql2.MessageLogSearch
 		var dest gadb.DestV1
 		switch {
 		case log.ContactMethodID != uuid.Nil:
-			dest, err = q.CMStore.FindDestByID(ctx, q.DB, log.ContactMethodID)
+			dest.Type, err = q.CMStore.DiagnosticTypeByID(ctx, q.DB, log.ContactMethodID)
 			if err != nil {
 				return nil, fmt.Errorf("lookup contact method %s: %w", log.ContactMethodID, err)
 			}
@@ -218,12 +219,9 @@ func (q *Query) MessageLogs(ctx context.Context, opts *graphql2.MessageLogSearch
 			SentAt:     log.SentAt,
 		}
 		if dest.Type != "" {
-			info, err := (*App)(q).destinationDisplayInfo(ctx, dest)
-			if err != nil {
-				return nil, fmt.Errorf("lookup dest %s: %w", dest, err)
-			}
-			dm.Destination = info.Text
+			dm.Destination = dest.Type
 		}
+
 		if log.UserID != "" {
 			dm.UserID = &log.UserID
 		}

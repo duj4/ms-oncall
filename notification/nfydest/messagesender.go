@@ -68,5 +68,14 @@ func (r *Registry) SendMessage(ctx context.Context, msg nfymsg.Message) (*nfymsg
 		}, nil
 	}
 
-	return s.SendMessage(ctx, msg)
+	sent, err := s.SendMessage(ctx, msg)
+	if err != nil {
+		return nil, providerError(err)
+	}
+	if sent != nil {
+		copySent := *sent
+		copySent.StateDetails = nfymsg.DiagnosticText(sent.StateDetails)
+		sent = &copySent
+	}
+	return sent, nil
 }

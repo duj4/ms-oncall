@@ -26,6 +26,7 @@ query GetCM($id: ID!) {
 		id
 		name
 		private
+		value
 	}
 }
 
@@ -37,6 +38,7 @@ query ListUserCM($userID: ID!) {
 			id
 			name
 			private
+			value
 		}
 		notificationRules {
 			id
@@ -49,7 +51,8 @@ query ListUserCM($userID: ID!) {
 }
 `
 
-// TestPrivateCM checks that private contact methods are not visible in GraphQL calls from any user that is not the owner.
+// TestPrivateCM checks that private raw destinations are owner-only while
+// otherwise-authorized administrative metadata remains visible.
 func TestPrivateCM(t *testing.T) {
 	t.Parallel()
 
@@ -97,28 +100,29 @@ func TestPrivateCM(t *testing.T) {
 	require.NoError(t, json.Unmarshal(resp.Data, &newCM))
 	cmID2 := newCM.CreateUserContactMethod.ID
 
-	userCanSeeCM := func(userID, cmID string, isPrivate, expectAccess bool) {
+	userCanSeeCM := func(userID, cmID string, isPrivate, expectRaw bool) {
 		t.Helper()
 
 		// check direct access to the contact method
 		resp := h.GraphQLQueryUserVarsT(t, userID, privCMQuery, "GetCM", json.RawMessage(fmt.Sprintf(`{"id":"%s"}`, cmID)))
 		require.Empty(t, resp.Errors, "expected no errors")
-		t.Log("resp", string(resp.Data))
 		var cm struct {
 			UserContactMethod *struct {
 				ID      string
 				Name    string
 				Private bool
+				Value   string
 			}
 		}
 		require.NoError(t, json.Unmarshal(resp.Data, &cm))
-		if !expectAccess {
-			require.Nil(t, cm.UserContactMethod, "expected to not see private contact method")
-			return
-		}
 		require.NotNil(t, cm.UserContactMethod, "expected to see contact method")
 		require.Equal(t, cmID, cm.UserContactMethod.ID, "expected to see contact method with ID %s", cmID)
 		require.Equal(t, isPrivate, cm.UserContactMethod.Private, "expected to see contact method with private=%t", isPrivate)
+		if expectRaw {
+			require.NotEmpty(t, cm.UserContactMethod.Value)
+		} else {
+			require.Empty(t, cm.UserContactMethod.Value)
+		}
 	}
 
 	userCanSeeCM(h.UUID("user1"), cmID1, false, true)
@@ -134,6 +138,7 @@ func TestPrivateCM(t *testing.T) {
 				ID      string
 				Name    string
 				Private bool
+				Value   string
 			}
 			NotificationRules []struct {
 				ID              string
@@ -178,19 +183,21 @@ func TestPrivateCM(t *testing.T) {
 
 	require.NoError(t, json.Unmarshal(resp.Data, &listCM))
 
-	require.Len(t, listCM.User.ContactMethods, 1, "expected to see only contact method 1")
+	require.Len(t, listCM.User.ContactMethods, 2, "expected safe metadata for both contact methods")
 	sort.Slice(listCM.User.ContactMethods, func(i, j int) bool {
 		return listCM.User.ContactMethods[i].Name < listCM.User.ContactMethods[j].Name
 	})
 	require.Equal(t, cmID1, listCM.User.ContactMethods[0].ID, "expected to see contact method 1")
 	require.False(t, listCM.User.ContactMethods[0].Private, "expected to see contact method 1 as not private")
+	require.NotEmpty(t, listCM.User.ContactMethods[0].Value)
+	require.Empty(t, listCM.User.ContactMethods[1].Value)
 	require.Len(t, listCM.User.NotificationRules, 2, "expected to see two notification rules")
 	for _, rule := range listCM.User.NotificationRules {
 		switch rule.ContactMethodID {
 		case cmID1:
 			require.NotNil(t, rule.ContactMethod, "expected to see contact method 1")
 		case cmID2:
-			require.Nil(t, rule.ContactMethod, "expected to not see contact method 2")
+			require.NotNil(t, rule.ContactMethod, "expected safe reference metadata for contact method 2")
 		default:
 			t.Fatalf("unexpected contact method ID %s", rule.ContactMethodID)
 		}
