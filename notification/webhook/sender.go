@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/target/goalert/config"
@@ -43,6 +44,7 @@ type POSTDataAlert struct {
 	ServiceID   string
 	ServiceName string
 	Meta        map[string]string
+	GoAlertURL  string
 }
 
 // POSTDataAlertBundle represents fields in outgoing alert bundle notification.
@@ -52,24 +54,31 @@ type POSTDataAlertBundle struct {
 	ServiceID   string
 	ServiceName string
 	Count       int
+	GoAlertURL  string
 }
 
 // POSTDataAlertStatus represents fields in outgoing alert status notification.
 type POSTDataAlertStatus struct {
-	AppName    string
-	Type       string
-	AlertID    int
-	LogEntry   string
-	AlertState string
+	AppName     string
+	Type        string
+	AlertID     int
+	Summary     string
+	Details     string
+	ServiceID   string
+	ServiceName string
+	Meta        map[string]string
+	LogEntry    string
+	GoAlertURL  string
 }
 
 // POSTDataAlertStatusBundle represents fields in outgoing alert status bundle notification.
 type POSTDataAlertStatusBundle struct {
-	AppName  string
-	Type     string
-	AlertID  int
-	LogEntry string
-	Count    int
+	AppName    string
+	Type       string
+	AlertID    int
+	LogEntry   string
+	Count      int
+	GoAlertURL string
 }
 
 // POSTDataVerification represents fields in outgoing verification notification.
@@ -149,14 +158,8 @@ func alertStateWireValue(state notification.AlertState) (string, error) {
 	}
 }
 
-// Send will send an alert for the provided message type
-func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*notification.SentMessage, error) {
-	deliveryID := msg.MsgID()
-	if deliveryID == "" {
-		return nil, errors.New("webhook delivery identity is required")
-	}
-
-	cfg := config.FromContext(ctx)
+// upstreamWebhookPayload preserves the GoAlert v0.35 ordinary webhook contract.
+func upstreamWebhookPayload(cfg config.Config, msg notification.Message) (interface{}, error) {
 	var payload interface{}
 	switch m := msg.(type) {
 	case notification.Test:
@@ -180,6 +183,7 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 			ServiceID:   m.ServiceID,
 			ServiceName: m.ServiceName,
 			Meta:        m.Meta,
+			GoAlertURL:  cfg.CallbackURL(fmt.Sprintf("/alerts/%d", m.AlertID)),
 		}
 	case notification.AlertBundle:
 		payload = POSTDataAlertBundle{
@@ -188,18 +192,20 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 			ServiceID:   m.ServiceID,
 			ServiceName: m.ServiceName,
 			Count:       m.Count,
+			GoAlertURL:  cfg.CallbackURL(fmt.Sprintf("/services/%s/alerts", m.ServiceID)),
 		}
 	case notification.AlertStatus:
-		alertState, err := alertStateWireValue(m.NewAlertState)
-		if err != nil {
-			return nil, err
-		}
 		payload = POSTDataAlertStatus{
-			AppName:    cfg.ApplicationName(),
-			Type:       "AlertStatus",
-			AlertID:    m.AlertID,
-			LogEntry:   m.LogEntry,
-			AlertState: alertState,
+			AppName:     cfg.ApplicationName(),
+			Type:        "AlertStatus",
+			Details:     m.Details,
+			AlertID:     m.AlertID,
+			Summary:     m.Summary,
+			ServiceID:   m.ServiceID,
+			ServiceName: m.ServiceName,
+			Meta:        m.Meta,
+			LogEntry:    m.LogEntry,
+			GoAlertURL:  cfg.CallbackURL(fmt.Sprintf("/alerts/%d", m.AlertID)),
 		}
 	case notification.ScheduleOnCallUsers:
 		// We use types defined in this package to insulate against unintended API
@@ -219,6 +225,50 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 	default:
 		return nil, fmt.Errorf("message type '%T' not supported", m)
 	}
+	return payload, nil
+}
+
+// Send will send an alert for the provided message type
+func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*notification.SentMessage, error) {
+	deliveryID := msg.MsgID()
+	if deliveryID == "" {
+		return nil, errors.New("webhook delivery identity is required")
+	}
+
+	cfg := config.FromContext(ctx)
+	webURL := msg.DestArg(FieldWebhookURL)
+	if !cfg.ValidWebhookURL(webURL) {
+		return &notification.SentMessage{
+			State:        notification.StateFailedPerm,
+			StateDetails: "invalid or not allowed URL",
+		}, nil
+	}
+	target, err := url.Parse(webURL)
+	if err != nil {
+		return nil, errors.New("webhook request could not be created")
+	}
+	var gatewayTarget bool
+	if s.gatewaySigner != nil {
+		_, gatewayTarget, err = s.gatewaySigner.MatchTarget(target)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var payload interface{}
+	if gatewayTarget {
+		payload, err = gatewayV1Payload(cfg.ApplicationName(), msg)
+		if err != nil {
+			return &notification.SentMessage{
+				State: notification.StateFailedPerm, StateDetails: err.Error(),
+			}, nil
+		}
+	} else {
+		payload, err = upstreamWebhookPayload(cfg, msg)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -227,15 +277,6 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*3)
 	defer cancel()
-
-	webURL := msg.DestArg(FieldWebhookURL)
-	if !cfg.ValidWebhookURL(webURL) {
-		// fail permanently if the URL is not currently valid/allowed
-		return &notification.SentMessage{
-			State:        notification.StateFailedPerm,
-			StateDetails: "invalid or not allowed URL",
-		}, nil
-	}
 
 	if cfg.Webhook.BlockPrivateAddresses {
 		ctx = privnet.WithBlockPrivate(ctx)
@@ -248,17 +289,18 @@ func (s *Sender) SendMessage(ctx context.Context, msg notification.Message) (*no
 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Set(idempotencyKeyHeader, deliveryID)
-	if s.gatewaySigner != nil {
+	if gatewayTarget {
 		signed, err := s.gatewaySigner.SignRequest(ctx, req, data)
 		if err != nil {
 			return nil, err
 		}
-		if signed {
-			// A signed request must never be replayed internally by net/http
-			// with the same attempt nonce and signature. Every retry returns to
-			// SendMessage, builds a new request and signs with fresh values.
-			req.GetBody = nil
+		if !signed {
+			return nil, errGatewaySigningInvalid
 		}
+		// A signed request must never be replayed internally by net/http
+		// with the same attempt nonce and signature. Every retry returns to
+		// SendMessage, builds a new request and signs with fresh values.
+		req.GetBody = nil
 	}
 
 	client := *s.Client

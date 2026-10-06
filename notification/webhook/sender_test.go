@@ -318,7 +318,7 @@ func TestSenderRejectsMissingDeliveryIdentity(t *testing.T) {
 }
 
 func TestSenderAlertStatusWireState(t *testing.T) {
-	const webURL = "test://gateway.invalid/v1/goalert/contact-method/opaque-secret-token?route=secret-query"
+	const webURL = testOnlyGatewayURL
 	tests := []struct {
 		name      string
 		state     notification.AlertState
@@ -382,7 +382,7 @@ func TestSenderAlertStatusWireState(t *testing.T) {
 				NewAlertState: test.state,
 			}
 
-			result, err := NewSender(ctx, client).SendMessage(ctx, msg)
+			result, err := NewSenderWithGatewaySigner(ctx, client, projectionTestSigner(t)).SendMessage(ctx, msg)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			assert.Equal(t, notification.StateSent, result.State)
@@ -393,7 +393,7 @@ func TestSenderAlertStatusWireState(t *testing.T) {
 
 func TestSenderRejectsInvalidAlertStateBeforeRequest(t *testing.T) {
 	const (
-		webURL  = "https://gateway.invalid/v1/goalert/contact-method/opaque-secret-token?route=secret-query"
+		webURL  = testOnlyGatewayURL
 		logText = "sensitive localized log entry"
 	)
 	tests := []struct {
@@ -423,14 +423,16 @@ func TestSenderRejectsInvalidAlertStateBeforeRequest(t *testing.T) {
 				NewAlertState: test.state,
 			}
 
-			result, err := NewSender(ctx, client).SendMessage(ctx, msg)
-			require.Error(t, err)
-			assert.Nil(t, result)
-			assert.Equal(t, "webhook alert state is invalid", err.Error())
-			assert.NotContains(t, err.Error(), webURL)
-			assert.NotContains(t, err.Error(), "opaque-secret-token")
-			assert.NotContains(t, err.Error(), "secret-query")
-			assert.NotContains(t, err.Error(), logText)
+			signer := projectionTestSigner(t)
+			result, err := NewSenderWithGatewaySigner(ctx, client, signer).SendMessage(ctx, msg)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, notification.StateFailedPerm, result.State)
+			assert.Equal(t, "webhook alert state is invalid", result.StateDetails)
+			assert.NotContains(t, result.StateDetails, webURL)
+			assert.NotContains(t, result.StateDetails, testOnlyGatewayToken)
+			assert.NotContains(t, result.StateDetails, logText)
+			assert.Empty(t, signer.bodies, "invalid states must fail before signing")
 		})
 	}
 }
