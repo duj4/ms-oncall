@@ -3,8 +3,6 @@ package smoke
 import (
 	"fmt"
 	"testing"
-
-	"github.com/target/goalert/test/smoke/harness"
 )
 
 // TestTwilioSMS checks that a test SMS is processed.
@@ -19,8 +17,7 @@ func TestTwilioSMS(t *testing.T) {
 	values
 	    ({{uuid "cm1"}}, {{uuid "user"}}, 'personal', 'SMS', {{phone "1"}});
 `
-	h := harness.NewHarness(t, sqlQuery, "add-verification-code")
-	defer h.Close()
+	h, _ := c9TwilioHarness(t, sqlQuery)
 
 	doQL := func(query string) {
 		g := h.GraphQLQueryUserT(t, h.UUID("user"), query)

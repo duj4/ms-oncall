@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/target/goalert/test/smoke/harness"
 )
 
 // TestTwilioSMSVerification checks that a verification SMS is processed.
@@ -26,8 +24,7 @@ func TestTwilioSMSVerification(t *testing.T) {
 			({{uuid "nr1"}}, {{uuid "user"}}, 0, {{uuid "cm1"}});
 	`
 
-	h := harness.NewHarness(t, sqlQuery, "add-verification-code")
-	defer h.Close()
+	h, _ := c9TwilioHarness(t, sqlQuery)
 
 	doQL := func(query string) {
 		g := h.GraphQLQueryUserT(t, h.UUID("user"), query)
