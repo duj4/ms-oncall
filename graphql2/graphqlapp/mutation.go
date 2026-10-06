@@ -56,6 +56,18 @@ func (a *Mutation) SendSignal(ctx context.Context, input graphql2.SendSignalInpu
 		return false, err
 	}
 
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
+	if organizationID != nil {
+		// A Service ID is only a locator. Authorize before MapDestToID,
+		// which already writes notification-channel destination state.
+		if _, err := a.ServiceStore.FindOne(ctx, input.ServiceID, organizationID); err != nil {
+			return false, err
+		}
+	}
+
 	destID, err := a.NCStore.MapDestToID(ctx, a.DB, *input.Dest)
 	if err != nil {
 		return false, err
