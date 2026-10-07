@@ -74,7 +74,7 @@ func (call *Call) messageStatus() *notification.Status {
 
 	var status notification.Status
 	if call.ErrorMessage != nil && call.ErrorCode != nil {
-		status.Details = fmt.Sprintf("%s: [%d] %s", call.Status, *call.ErrorCode, *call.ErrorMessage)
+		status.Details = fmt.Sprintf("%s: [%d]", call.Status, *call.ErrorCode)
 	} else {
 		status.Details = string(call.Status)
 	}

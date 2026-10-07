@@ -34,8 +34,11 @@ func (ns DestV1) DestHash() DestHashV1 {
 }
 
 func (ns DestV1) String() string {
-	return fmt.Sprintf("DestV1{Type: %s, Args: %v}", ns.Type, ns.Args)
+	return fmt.Sprintf("DestV1{Type: %s, Args: %v}", ns.Type, "[redacted]")
 }
+
+// Format keeps every diagnostic format verb from traversing raw arguments.
+func (ns DestV1) Format(state fmt.State, _ rune) { _, _ = fmt.Fprint(state, ns.String()) }
 
 type DestV1 struct {
 	Args map[string]string

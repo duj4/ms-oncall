@@ -40,6 +40,12 @@ func (a *Destination) Values(ctx context.Context, obj *gadb.DestV1) ([]graphql2.
 
 // DisplayInfo will return the display information for a destination by mapping to Query.DestinationDisplayInfo.
 func (a *Destination) DisplayInfo(ctx context.Context, obj *gadb.DestV1) (graphql2.InlineDisplayInfo, error) {
+	if len(obj.Args) == 0 {
+		info, err := a.DestReg.TypeInfo(ctx, obj.Type)
+		if err == nil && info.IsContactMethod() {
+			return &nfydest.DisplayInfo{Text: "Private contact method"}, nil
+		}
+	}
 	info, err := (*Query)(a)._DestinationDisplayInfo(ctx, gadb.DestV1{Type: obj.Type, Args: obj.Args}, true)
 	if err != nil {
 		isUnsafe, safeErr := errutil.ScrubError(err)

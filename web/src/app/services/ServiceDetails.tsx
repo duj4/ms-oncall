@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { Suspense, useState } from 'react'
 import { gql, useQuery } from 'urql'
 import { Redirect } from 'wouter'
@@ -180,11 +181,15 @@ export default function ServiceDetails(props: {
             url: 'integration-keys',
             subText: 'Manage keys used to create alerts',
           },
-          {
-            label: 'Labels',
-            url: 'labels',
-            subText: 'Group together services',
-          },
+          ...(!labelsDisabled()
+            ? [
+                {
+                  label: 'Labels',
+                  url: 'labels',
+                  subText: 'Group together services',
+                },
+              ]
+            : []),
           {
             label: 'Alert Metrics',
             url: 'alert-metrics',

@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../../util/labelProductPolicy'
 import React, { useState } from 'react'
 import FilterList from '@mui/icons-material/FilterList'
 import Grid from '@mui/material/Grid'
@@ -69,7 +70,7 @@ function AdminServiceFilter(): React.JSX.Element {
             onDelete={() => removeFilter('intKeyTgts')}
           />
         )}
-        {!!params.labelKey.length && (
+        {!labelsDisabled() && !!params.labelKey.length && (
           <Chip
             label={'key=' + params.labelKey}
             onClick={() => setOpen(true)}
@@ -78,7 +79,7 @@ function AdminServiceFilter(): React.JSX.Element {
             }}
           />
         )}
-        {!!params.labelValue.length && (
+        {!labelsDisabled() && !!params.labelValue.length && (
           <Chip
             label={'value=' + params.labelValue}
             onClick={() => setOpen(true)}
@@ -145,38 +146,42 @@ function AdminServiceFilter(): React.JSX.Element {
                   )}
                 />
               </ListItem>
-              <Divider sx={{ padding: '10px' }} />
-              <ListItem>
-                <ListItemText primary='Labels' />
-              </ListItem>
-              <ListItem>
-                <LabelKeySelect
-                  name='label-key-select'
-                  label='Select Label Key'
-                  fullWidth
-                  value={params.labelKey}
-                  onChange={(value: string) =>
-                    setParams({
-                      ...params,
-                      labelKey: value,
-                      labelValue: '',
-                    })
-                  }
-                />
-              </ListItem>
-              <ListItem>
-                <LabelValueSelect
-                  name='label-value'
-                  fullWidth
-                  label='Select Label Value'
-                  labelKey={params.labelKey}
-                  value={params.labelValue}
-                  onChange={(value: string) =>
-                    setParams({ ...params, labelValue: value })
-                  }
-                  disabled={!params.labelKey}
-                />
-              </ListItem>
+              {!labelsDisabled() && (
+                <React.Fragment>
+                  <Divider sx={{ padding: '10px' }} />
+                  <ListItem>
+                    <ListItemText primary='Labels' />
+                  </ListItem>
+                  <ListItem>
+                    <LabelKeySelect
+                      name='label-key-select'
+                      label='Select Label Key'
+                      fullWidth
+                      value={params.labelKey}
+                      onChange={(value: string) =>
+                        setParams({
+                          ...params,
+                          labelKey: value,
+                          labelValue: '',
+                        })
+                      }
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <LabelValueSelect
+                      name='label-value'
+                      fullWidth
+                      label='Select Label Value'
+                      labelKey={params.labelKey}
+                      value={params.labelValue}
+                      onChange={(value: string) =>
+                        setParams({ ...params, labelValue: value })
+                      }
+                      disabled={!params.labelKey}
+                    />
+                  </ListItem>
+                </React.Fragment>
+              )}
               <ListItem>
                 <Button
                   variant='outlined'

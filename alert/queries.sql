@@ -175,3 +175,17 @@ SELECT a.id
 FROM alerts a
 JOIN services s ON s.id = a.service_id
 WHERE a.id = ANY (@ids::bigint[]) AND s.organization_id = @organization_id::uuid;
+
+
+-- name: Alert_AlertMultiAck :one
+-- Returns true if the alert's current escalation policy step has multi-ack enabled.
+SELECT
+    EXISTS (
+        SELECT
+            1
+        FROM
+            escalation_policy_state state
+            JOIN escalation_policy_steps step ON step.id = state.escalation_policy_step_id
+        WHERE
+            state.alert_id = $1
+            AND step.multi_ack) AS multi_ack;

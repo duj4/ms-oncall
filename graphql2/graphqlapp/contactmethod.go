@@ -54,6 +54,9 @@ func (a *ContactMethod) StatusUpdates(ctx context.Context, obj *contactmethod.Co
 }
 
 func (a *ContactMethod) FormattedValue(ctx context.Context, obj *contactmethod.ContactMethod) (string, error) {
+	if !obj.RawVisible(ctx) {
+		return "Private contact method", nil
+	}
 	info, err := (*App)(a).destinationDisplayInfo(ctx, obj.Dest)
 	if err != nil {
 		return "", err
@@ -116,11 +119,20 @@ func (q *Query) UserContactMethod(ctx context.Context, idStr string) (*contactme
 }
 
 func (m *Mutation) CreateUserContactMethod(ctx context.Context, input graphql2.CreateUserContactMethodInput) (*contactmethod.ContactMethod, error) {
+	org, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.CMStore.AuthorizeUser(ctx, m.DB, input.UserID, org); err != nil {
+		return nil, err
+	}
+
 	cm := &contactmethod.ContactMethod{
 		Name:          input.Name,
 		UserID:        input.UserID,
 		Disabled:      true,
 		StatusUpdates: input.EnableStatusUpdates != nil && *input.EnableStatusUpdates,
+		Private:       input.Private != nil && *input.Private,
 	}
 
 	if input.Dest != nil {
@@ -138,9 +150,9 @@ func (m *Mutation) CreateUserContactMethod(ctx context.Context, input graphql2.C
 		return nil, validation.NewFieldError("input", "must provide either dest or type/value")
 	}
 
-	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		cm, err = m.CMStore.Create(ctx, tx, cm)
+		cm, err = m.CMStore.Create(ctx, tx, cm, org)
 		if err != nil {
 			return err
 		}
@@ -165,16 +177,21 @@ func (m *Mutation) CreateUserContactMethod(ctx context.Context, input graphql2.C
 }
 
 func (m *Mutation) UpdateUserContactMethod(ctx context.Context, input graphql2.UpdateUserContactMethodInput) (bool, error) {
+	org, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	if input.Value != nil {
 		return false, validation.NewFieldError("input.value", "cannot update value")
 	}
 
-	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		id, err := validate.ParseUUID("ID", input.ID)
 		if err != nil {
 			return err
 		}
-		cm, err := m.CMStore.FindOne(ctx, tx, id)
+		cm, err := m.CMStore.FindOneForUpdate(ctx, tx, id, org)
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("id", "contact method not found")
 		}
@@ -189,23 +206,49 @@ func (m *Mutation) UpdateUserContactMethod(ctx context.Context, input graphql2.U
 			}
 			cm.Name = *input.Name
 		}
+		if input.Private != nil {
+			cm.Private = *input.Private
+		}
 
 		if input.EnableStatusUpdates != nil {
 			cm.StatusUpdates = *input.EnableStatusUpdates
 		}
 
-		return m.CMStore.Update(ctx, tx, cm)
+		return m.CMStore.Update(ctx, tx, cm, org)
 	})
 	return err == nil, err
 }
 
 func (m *Mutation) SendContactMethodVerification(ctx context.Context, input graphql2.SendContactMethodVerificationInput) (bool, error) {
-	err := m.NotificationStore.SendContactMethodVerification(ctx, input.ContactMethodID)
+	id, err := validate.ParseUUID("ContactMethodID", input.ContactMethodID)
+	if err != nil {
+		return false, err
+	}
+	cm, err := (*App)(m).FindOneCM(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if cm == nil {
+		return false, validation.NewGenericError("contact method not found")
+	}
+	err = m.NotificationStore.SendContactMethodVerification(ctx, input.ContactMethodID)
 	return err == nil, err
 }
 
 func (m *Mutation) VerifyContactMethod(ctx context.Context, input graphql2.VerifyContactMethodInput) (bool, error) {
-	err := validate.Range("Code", input.Code, 100000, 999999)
+	id, err := validate.ParseUUID("ContactMethodID", input.ContactMethodID)
+	if err != nil {
+		return false, err
+	}
+	cm, err := (*App)(m).FindOneCM(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if cm == nil {
+		return false, validation.NewGenericError("contact method not found")
+	}
+
+	err = validate.Range("Code", input.Code, 100000, 999999)
 	if err != nil {
 		// return "must be 6 digits" error as we care about # of digits, not the code's actual value
 		return false, validation.NewFieldError("Code", "must be 6 digits")

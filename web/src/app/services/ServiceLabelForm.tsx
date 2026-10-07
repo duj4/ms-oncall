@@ -1,3 +1,4 @@
+import { withoutLabelUI } from '../util/labelProductPolicy'
 import React from 'react'
 import { FormContainer, FormField } from '../forms'
 import Grid from '@mui/material/Grid'
@@ -22,7 +23,7 @@ interface LabelFormProps {
   create?: boolean
 }
 
-export default function LabelForm(props: LabelFormProps): React.JSX.Element {
+function LabelForm(props: LabelFormProps): React.JSX.Element {
   const { editValueOnly = false, create, ...otherProps } = props
 
   return (
@@ -62,3 +63,5 @@ export default function LabelForm(props: LabelFormProps): React.JSX.Element {
     </FormContainer>
   )
 }
+
+export default withoutLabelUI(LabelForm)

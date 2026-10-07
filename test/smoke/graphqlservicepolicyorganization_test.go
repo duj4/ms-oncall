@@ -76,7 +76,6 @@ func TestGraphQLServicePolicySameOrganization(t *testing.T) {
 		favorite: true
 		newIntegrationKeys: [{name: "Service Policy Key", type: generic}]
 		newHeartbeatMonitors: [{name: "Service Policy Heartbeat", timeoutMinutes: 15}]
-		labels: [{key: "test/team", value: "Service Policy Team"}]
 	`
 
 	t.Run("create foreign and missing policies are unavailable without side effects", func(t *testing.T) {
@@ -109,7 +108,6 @@ func TestGraphQLServicePolicySameOrganization(t *testing.T) {
 			{"user_favorites", "tgt_service_id"},
 			{"integration_keys", "service_id"},
 			{"heartbeat_monitors", "service_id"},
-			{"labels", "tgt_service_id"},
 		} {
 			var count int
 			err := h.App().DB().QueryRow("SELECT count(*) FROM "+child.table+" WHERE "+child.column+" = $1", serviceID).Scan(&count)
@@ -195,13 +193,12 @@ func TestGraphQLServicePolicySameOrganization(t *testing.T) {
 					name: "Rolled Back Service Policy"
 					%s
 					favorite: true
-					newIntegrationKeys: [{name: "Rolled Back Key", type: generic}]
+					newIntegrationKeys: [{name: "x", type: generic}]
 					newHeartbeatMonitors: [{name: "Rolled Back Heartbeat", timeoutMinutes: 15}]
-					labels: [{key: "test/team", value: "x"}]
 				}) {id}
 			}`, policy.input))
 			require.Len(t, response.Errors, 1)
-			require.Equal(t, "must be at least 3 characters", response.Errors[0].Message)
+			require.Equal(t, "must be at least 2 characters", response.Errors[0].Message)
 			require.Equal(t, before, counts(t), "child failure must roll back the complete nested transaction")
 		})
 	}

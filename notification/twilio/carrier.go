@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/target/goalert/config"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user/contactmethod"
 	"github.com/target/goalert/util/log"
@@ -76,15 +77,17 @@ func (c *Config) CarrierInfo(ctx context.Context, number string, fetch bool) (*C
 }
 
 // FetchCarrierInfo will lookup carrier information for the provided number using the Twilio API.
-func (c Config) FetchCarrierInfo(ctx context.Context, number string) (*CarrierInfo, error) {
+func (c Config) FetchCarrierInfo(ctx context.Context, number string) (info *CarrierInfo, err error) {
 	if c.CMStore == nil {
 		return nil, nil
 	}
 	// must be admin to fetch carrier info
-	err := permission.LimitCheckAny(ctx, permission.Admin)
+	err = permission.LimitCheckAny(ctx, permission.Admin)
 	if err != nil {
 		return nil, err
 	}
+
+	defer func() { err = nfymsg.ProviderError(err) }()
 
 	cfg := config.FromContext(ctx)
 	if c.BaseURL == "" {

@@ -11,5 +11,7 @@ type Exception struct {
 }
 
 func (e Exception) Error() string {
-	return fmt.Sprintf("%d: %s", e.Code, e.Message)
+	return fmt.Sprintf("Twilio error code %d", e.Code)
 }
+
+func (e Exception) Format(state fmt.State, _ rune) { _, _ = fmt.Fprint(state, e.Error()) }

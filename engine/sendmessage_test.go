@@ -216,6 +216,10 @@ func (db *alertStatusTestDB) rows(query string) (driver.Rows, error) {
 			int64(42), "Synthetic summary", "Synthetic details",
 			"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "manual", "active", now, nil,
 		}
+	case strings.Contains(strings.ToLower(query), "from services"):
+		values = []driver.Value{"Synthetic service", int64(1)}
+	case strings.Contains(strings.ToLower(query), "-- name: alert_getalertmetadata"):
+		values = []driver.Value{nil}
 	case strings.Contains(strings.ToLower(query), "-- name: nfyoriginalmessagestatus"):
 		values = []driver.Value{
 			int64(42), nil, nil, nil, now, nil, nil, nil,
@@ -250,7 +254,7 @@ func TestSendMessageDestinationErrorsRedactWebhookURL(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	alertLogStore, err := alertlog.NewStore(ctx, db, registry)
 	require.NoError(t, err)
-	alertStore, err := alert.NewStore(ctx, db, alertLogStore, nil)
+	alertStore, err := alert.NewStore(ctx, db, alertLogStore)
 	require.NoError(t, err)
 	notificationStore, err := notification.NewStore(ctx, db)
 	require.NoError(t, err)
@@ -283,10 +287,17 @@ func TestSendMessageDestinationErrorsRedactWebhookURL(t *testing.T) {
 	}
 }
 
+type deliveryGatewayCredentialSource struct{ credential webhook.GatewayCredential }
+
+func (s deliveryGatewayCredentialSource) GatewayCredential(context.Context) (webhook.GatewayCredential, error) {
+	return s.credential, nil
+}
+
 func TestSendMessagePropagatesAlertStateToWebhookRequest(t *testing.T) {
 	const (
 		outgoingMessageID = "11111111-2222-4333-8444-555555555555"
-		webURL            = "https://gateway.invalid/v1/goalert/contact-method/opaque-secret-token?route=secret-query"
+		gatewayOrigin     = "https://gateway.test.invalid"
+		webURL            = gatewayOrigin + "/v1/goalert/contact-method/mso1_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
 	)
 	tests := []struct {
 		name      string
@@ -323,18 +334,25 @@ func TestSendMessagePropagatesAlertStateToWebhookRequest(t *testing.T) {
 					}, nil
 				}),
 			}
-			registry.RegisterProvider(ctx, webhook.NewSender(ctx, client))
+			matcher, err := webhook.NewGatewayTargetMatcher(gatewayOrigin)
+			require.NoError(t, err)
+			credential, err := webhook.NewGatewayCredential("01234567-89ab-4def-8123-456789abcdef", bytes.Repeat([]byte{0x11}, 32))
+			require.NoError(t, err)
+			signer, err := webhook.NewGatewaySignerWithSources(matcher, "123e4567-e89b-12d3-a456-426614174000",
+				deliveryGatewayCredentialSource{credential: credential}, time.Now, bytes.NewReader(bytes.Repeat([]byte{0x22}, 16)))
+			require.NoError(t, err)
+			registry.RegisterProvider(ctx, webhook.NewSenderWithGatewaySigner(ctx, client, signer))
 
 			db := sql.OpenDB(alertStatusTestConnector{source: &alertStatusTestDB{logType: test.logType}})
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			alertLogStore, err := alertlog.NewStore(ctx, db, registry)
 			require.NoError(t, err)
-			alertStore, err := alert.NewStore(ctx, db, alertLogStore, nil)
+			alertStore, err := alert.NewStore(ctx, db, alertLogStore)
 			require.NoError(t, err)
 			notificationStore, err := notification.NewStore(ctx, db)
 			require.NoError(t, err)
 
-			eng := &Engine{cfg: &Config{
+			eng := &Engine{a: alertStore, b: &backend{db: db}, cfg: &Config{
 				AlertLogStore:       alertLogStore,
 				AlertStore:          alertStore,
 				NotificationStore:   notificationStore,

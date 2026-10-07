@@ -32,5 +32,14 @@ func (r *Registry) MessageStatus(ctx context.Context, destType string, externalI
 		return nil, ErrNotEnabled
 	}
 
-	return s.MessageStatus(ctx, externalID)
+	status, err := s.MessageStatus(ctx, externalID)
+	if err != nil {
+		return nil, providerError(err)
+	}
+	if status != nil {
+		copyStatus := *status
+		copyStatus.Details = nfymsg.DiagnosticText(status.Details)
+		status = &copyStatus
+	}
+	return status, nil
 }

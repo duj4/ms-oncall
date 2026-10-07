@@ -6,6 +6,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/permission"
@@ -17,8 +18,11 @@ import (
 
 // SearchOptions allow filtering and paginating the list of users.
 type SearchOptions struct {
-	Search string       `json:"s,omitempty"`
-	After  SearchCursor `json:"a,omitempty"`
+	OrganizationID uuid.UUID    `json:"-"`
+	PrivateOwnerID string       `json:"-"`
+	Internal       bool         `json:"-"`
+	Search         string       `json:"s,omitempty"`
+	After          SearchCursor `json:"a,omitempty"`
 
 	// Omit specifies a list of user IDs to exclude from the results.
 	Omit []string `json:"o,omitempty"`
@@ -63,13 +67,17 @@ var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()
 	SELECT DISTINCT ON ({{ .OrderBy }})
 		usr.id, usr.name, usr.email, usr.role, fav IS DISTINCT FROM NULL
 	FROM users usr
-	{{ if gt (len .DestArgs) 0 }}
+	{{ if or .DestType (gt (len .DestArgs) 0) }}
 		JOIN user_contact_methods ucm ON ucm.user_id = usr.id
 	{{ end }}
 	{{if not .FavoritesOnly}}
 		LEFT {{end}} JOIN user_favorites fav on usr.id = fav.tgt_user_id 
 			AND {{if .FavoritesUserID}} fav.user_id = :favUserID{{else}}false{{end}}
 	WHERE true
+ {{ if or .DestType (gt (len .DestArgs) 0) }}
+  {{if not .Internal}} AND (NOT ucm.private OR ucm.user_id = :PrivateOwnerID) {{end}}
+  {{if .HasOrganization}} AND EXISTS(SELECT 1 FROM user_organization_assignments a JOIN normal_organizations n ON n.organization_id=a.effective_normal_organization_id WHERE a.user_id=ucm.user_id AND a.effective_organization_id=:OrganizationID AND a.effective_normal_organization_id=:OrganizationID) {{end}}
+ {{end}}
 	{{if .Omit}}
 		AND not usr.id = any(:omit)
 	{{end}}
@@ -100,6 +108,8 @@ var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()
 
 type renderData SearchOptions
 
+func (opts renderData) HasOrganization() bool { return opts.OrganizationID != uuid.Nil }
+
 func (opts renderData) OrderBy() string {
 	if opts.FavoritesFirst {
 		return "fav isnull, lower(usr.name), usr.id"
@@ -126,7 +136,6 @@ func (opts renderData) Normalize() (*renderData, error) {
 	if opts.Limit == 0 {
 		opts.Limit = search.DefaultMaxResults
 	}
-
 	if opts.DestType != "" && opts.DestArgs == nil {
 		return nil, validation.NewGenericError("DestArgs must be set when DestType is set")
 	}
@@ -158,6 +167,8 @@ func (opts renderData) QueryArgs() []sql.NamedArg {
 		sql.Named("DestType", opts.DestType),
 		sql.Named("favUserID", opts.FavoritesUserID),
 		sql.Named("Email", opts.Email()),
+		sql.Named("OrganizationID", opts.OrganizationID),
+		sql.Named("PrivateOwnerID", opts.PrivateOwnerID),
 	}
 }
 
@@ -186,7 +197,15 @@ func (s *Store) Search(ctx context.Context, opts *SearchOptions) ([]User, error)
 	if opts == nil {
 		opts = &SearchOptions{}
 	}
-	data, err := (*renderData)(opts).Normalize()
+	copyOpts := *opts
+	copyOpts.PrivateOwnerID = permission.UserID(ctx)
+	copyOpts.Internal = permission.System(ctx)
+	if (len(copyOpts.DestArgs) > 0 || copyOpts.DestType != "") && copyOpts.OrganizationID == uuid.Nil {
+		if src := permission.Source(ctx); src != nil && src.Type == permission.SourceTypeAuthProvider {
+			return nil, permission.NewAccessDenied("Contact Method search Organization scope is required")
+		}
+	}
+	data, err := (*renderData)(&copyOpts).Normalize()
 	if err != nil {
 		return nil, err
 	}

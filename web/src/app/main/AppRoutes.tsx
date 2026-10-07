@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { JSXElementConstructor, useLayoutEffect } from 'react'
 import { gql, useQuery } from 'urql'
 import { Switch, Route, useLocation, RouteProps, useRoute } from 'wouter'
@@ -45,6 +46,7 @@ import AdminSwitchoverGuide from '../admin/switchover/AdminSwitchoverGuide'
 import UniversalKeyPage from '../services/UniversalKey/UniversalKeyPage'
 import { useExpFlag } from '../util/useExpFlag'
 import AdminMaint from '../admin/AdminMaint'
+import PolicyAlertsList from '../escalation-policies/PolicyAlertsList'
 
 // ParamRoute will pass route parameters as props to the route's child.
 function ParamRoute(props: RouteProps): React.JSX.Element {
@@ -96,6 +98,7 @@ export const routes: Record<string, JSXElementConstructor<any>> = {
   '/escalation-policies': PolicyList,
   '/escalation-policies/:policyID': PolicyDetails,
   '/escalation-policies/:policyID/services': PolicyServicesQuery,
+  '/escalation-policies/:policyID/alerts': PolicyAlertsList,
 
   '/services': ServiceList,
   '/services/:serviceID': ServiceDetails,
@@ -104,7 +107,9 @@ export const routes: Record<string, JSXElementConstructor<any>> = {
   '/services/:serviceID/heartbeat-monitors': HeartbeatMonitorList,
   '/services/:serviceID/integration-keys': IntegrationKeyList,
   [EXP_ROUTE_UNIV_KEY]: UniversalKeyPage,
-  '/services/:serviceID/labels': ServiceLabelList,
+  '/services/:serviceID/labels': labelsDisabled()
+    ? PageNotFound
+    : ServiceLabelList,
   '/services/:serviceID/alert-metrics': AlertMetrics,
 
   '/users': UserList,

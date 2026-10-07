@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/alert/alertlog"
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/escalation"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
@@ -55,6 +56,9 @@ func (q *Query) Services(ctx context.Context, opts *graphql2.ServiceSearchOption
 	if opts.Search != nil {
 		searchOpts.Search = *opts.Search
 	}
+	if err := searchOpts.ValidateLabelPolicy(); err != nil {
+		return nil, err
+	}
 	if opts.FavoritesOnly != nil {
 		searchOpts.FavoritesOnly = *opts.FavoritesOnly
 	}
@@ -68,6 +72,9 @@ func (q *Query) Services(ctx context.Context, opts *graphql2.ServiceSearchOption
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := searchOpts.ValidateLabelPolicy(); err != nil {
+		return nil, err
 	}
 	if opts.First != nil {
 		searchOpts.Limit = *opts.First
@@ -186,6 +193,10 @@ func (s *Service) Notices(ctx context.Context, raw *service.Service) ([]notice.N
 }
 
 func (s *Service) Labels(ctx context.Context, raw *service.Service) ([]label.Label, error) {
+	if config.LabelsDisabled() {
+		return []label.Label{}, nil
+	}
+
 	if err := permission.LimitCheckAny(ctx, permission.System, permission.User); err != nil {
 		return nil, err
 	}
@@ -224,6 +235,10 @@ func (s *Service) HeartbeatMonitors(ctx context.Context, raw *service.Service) (
 }
 
 func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServiceInput) (result *service.Service, err error) {
+	if config.LabelsDisabled() && len(input.Labels) != 0 {
+		return nil, label.ErrDisabled
+	}
+
 	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
 	if requestExecutionContext == nil {
 		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")

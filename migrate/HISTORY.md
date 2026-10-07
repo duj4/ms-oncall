@@ -99,6 +99,102 @@ workflow after migration changes. Do not maintain it manually.
 
 This foundation contains no Organization persistence or authorization behavior.
 
+## Canonical positions 282–288: exact GoAlert v0.35.0 release
+
+Bundle `goalert-v0.35.0` appends seven byte-identical upstream release migrations
+after immutable accepted positions 1–281. Its source is
+`UPSTREAM_GOALERT / GOALERT_RELEASE`, repository
+`https://github.com/target/goalert`, release `v0.35.0`, commit
+`db9829187a1c1f96a7c57112b74dba54442d7c6b`, with adaptation evidence
+`NONE_BYTE_IDENTICAL_TO_ADOPTED_UPSTREAM_RELEASE`.
+
+The bundle depends exactly on position 281, bundle
+`ms-oncall-resource-root-organization-ownership-persistence-v1`, migration
+`20260910105030-ms-oncall-resource-root-organization-ownership-persistence-v1.sql`,
+SHA-256 `a11980ede42e5d9b4d12561f1673865b552d908cb41f6194be37ce6df29e710a`.
+Earlier positions, SQL bytes, bundle/source/dependency bindings, and the
+`provenance_foundation_migration_id` boundary are unchanged. Upstream timestamps
+do not determine their placement in the combined canonical sequence.
+
+| Position | Original and executable identity | SQL SHA-256 |
+| ---: | --- | --- |
+| 282 | `20251003121427-alert-status-direct-event.sql` | `648f9de6f3ac1d95a075bc70deca41e36f6740a086fa2ff671476230388dae02` |
+| 283 | `20251003123243-rotation-direct-event.sql` | `d6a1d203e4cb4642a2e60f84c7cd297c49d9fb95b812ad063a4e7516ccd37d3b` |
+| 284 | `20251003130424-signals-direct-event.sql` | `e9ccc1186977d48524d53af6ea519b62d2b35d1f684e17043811dd72017f9b4d` |
+| 285 | `20251021155802-fix-queue-name.sql` | `43337a03e5550e5021ef09c56893c7c670e0513bb1dd2ec13a8ded828248b1f6` |
+| 286 | `20260624104709-schedule-rotation-ep-labels.sql` | `07546f9c760812aca7914b6ff2c4a84ad8625c66e37f64b9e72d817d1be6c9c6` |
+| 287 | `20260814161833-ep-step-multi-ack.sql` | `769e82c803ea88a1ac9ed1cbe1b384d71d8849bb029cb62e4c05bc3675cb3167` |
+| 288 | `20260911125511-cm-private.sql` | `23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e` |
+
+The C1 release bundle ends at position 288, `20260911125511-cm-private.sql`.
+These release bindings describe the isolated C1 Integrated Candidate; they do
+not accept v0.35.0 adoption, River correctness, Label
+containment, sendSignal authorization, Gateway compatibility, multi-ack
+semantics, or Private Contact Method privacy. Those remain separate owner gates.
+
+## Canonical position 289: River correctness forward fix
+
+Bundle `ms-oncall-goalert-v035-river-correctness-v1` appends exactly one migration:
+`20260923133000-fix-river-job-guard.sql`, SHA-256
+`54113cfb892166b9881942fac80122384b46da1ed71053e03d88d03149ed89b9`.
+History contains 289 entries and 289 SQL files. Positions 1–288 retain their
+exact identities, SQL bytes, checksums, sources, and dependency/provenance data.
+
+The SQL is byte-identical to the migration introduced by
+[target/goalert PR #4570](https://github.com/target/goalert/pull/4570), commit
+`c24effbaafc1f286b67f7f5de21bb260eab5fd06`. It is a post-release forward fix,
+not part of GoAlert v0.35.0. MS OnCall ports only that commit's isolated delta;
+its parent `fc11567c90a7e0c330df0f10af45d9f4294d1cd8` implements separately gated
+PR #4574 and is not imported. No semantic SQL adaptation is needed. Provenance
+is `MS_ONCALL`, source kind `MS_ONCALL_CHECKPOINT_BASE`; the closed source model
+is unchanged and no `GOALERT_COMMIT` kind is introduced.
+
+The checkpoint is **Core GoAlert v0.35.0 PR #4570 River Correctness and Canonical
+Migration Position 289 V1**. Source repository is `https://github.com/duj4/ms-oncall`.
+It binds to the frozen repaired C1 Core base commit
+`67e8edbcaf5accaf3f764c35b6bc9f52861e47f5`, tree
+`dfbd1c4c446fe0d4f03f0516a04ccd74fe8167cd`, and accepted Project PR #57
+authorization in `https://github.com/duj4/ms-oncall-project`, NORMAL merge commit
+`089e6e427b49e63782d55fc4cae26804e2dab347`, tree
+`0f953839d869a454fe472afdee263a2bb96df1be`. It does not reference its own future
+introducing commit. Project PR #57's publication accounting is unchanged.
+
+The exact dependency is bundle `goalert-v0.35.0`, canonical position 288,
+`20260911125511-cm-private.sql`, SHA-256
+`23eafcf4a412ca8dc7484706fd7ca24b9de8dcf1b5b5e8e177e7d7d5b1fa027e`.
+The manifest's `adaptation_evidence` explicitly identifies post-release PR #4570,
+its exact commit, the byte-identical SQL relationship, and non-release provenance.
+The permanent provenance-foundation boundary remains position 275, so 289 has
+record origin `CANONICAL_EXECUTION`.
+
+On PostgreSQL, transaction-local `set_config(key_name, 'true', TRUE)` leaves an
+empty-string session placeholder after commit. Empty string is not NULL, so the
+v0.35 `IS NOT NULL` guard incorrectly suppresses later transactions for the same
+queue/ID on a reused physical connection. Position 289 tests `= 'true'` instead:
+duplicates within one transaction remain guarded, and a later transaction can
+enqueue new durable work. The inherited key is queue/ID based; kind and args,
+max attempts 25, priority 2, and commit-time `pg_notify` behavior are preserved.
+The Alert-status, Rotation, and Signal triggers use this same utility function.
+Down restores the exact release definition, including its known reused-session
+defect; no applied history is rewritten.
+
+Associated C2 code ports the StatusMgr single-subscription `FOR UPDATE` lookup
+without `SKIP LOCKED`, so a locked row cannot look deleted, and sets transaction-local
+`lock_timeout = 8000` before the shared processing callback. Lock timeout remains
+an error for retryable River jobs. Exclusive processing transactions are unchanged.
+PostgreSQL regressions cover release failure at 288, correction at 289 on the same
+session, all three actual mutation/trigger paths, duplicate suppression, durable
+jobs and notifications, locked-subscription processing, bounded error/retry,
+rollback, and lack of session timeout leakage. The canonical lab covers
+empty -> 281 -> 288 -> 289, provenance and execution counts, `VerifyAll`,
+`VerifyIsLatest`, repeated no-op upgrade, and disposable-database cleanup.
+
+The highest valid claim is a **local, unpublished C2 River-corrected v0.35
+Integrated Candidate, in review**. This does not implement C3–C10, complete
+v0.35 adoption, solve Background/Engine Organization authority, resume Gateway,
+repair UserFavUnset, or establish production readiness. Fresh Independent Core
+C2 Review and the remaining owner-controlled gates are still required.
+
 ## Canonical position 276: Organization persistence foundation
 
 Bundle `ms-oncall-organization-default-persistence-foundation-v1` appends one

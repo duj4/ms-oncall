@@ -8,6 +8,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/notification"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/validation/validate"
 
@@ -38,7 +39,7 @@ func (q *Query) MessageStatusHistory(ctx context.Context, idStr string) ([]graph
 	hist := make([]graphql2.MessageStatusHistory, len(msgs))
 	for i, m := range msgs {
 		hist[i].Status = string(m.Status)
-		hist[i].Details = m.StatusDetails
+		hist[i].Details = nfymsg.DiagnosticText(m.StatusDetails)
 		hist[i].Timestamp = m.Timestamp
 	}
 	return hist, nil

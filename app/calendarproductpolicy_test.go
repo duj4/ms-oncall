@@ -65,8 +65,12 @@ func newCalendarPolicyRuntime(t *testing.T) *calendarPolicyRuntime {
 			h.pool.Close()
 		}
 		var sessions int
-		require.NoError(t, control.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=$1`, name).Scan(&sessions))
-		require.Zero(t, sessions)
+		// Pool.Close closes client sockets; PostgreSQL may finish removing the
+		// corresponding backends just after it returns (notably after lock tests).
+		require.Eventually(t, func() bool {
+			err := control.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=$1`, name).Scan(&sessions)
+			return err == nil && sessions == 0
+		}, 5*time.Second, 10*time.Millisecond, "task-owned database connections must close before DROP")
 		_, err := control.Exec(ctx, "DROP DATABASE "+pgx.Identifier{name}.Sanitize())
 		require.NoError(t, err)
 		require.NoError(t, control.Close(ctx))

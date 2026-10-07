@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/alert/alertlog"
-	"github.com/target/goalert/event"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util"
@@ -42,8 +41,6 @@ type Store struct {
 	escalate *sql.Stmt
 	epState  *sql.Stmt
 	svcInfo  *sql.Stmt
-
-	evt *event.Bus
 }
 
 // A Trigger signals that an alert needs to be processed
@@ -51,7 +48,7 @@ type Trigger interface {
 	TriggerAlert(int)
 }
 
-func NewStore(ctx context.Context, db *sql.DB, logDB *alertlog.Store, evt *event.Bus) (*Store, error) {
+func NewStore(ctx context.Context, db *sql.DB, logDB *alertlog.Store) (*Store, error) {
 	prep := &util.Prepare{DB: db, Ctx: ctx}
 
 	p := prep.P
@@ -59,7 +56,6 @@ func NewStore(ctx context.Context, db *sql.DB, logDB *alertlog.Store, evt *event
 	return &Store{
 		db:    db,
 		logDB: logDB,
-		evt:   evt,
 
 		insert: p(`
 			INSERT INTO alerts (summary, details, service_id, source, status, dedup_key) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at
@@ -304,8 +300,6 @@ func (s *Store) EscalateAsOf(ctx context.Context, id int, t time.Time) error {
 		return fmt.Errorf("commit tx: %w", err)
 	}
 
-	event.Send(ctx, s.evt, EventAlertEscalated{AlertID: int64(id)})
-
 	return nil
 }
 
@@ -404,32 +398,17 @@ func (s *Store) UpdateStatusByServiceScoped(ctx context.Context, serviceID strin
 		return err
 	}
 
-	rows, err := tx.StmtContext(ctx, s.updateByStatusAndService).QueryContext(ctx, serviceID, status)
+	_, err = tx.StmtContext(ctx, s.updateByStatusAndService).ExecContext(ctx, serviceID, status)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = nil
 	}
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	var updatedIDs []int64
-	for rows.Next() {
-		var id int64
-		err = rows.Scan(&id)
-		if err != nil {
-			return err
-		}
-		updatedIDs = append(updatedIDs, id)
-	}
 
 	err = tx.Commit()
 	if err != nil {
 		return err
-	}
-
-	for _, id := range updatedIDs {
-		event.Send(ctx, s.evt, EventAlertStatusUpdate{AlertID: id, Status: status})
 	}
 
 	return nil
@@ -513,10 +492,6 @@ func (s *Store) UpdateManyAlertStatusScoped(ctx context.Context, status Status, 
 		return nil, err
 	}
 
-	for _, id := range updatedIDs {
-		event.Send(ctx, s.evt, EventAlertStatusUpdate{AlertID: int64(id), Status: status})
-	}
-
 	return updatedIDs, nil
 }
 
@@ -563,8 +538,6 @@ func (s *Store) CreateTxScoped(ctx context.Context, tx *sql.Tx, a *Alert, organi
 	ctx = log.WithFields(ctx, log.Fields{"AlertID": n.ID, "ServiceID": n.ServiceID})
 	log.Logf(ctx, "Alert created.")
 	metricCreatedTotal.WithLabelValues(n.ServiceID).Inc()
-
-	event.SendTx(ctx, s.evt, tx, EventAlertStatusUpdate{AlertID: int64(n.ID), Status: n.Status, Created: true})
 
 	return n, nil
 }
@@ -673,8 +646,6 @@ func (s *Store) CreateOrUpdateTxScoped(ctx context.Context, tx *sql.Tx, a *Alert
 		s.logDB.MustLogTx(ctx, tx, n.ID, logType, meta)
 	}
 
-	event.SendTx(ctx, s.evt, tx, EventAlertStatusUpdate{AlertID: int64(n.ID), Status: n.Status, Created: inserted})
-
 	return n, inserted, nil
 }
 
@@ -741,8 +712,6 @@ func (s *Store) createOrUpdate(ctx context.Context, a *Alert, meta map[string]st
 		metricCreatedTotal.WithLabelValues(n.ServiceID).Inc()
 	}
 
-	event.Send(ctx, s.evt, EventAlertStatusUpdate{AlertID: int64(n.ID), Status: n.Status, Created: isNew})
-
 	return n, isNew, nil
 }
 
@@ -756,7 +725,19 @@ func (s *Store) UpdateStatusTx(ctx context.Context, tx *sql.Tx, id int, stat Sta
 		return logError{isAlreadyClosed: true, alertID: id, _type: alertlog.TypeClosed, logDB: s.logDB}
 	}
 	if _stat == gadb.EnumAlertStatusActive && stat == StatusActive {
-		return logError{isAlreadyAcknowledged: true, alertID: id, _type: alertlog.TypeAcknowledged, logDB: s.logDB}
+		multiAck, err := gadb.New(tx).Alert_AlertMultiAck(ctx, int64(id))
+		if err != nil {
+			return err
+		}
+		if !multiAck {
+			return logError{isAlreadyAcknowledged: true, alertID: id, _type: alertlog.TypeAcknowledged, logDB: s.logDB}
+		}
+
+		// The alert is already acknowledged, but the current step is multi-ack,
+		// so we still want a record of who acknowledged and when. The status is
+		// unchanged, so return before the update below.
+		s.logDB.MustLogTx(ctx, tx, id, alertlog.TypeAcknowledged, nil)
+		return nil
 	}
 
 	_, err = tx.Stmt(s.update).ExecContext(ctx, id, stat)
@@ -771,8 +752,6 @@ func (s *Store) UpdateStatusTx(ctx context.Context, tx *sql.Tx, id int, stat Sta
 	} else if stat != StatusTriggered {
 		log.Log(ctx, errors.Errorf("unknown/unhandled alert status update: %s", stat))
 	}
-
-	event.SendTx(ctx, s.evt, tx, EventAlertStatusUpdate{AlertID: int64(id), Status: stat})
 
 	return nil
 }

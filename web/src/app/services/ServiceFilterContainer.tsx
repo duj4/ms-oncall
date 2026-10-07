@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { Ref } from 'react'
 import Grid from '@mui/material/Grid'
 import Typography from '@mui/material/Typography'
@@ -71,33 +72,37 @@ export default function ServiceFilterContainer(
           <i>Paste the ID/Token (or full URL/email) to search.</i>
         </Typography>
       </Grid>
-      <Grid item xs={12}>
-        <Typography color='textSecondary'>
-          <i>Search by Label</i>
-        </Typography>
-      </Grid>
-      <Grid data-cy='label-key-container' item xs={12}>
-        <LabelKeySelect
-          name='label-key'
-          label='Select Label Key'
-          value={labelKey}
-          onChange={(labelKey: string) =>
-            props.onChange({ ...props.value, labelKey })
-          }
-        />
-      </Grid>
-      <Grid data-cy='label-value-container' item xs={12}>
-        <LabelValueSelect
-          name='label-value'
-          label='Select Label Value'
-          labelKey={labelKey}
-          value={labelValue}
-          onChange={(v: string) =>
-            props.onChange({ ...props.value, labelValue: v || '' })
-          }
-          disabled={!labelKey}
-        />
-      </Grid>
+      {!labelsDisabled() && (
+        <React.Fragment>
+          <Grid item xs={12}>
+            <Typography color='textSecondary'>
+              <i>Search by Label</i>
+            </Typography>
+          </Grid>
+          <Grid data-cy='label-key-container' item xs={12}>
+            <LabelKeySelect
+              name='label-key'
+              label='Select Label Key'
+              value={labelKey}
+              onChange={(labelKey: string) =>
+                props.onChange({ ...props.value, labelKey })
+              }
+            />
+          </Grid>
+          <Grid data-cy='label-value-container' item xs={12}>
+            <LabelValueSelect
+              name='label-value'
+              label='Select Label Value'
+              labelKey={labelKey}
+              value={labelValue}
+              onChange={(v: string) =>
+                props.onChange({ ...props.value, labelValue: v || '' })
+              }
+              disabled={!labelKey}
+            />
+          </Grid>
+        </React.Fragment>
+      )}
     </FilterContainer>
   )
 }

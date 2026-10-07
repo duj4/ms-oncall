@@ -1,3 +1,4 @@
+import { withoutLabelUI } from '../util/labelProductPolicy'
 import React from 'react'
 import { gql, useMutation } from 'urql'
 import { nonFieldErrors } from '../util/errutil'
@@ -9,7 +10,7 @@ const mutation = gql`
   }
 `
 
-export default function ServiceLabelDeleteDialog(props: {
+function ServiceLabelDeleteDialog(props: {
   serviceID: string
   labelKey: string
   onClose: () => void
@@ -47,3 +48,5 @@ export default function ServiceLabelDeleteDialog(props: {
     />
   )
 }
+
+export default withoutLabelUI(ServiceLabelDeleteDialog)

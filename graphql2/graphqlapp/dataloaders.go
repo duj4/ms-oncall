@@ -2,6 +2,7 @@ package graphqlapp
 
 import (
 	context "context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -95,8 +96,14 @@ func (a *App) registerLoaders(ctx context.Context) context.Context {
 			}
 			return a.ServiceStore.FindMany(ctx, ids, organizationID)
 		}, func(s service.Service) string { return s.ID }),
-		User:                      dataloader.NewStoreLoader(ctx, a.UserStore.FindMany, func(u user.User) string { return u.ID }),
-		CM:                        dataloader.NewStoreLoaderWithDB(ctx, a.DB, a.CMStore.FindMany, func(cm contactmethod.ContactMethod) string { return cm.ID.String() }),
+		User: dataloader.NewStoreLoader(ctx, a.UserStore.FindMany, func(u user.User) string { return u.ID }),
+		CM: dataloader.NewStoreLoaderWithDB(ctx, a.DB, func(ctx context.Context, db gadb.DBTX, ids []string) ([]contactmethod.ContactMethod, error) {
+			org, err := rootStoreOrganizationID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return a.CMStore.FindMany(ctx, db, ids, org)
+		}, func(cm contactmethod.ContactMethod) string { return cm.ID.String() }),
 		Heartbeat:                 dataloader.NewStoreLoader(ctx, a.HeartbeatStore.FindMany, func(hb heartbeat.Monitor) string { return hb.ID }),
 		NotificationMessageStatus: dataloader.NewStoreLoader(ctx, a.NotificationStore.FindManyMessageStatuses, func(n notification.SendResult) string { return n.ID }),
 		NC:                        dataloader.NewStoreLoader(ctx, a.NCStore.FindMany, func(nc notificationchannel.Channel) string { return nc.ID.String() }),
@@ -331,13 +338,28 @@ func (app *App) FindOneAlertMetric(ctx context.Context, id int) (*alertmetrics.M
 }
 
 // FindOneCM will return a single contact method for the given id, using the contexts dataloader if enabled.
-func (app *App) FindOneCM(ctx context.Context, id uuid.UUID) (*contactmethod.ContactMethod, error) {
+func (app *App) FindOneCM(ctx context.Context, id uuid.UUID) (cm *contactmethod.ContactMethod, err error) {
 	loader := loadersFrom(ctx).CM
 	if loader == nil {
-		return app.CMStore.FindOne(ctx, app.DB, id)
+		org, scopeErr := rootStoreOrganizationID(ctx)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		cm, err = app.CMStore.FindOne(ctx, app.DB, id, org)
+	} else {
+		cm, err = loader.FetchOne(ctx, id.String())
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cm == nil {
+		return nil, nil
 	}
 
-	return loader.FetchOne(ctx, id.String())
+	return cm, nil
 }
 
 // FindOneNC will return a single notification channel for the given id, using the contexts dataloader if enabled.

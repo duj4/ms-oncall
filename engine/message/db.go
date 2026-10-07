@@ -15,6 +15,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/lock"
 	"github.com/target/goalert/notification"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
 	"github.com/target/goalert/util"
@@ -442,6 +443,9 @@ func (db *DB) _UpdateMessageStatus(ctx context.Context, status *notification.Sen
 	if err != nil {
 		return err
 	}
+	safeStatus := *status
+	safeStatus.Details = nfymsg.DiagnosticText(status.Details)
+	status = &safeStatus
 	var cbID sql.NullString
 	if status.ID != "" {
 		cbID.Valid = true
@@ -794,6 +798,11 @@ func (db *DB) sendMessage(ctx context.Context, cLock *processinglock.Conn, send 
 	var status *notification.SendResult
 	err = retry.DoTemporaryError(func(int) error {
 		status, err = send(sCtx, m)
+		if status != nil {
+			safeStatus := *status
+			safeStatus.Details = nfymsg.DiagnosticText(status.Details)
+			status = &safeStatus
+		}
 		return err
 	},
 		retry.Log(ctx),

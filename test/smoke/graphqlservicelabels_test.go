@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
@@ -12,6 +13,9 @@ import (
 // edited and deleted.
 
 func TestGraphQLServiceLabels(t *testing.T) {
+	if config.LabelsDisabled() {
+		t.Skip("MS OnCall Labels are NOT_CURRENT_PRODUCT_SCOPE / MUST REMAIN DISABLED; retained historical enabled-mode coverage")
+	}
 	t.Parallel()
 
 	// Insert initial one label into db
@@ -23,9 +27,9 @@ func TestGraphQLServiceLabels(t *testing.T) {
 	values
 		({{uuid "sid"}}, {{uuid "eid"}}, 'service', {{smokeOrganizationID}});
 
-	insert into labels (id, tgt_service_id, key, value) 
+	insert into labels (tgt_service_id, key, value)
 	values
-		('1', {{uuid "sid"}}, 'foo/bar', 'testvalue');
+		({{uuid "sid"}}, 'foo/bar', 'testvalue');
 `
 
 	h := harness.NewHarness(t, sql, "ms-oncall-resource-root-organization-ownership-persistence-v1")

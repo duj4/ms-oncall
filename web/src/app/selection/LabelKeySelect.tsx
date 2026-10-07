@@ -1,3 +1,4 @@
+import { withoutLabelUI } from '../util/labelProductPolicy'
 import { gql } from 'urql'
 import { makeQuerySelect } from './QuerySelect'
 
@@ -9,7 +10,9 @@ const query = gql`
   }
 `
 
-export const LabelKeySelect = makeQuerySelect('LabelKeySelect', {
-  query,
-  mapDataNode: (key: string) => ({ label: key, value: key }),
-})
+export const LabelKeySelect = withoutLabelUI(
+  makeQuerySelect('LabelKeySelect', {
+    query,
+    mapDataNode: (key: string) => ({ label: key, value: key }),
+  }),
+)

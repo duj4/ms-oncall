@@ -1,3 +1,4 @@
+import { labelsDisabled } from '../util/labelProductPolicy'
 import React from 'react'
 import Grid from '@mui/material/Grid'
 import TextField from '@mui/material/TextField'
@@ -97,7 +98,8 @@ export default function ServiceForm(props: ServiceFormProps): JSX.Element {
             component={EscalationPolicySelect}
           />
         </Grid>
-        {reqLabels &&
+        {!labelsDisabled() &&
+          reqLabels &&
           reqLabels.map((labelName: string, idx: number) => (
             <Grid item xs={12} key={labelName}>
               <FormField

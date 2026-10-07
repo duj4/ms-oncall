@@ -3,9 +3,12 @@ package graphqlapp
 import (
 	context "context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/expflag"
+	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/keyring"
 	"github.com/target/goalert/permission"
@@ -31,6 +34,55 @@ func (a *Mutation) ReEncryptKeyringsAndConfig(ctx context.Context) (bool, error)
 	}
 
 	err = keyring.ReEncryptAll(ctx, a.DB, a.EncryptionKeys)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (a *Mutation) SendSignal(ctx context.Context, input graphql2.SendSignalInput) (bool, error) {
+	err := permission.LimitCheckAny(ctx, permission.User)
+	if err != nil {
+		return false, err
+	}
+
+	if !expflag.ContextHas(ctx, expflag.UnivKeys) {
+		return false, errors.New("feature not enabled")
+	}
+
+	svcID, err := validate.ParseUUID("ServiceID", input.ServiceID)
+	if err != nil {
+		return false, err
+	}
+
+	organizationID, err := rootStoreOrganizationID(ctx)
+	if err != nil {
+		return false, err
+	}
+	if organizationID != nil {
+		// A Service ID is only a locator. Authorize before MapDestToID,
+		// which already writes notification-channel destination state.
+		if _, err := a.ServiceStore.FindOne(ctx, input.ServiceID, organizationID); err != nil {
+			return false, err
+		}
+	}
+
+	destID, err := a.NCStore.MapDestToID(ctx, a.DB, *input.Dest)
+	if err != nil {
+		return false, err
+	}
+
+	data, err := json.Marshal(input.Params)
+	if err != nil {
+		return false, err
+	}
+
+	err = gadb.New(a.DB).IntKeyInsertSignalMessage(ctx, gadb.IntKeyInsertSignalMessageParams{
+		DestID:    destID,
+		ServiceID: svcID,
+		Params:    data,
+	})
 	if err != nil {
 		return false, err
 	}
@@ -193,7 +245,18 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 }
 
 func (a *Mutation) TestContactMethod(ctx context.Context, id string) (bool, error) {
-	err := a.NotificationStore.SendContactMethodTest(ctx, id)
+	cmID, err := validate.ParseUUID("ContactMethodID", id)
+	if err != nil {
+		return false, err
+	}
+	cm, err := (*App)(a).FindOneCM(ctx, cmID)
+	if err != nil {
+		return false, err
+	}
+	if cm == nil {
+		return false, validation.NewGenericError("contact method not found")
+	}
+	err = a.NotificationStore.SendContactMethodTest(ctx, id)
 	if err != nil {
 		return false, err
 	}

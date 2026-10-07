@@ -1,3 +1,4 @@
+import { withoutLabelUI } from '../util/labelProductPolicy'
 import React, { useState } from 'react'
 import { gql, useMutation } from 'urql'
 import { fieldErrors, nonFieldErrors } from '../util/errutil'
@@ -16,7 +17,7 @@ interface ServiceLabelCreateDialogProps {
   onClose: () => void
 }
 
-export default function ServiceLabelCreateDialog(
+function ServiceLabelCreateDialog(
   props: ServiceLabelCreateDialogProps,
 ): JSX.Element {
   const [value, setValue] = useState<Label>({ key: '', value: '' })
@@ -53,3 +54,5 @@ export default function ServiceLabelCreateDialog(
     />
   )
 }
+
+export default withoutLabelUI(ServiceLabelCreateDialog)

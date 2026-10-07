@@ -5,6 +5,7 @@ import {
   InputAdornment,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
   ListItemIcon,
   Paper,
@@ -73,6 +74,7 @@ export interface CreateAlertServiceSelectProps {
   value: string[]
   onChange: (val: string[]) => void
   error?: Error
+  only?: string[]
 }
 
 export function CreateAlertServiceSelect(
@@ -94,6 +96,7 @@ export function CreateAlertServiceSelect(
         favoritesFirst: true,
         omit: value,
         first: 15,
+        only: props.only,
       },
     },
   })
@@ -126,7 +129,8 @@ export function CreateAlertServiceSelect(
     return () => clearTimeout(t)
   }, [searchUserInput])
 
-  const { labelKey, labelValue } = getServiceFilters(searchUserInput)
+  const { labelKey, labelValue, integrationKey } =
+    getServiceFilters(searchUserInput)
 
   const addAll = (e: MouseEvent<HTMLButtonElement>): void => {
     e.stopPropagation()
@@ -212,12 +216,18 @@ export function CreateAlertServiceSelect(
                   />
                 )}
               <ServiceLabelFilterContainer
-                value={{ labelKey, labelValue }}
-                onChange={({ labelKey, labelValue }) =>
+                value={{ labelKey, labelValue, integrationKey }}
+                onChange={({ labelKey, labelValue, integrationKey }) => {
+                  const labelSearch = labelKey
+                    ? `${labelKey}=${labelValue}`
+                    : ''
+                  const keySearch = integrationKey
+                    ? `token=${integrationKey}`
+                    : ''
                   setSearchUserInput(
-                    labelKey ? `${labelKey}=${labelValue}` : '',
+                    [keySearch, labelSearch].filter(Boolean).join(' '),
                   )
-                }
+                }}
                 onReset={() => setSearchUserInput('')}
                 anchorRef={fieldRef}
               />
@@ -234,8 +244,7 @@ export function CreateAlertServiceSelect(
               </ListItem>
             )}
             {searchResults.map((service: Service) => (
-              <ListItem
-                button
+              <ListItemButton
                 data-cy='service-select-item'
                 key={service.id}
                 disabled={value.length >= CREATE_ALERT_LIMIT}
@@ -252,7 +261,7 @@ export function CreateAlertServiceSelect(
                     <FavoriteIcon />
                   </ListItemIcon>
                 )}
-              </ListItem>
+              </ListItemButton>
             ))}
 
             {Boolean(placeholderMsg) && (

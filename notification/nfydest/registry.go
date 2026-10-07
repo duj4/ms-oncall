@@ -2,10 +2,12 @@ package nfydest
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
 	"github.com/target/goalert/gadb"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/validation"
 )
 
@@ -14,6 +16,29 @@ var (
 	ErrUnsupported = errors.New("unsupported operation")
 	ErrNotEnabled  = validation.NewGenericError("destination type is not enabled")
 )
+
+func providerError(err error) error {
+	// Preserve Registry capability sentinels without retaining provider text.
+	for _, sentinel := range []error{ErrUnknownType, ErrUnsupported, ErrNotEnabled, sql.ErrNoRows} {
+		if errors.Is(err, sentinel) {
+			return sentinel
+		}
+	}
+	return nfymsg.ProviderError(err)
+}
+
+func contactProviderError(ctx context.Context, p Provider, err error) error {
+	if err == nil {
+		return nil
+	}
+	info, infoErr := p.TypeInfo(ctx)
+	if infoErr == nil && !info.IsContactMethod() {
+		// Root-resource/signal validation and display diagnostics are outside
+		// Contact Method privacy. Preserve their established error contracts.
+		return err
+	}
+	return providerError(err)
+}
 
 type Registry struct {
 	providers map[string]Provider
@@ -80,7 +105,8 @@ func (r *Registry) DisplayInfo(ctx context.Context, d gadb.DestV1) (*DisplayInfo
 		return nil, ErrUnknownType
 	}
 
-	return p.DisplayInfo(ctx, d.Args)
+	info, err := p.DisplayInfo(ctx, d.Args)
+	return info, contactProviderError(ctx, p, err)
 }
 
 func (r *Registry) ValidateField(ctx context.Context, typeID, fieldID, value string) error {
@@ -89,7 +115,7 @@ func (r *Registry) ValidateField(ctx context.Context, typeID, fieldID, value str
 		return ErrUnknownType
 	}
 
-	return p.ValidateField(ctx, fieldID, value)
+	return contactProviderError(ctx, p, p.ValidateField(ctx, fieldID, value))
 }
 
 func (r *Registry) Types(ctx context.Context) ([]TypeInfo, error) {
@@ -118,7 +144,8 @@ func (r *Registry) SearchField(ctx context.Context, typeID, fieldID string, opti
 		return nil, fmt.Errorf("provider %s does not support field searching: %w", typeID, ErrUnsupported)
 	}
 
-	return s.SearchField(ctx, fieldID, options)
+	result, err := s.SearchField(ctx, fieldID, options)
+	return result, contactProviderError(ctx, p, err)
 }
 
 func (r *Registry) FieldLabel(ctx context.Context, typeID, fieldID, value string) (string, error) {
@@ -132,5 +159,6 @@ func (r *Registry) FieldLabel(ctx context.Context, typeID, fieldID, value string
 		return "", fmt.Errorf("provider %s does not support field searching: %w", typeID, ErrUnsupported)
 	}
 
-	return s.FieldLabel(ctx, fieldID, value)
+	label, err := s.FieldLabel(ctx, fieldID, value)
+	return label, contactProviderError(ctx, p, err)
 }

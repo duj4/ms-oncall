@@ -90,7 +90,7 @@ func (msg *Message) messageStatus() *notification.Status {
 
 	var status notification.Status
 	if msg.ErrorMessage != nil && msg.ErrorCode != nil {
-		status.Details = fmt.Sprintf("%s: [%d] %s", msg.Status, *msg.ErrorCode, *msg.ErrorMessage)
+		status.Details = fmt.Sprintf("%s: [%d]", msg.Status, *msg.ErrorCode)
 	} else {
 		status.Details = string(msg.Status)
 	}

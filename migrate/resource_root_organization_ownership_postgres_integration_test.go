@@ -35,8 +35,8 @@ func TestPostgresResourceRootOrganizationOwnershipMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	position280 := history.entries[len(history.entries)-2]
-	position281 := history.latest()
+	position280 := history.entries[280-1]
+	position281 := history.entries[281-1]
 	if position280.Position != 280 || position281.Position != 281 {
 		t.Fatalf("unexpected ownership migration boundary: position280=%#v position281=%#v", position280, position281)
 	}
@@ -131,10 +131,10 @@ func TestPostgresResourceRootOrganizationOwnershipMigration(t *testing.T) {
 
 	t.Run("safe empty Down and populated refusal", func(t *testing.T) {
 		testURL := newPostgresTestDatabase(t, baseURL)
-		if count, err := Up(ctx, testURL, ""); err != nil {
+		if count, err := Up(ctx, testURL, position281.Name); err != nil {
 			t.Fatal(err)
-		} else if count != len(history.entries) {
-			t.Fatalf("clean chain applied %d migrations, want %d", count, len(history.entries))
+		} else if count != int(position281.Position) {
+			t.Fatalf("clean chain applied %d migrations, want %d", count, int(position281.Position))
 		}
 		if count, err := Down(ctx, testURL, position280.Name); err != nil {
 			t.Fatal(err)
@@ -181,6 +181,11 @@ func TestPostgresResourceRootOrganizationOwnershipMigration(t *testing.T) {
 		}
 		assertResourceRootOwnershipSchema(t, ctx, testURL, true)
 		assertResourceRootOwnershipProvenance(t, ctx, testURL, position281, true)
+		if count, err := Up(ctx, testURL, ""); err != nil {
+			t.Fatal(err)
+		} else if count != len(history.entries)-int(position281.Position) {
+			t.Fatalf("post-refusal upgrade applied %d migrations, want %d", count, len(history.entries)-int(position281.Position))
+		}
 		if err := VerifyAll(ctx, testURL); err != nil {
 			t.Fatal(err)
 		}
@@ -190,8 +195,8 @@ func TestPostgresResourceRootOrganizationOwnershipMigration(t *testing.T) {
 		testURL := newPostgresTestDatabase(t, baseURL)
 		if count, err := Up(ctx, testURL, position281.Name); err != nil {
 			t.Fatal(err)
-		} else if count != len(history.entries) {
-			t.Fatalf("position-281 setup applied %d migrations, want %d", count, len(history.entries))
+		} else if count != int(position281.Position) {
+			t.Fatalf("position-281 setup applied %d migrations, want %d", count, int(position281.Position))
 		}
 
 		insertConn, err := pgx.Connect(ctx, testURL)
@@ -301,6 +306,11 @@ func TestPostgresResourceRootOrganizationOwnershipMigration(t *testing.T) {
 		}
 		assertResourceRootOwnershipSchema(t, ctx, testURL, true)
 		assertResourceRootOwnershipProvenance(t, ctx, testURL, position281, true)
+		if count, err := Up(ctx, testURL, ""); err != nil {
+			t.Fatal(err)
+		} else if count != len(history.entries)-int(position281.Position) {
+			t.Fatalf("post-refusal upgrade applied %d migrations, want %d", count, len(history.entries)-int(position281.Position))
+		}
 		if err := VerifyAll(ctx, testURL); err != nil {
 			t.Fatal(err)
 		}

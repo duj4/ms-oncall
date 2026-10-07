@@ -2012,6 +2012,7 @@ func (conn *gatewayRotationStoreTestConn) QueryContext(
 		[]byte("{}"),
 		"test-only",
 		false,
+		false,
 		"WEBHOOK",
 		"123e4567-e89b-12d3-a456-426614174088",
 		"",
@@ -2087,7 +2088,7 @@ type gatewayRotationStoreTestRows struct {
 func (*gatewayRotationStoreTestRows) Columns() []string {
 	return []string{
 		"dest", "disabled", "enable_status_updates", "id", "last_test_verify_at", "metadata",
-		"name", "pending", "type", "user_id", "value",
+		"name", "pending", "private", "type", "user_id", "value",
 	}
 }
 

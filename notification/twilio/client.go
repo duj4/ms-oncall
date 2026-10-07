@@ -14,6 +14,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/notification"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/util/log"
 )
 
@@ -100,7 +101,8 @@ func (c *Config) get(ctx context.Context, urlStr string) (*http.Response, error)
 	req.SetBasicAuth(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-	return c.httpClient().Do(req)
+	resp, err := c.httpClient().Do(req)
+	return resp, nfymsg.ProviderError(err)
 }
 
 func (c *Config) post(ctx context.Context, urlStr string, v url.Values) (*http.Response, error) {
@@ -113,7 +115,8 @@ func (c *Config) post(ctx context.Context, urlStr string, v url.Values) (*http.R
 	req.Header.Set("X-Twilio-Signature", string(Signature(cfg.Twilio.AuthToken, urlStr, v)))
 	req.SetBasicAuth(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	return c.httpClient().Do(req)
+	resp, err := c.httpClient().Do(req)
+	return resp, nfymsg.ProviderError(err)
 }
 
 // GetSMS will return the current state of a Message from Twilio.

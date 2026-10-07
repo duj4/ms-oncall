@@ -209,6 +209,7 @@ type CreateEscalationPolicyInput struct {
 	Repeat      *int                              `json:"repeat,omitempty"`
 	Favorite    *bool                             `json:"favorite,omitempty"`
 	Steps       []CreateEscalationPolicyStepInput `json:"steps,omitempty"`
+	Labels      []SetLabelInput                   `json:"labels,omitempty"`
 }
 
 type CreateEscalationPolicyStepInput struct {
@@ -218,6 +219,7 @@ type CreateEscalationPolicyStepInput struct {
 	NewRotation        *CreateRotationInput   `json:"newRotation,omitempty"`
 	NewSchedule        *CreateScheduleInput   `json:"newSchedule,omitempty"`
 	Actions            []gadb.DestV1          `json:"actions,omitempty"`
+	MultiAck           *bool                  `json:"multiAck,omitempty"`
 }
 
 type CreateGQLAPIKeyInput struct {
@@ -249,14 +251,15 @@ type CreateIntegrationKeyInput struct {
 }
 
 type CreateRotationInput struct {
-	Name        string        `json:"name"`
-	Description *string       `json:"description,omitempty"`
-	TimeZone    string        `json:"timeZone"`
-	Start       time.Time     `json:"start"`
-	Favorite    *bool         `json:"favorite,omitempty"`
-	Type        rotation.Type `json:"type"`
-	ShiftLength *int          `json:"shiftLength,omitempty"`
-	UserIDs     []string      `json:"userIDs,omitempty"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description,omitempty"`
+	TimeZone    string          `json:"timeZone"`
+	Start       time.Time       `json:"start"`
+	Favorite    *bool           `json:"favorite,omitempty"`
+	Type        rotation.Type   `json:"type"`
+	ShiftLength *int            `json:"shiftLength,omitempty"`
+	UserIDs     []string        `json:"userIDs,omitempty"`
+	Labels      []SetLabelInput `json:"labels,omitempty"`
 }
 
 type CreateScheduleInput struct {
@@ -266,6 +269,7 @@ type CreateScheduleInput struct {
 	Favorite         *bool                     `json:"favorite,omitempty"`
 	Targets          []ScheduleTargetInput     `json:"targets,omitempty"`
 	NewUserOverrides []CreateUserOverrideInput `json:"newUserOverrides,omitempty"`
+	Labels           []SetLabelInput           `json:"labels,omitempty"`
 }
 
 type CreateServiceInput struct {
@@ -299,6 +303,8 @@ type CreateUserContactMethodInput struct {
 	//
 	// Note: Some contact method types, like Slack, will always receive status updates and this value is ignored.
 	EnableStatusUpdates *bool `json:"enableStatusUpdates,omitempty"`
+	// If true, this contact method will be private and only visible to the user.
+	Private *bool `json:"private,omitempty"`
 }
 
 type CreateUserInput struct {
@@ -687,6 +693,12 @@ type SendContactMethodVerificationInput struct {
 	ContactMethodID string `json:"contactMethodID"`
 }
 
+type SendSignalInput struct {
+	Dest      *gadb.DestV1      `json:"dest"`
+	ServiceID string            `json:"serviceID"`
+	Params    map[string]string `json:"params,omitempty"`
+}
+
 type ServiceAlertStatsOptions struct {
 	Start     *time.Time         `json:"start,omitempty"`
 	End       *time.Time         `json:"end,omitempty"`
@@ -847,6 +859,7 @@ type UpdateEscalationPolicyStepInput struct {
 	DelayMinutes *int                   `json:"delayMinutes,omitempty"`
 	Targets      []assignment.RawTarget `json:"targets,omitempty"`
 	Actions      []gadb.DestV1          `json:"actions,omitempty"`
+	MultiAck     *bool                  `json:"multiAck,omitempty"`
 }
 
 type UpdateGQLAPIKeyInput struct {
@@ -926,6 +939,8 @@ type UpdateUserContactMethodInput struct {
 	//
 	// Note: Some contact method types, like Slack, will always receive status updates and this value is ignored.
 	EnableStatusUpdates *bool `json:"enableStatusUpdates,omitempty"`
+	// If true, this contact method will be private and only visible to the user.
+	Private *bool `json:"private,omitempty"`
 }
 
 type UpdateUserInput struct {

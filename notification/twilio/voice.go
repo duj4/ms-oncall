@@ -19,6 +19,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/notification"
 	"github.com/target/goalert/notification/nfydest"
+	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
 	"github.com/target/goalert/util/log"
@@ -181,8 +182,8 @@ func (v *Voice) SendMessage(ctx context.Context, msg notification.Message) (*not
 		return nil, errors.New("refusing to make outgoing call to FromNumber")
 	}
 	ctx = log.WithFields(ctx, log.Fields{
-		"Number": toNumber,
-		"Type":   "TwilioVoice",
+
+		"Type": "TwilioVoice",
 	})
 
 	opts := &VoiceOptions{
@@ -234,10 +235,10 @@ func (v *Voice) ServeStatusCallback(w http.ResponseWriter, req *http.Request) {
 	}
 
 	ctx = log.WithFields(ctx, log.Fields{
-		"Status": status,
+		"Status": nfymsg.DiagnosticText(string(status)),
 		"SID":    sid,
-		"Phone":  number,
-		"Type":   "TwilioVoice",
+
+		"Type": "TwilioVoice",
 	})
 
 	if status == CallStatusFailed && req.FormValue("SipResponseCode") == "480" {
@@ -388,10 +389,9 @@ func (v *Voice) getCall(w http.ResponseWriter, req *http.Request) (context.Conte
 	q.Del("retry_digits")
 
 	ctx = log.WithFields(ctx, log.Fields{
-		"SID":    callSID,
-		"Phone":  phoneNumber,
-		"Digits": digits,
-		"Type":   "TwilioVoice",
+		"SID": callSID,
+
+		"Type": "TwilioVoice",
 	})
 
 	errResp := func(userErr bool, err error, msg string) bool {

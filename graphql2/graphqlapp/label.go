@@ -13,6 +13,10 @@ import (
 )
 
 func (q *Query) LabelKeys(ctx context.Context, input *graphql2.LabelKeySearchOptions) (conn *graphql2.StringConnection, err error) {
+	if config.LabelsDisabled() {
+		return nil, label.ErrDisabled
+	}
+
 	if input == nil {
 		input = &graphql2.LabelKeySearchOptions{}
 	}
@@ -71,6 +75,10 @@ func (q *Query) LabelKeys(ctx context.Context, input *graphql2.LabelKeySearchOpt
 }
 
 func (q *Query) LabelValues(ctx context.Context, input *graphql2.LabelValueSearchOptions) (conn *graphql2.StringConnection, err error) {
+	if config.LabelsDisabled() {
+		return nil, label.ErrDisabled
+	}
+
 	if input == nil {
 		input = &graphql2.LabelValueSearchOptions{}
 	}
@@ -130,6 +138,10 @@ func (q *Query) LabelValues(ctx context.Context, input *graphql2.LabelValueSearc
 }
 
 func (q *Query) Labels(ctx context.Context, input *graphql2.LabelSearchOptions) (conn *graphql2.LabelConnection, err error) {
+	if config.LabelsDisabled() {
+		return nil, label.ErrDisabled
+	}
+
 	if input == nil {
 		input = &graphql2.LabelSearchOptions{}
 	}
@@ -153,6 +165,10 @@ func (q *Query) Labels(ctx context.Context, input *graphql2.LabelSearchOptions) 
 	return conn, nil
 }
 func (m *Mutation) SetLabel(ctx context.Context, input graphql2.SetLabelInput) (bool, error) {
+	if config.LabelsDisabled() {
+		return false, label.ErrDisabled
+	}
+
 	err := withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		if err := permission.LimitCheckAny(ctx, permission.System, permission.User); err != nil {
 			return err

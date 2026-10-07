@@ -2,6 +2,7 @@ package contactmethod
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 
 	"github.com/google/uuid"
@@ -62,18 +63,17 @@ func (s *Store) SetCarrierV1MetadataByDest(ctx context.Context, dbtx gadb.DBTX, 
 	return nil
 }
 
-func (s *Store) FindDestByID(ctx context.Context, tx gadb.DBTX, id uuid.UUID) (gadb.DestV1, error) {
+func (s *Store) FindDestByID(ctx context.Context, tx gadb.DBTX, id uuid.UUID, scope ...*uuid.UUID) (gadb.DestV1, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return gadb.DestV1{}, err
 	}
 
-	row, err := gadb.New(tx).ContactMethodFineOne(ctx, id)
+	cm, err := s.FindOne(ctx, tx, id, scope...)
 	if err != nil {
 		return gadb.DestV1{}, err
 	}
-
-	return row.Dest.DestV1, nil
+	return cm.Dest, nil
 }
 
 func (s *Store) EnableByDest(ctx context.Context, dbtx gadb.DBTX, dest gadb.DestV1) error {
@@ -123,12 +123,15 @@ func (s *Store) DisableByDest(ctx context.Context, dbtx gadb.DBTX, dest gadb.Des
 }
 
 // CreateTx inserts the new ContactMethod into the database. A new ID is always created.
-func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod) (*ContactMethod, error) {
+func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod, scope ...*uuid.UUID) (*ContactMethod, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.Admin, permission.MatchUser(c.UserID))
 	if err != nil {
 		return nil, err
 	}
 
+	if err := s.AuthorizeUser(ctx, dbtx, c.UserID, scope...); err != nil {
+		return nil, err
+	}
 	n, err := c.Normalize(ctx, s.reg)
 	if err != nil {
 		return nil, err
@@ -141,12 +144,13 @@ func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod) (*
 		Disabled:            n.Disabled,
 		UserID:              uuid.MustParse(n.UserID),
 		EnableStatusUpdates: n.StatusUpdates,
+		Private:             n.Private,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return n, nil
+	return n.forViewer(ctx), nil
 }
 
 // Delete removes the ContactMethod from the database using the provided ID within a transaction.
@@ -190,33 +194,22 @@ func (s *Store) Delete(ctx context.Context, dbtx gadb.DBTX, ids ...string) error
 }
 
 // FindOneTx finds the contact method from the database using the provided ID within a transaction.
-func (s *Store) FindOne(ctx context.Context, dbtx gadb.DBTX, id uuid.UUID) (*ContactMethod, error) {
-	err := permission.LimitCheckAny(ctx, permission.All)
+func (s *Store) FindOne(ctx context.Context, dbtx gadb.DBTX, id uuid.UUID, scope ...*uuid.UUID) (*ContactMethod, error) {
+	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+		return nil, err
+	}
+	cms, err := s.read(ctx, dbtx, []uuid.UUID{id}, uuid.NullUUID{}, scope)
 	if err != nil {
 		return nil, err
 	}
-
-	row, err := gadb.New(dbtx).ContactMethodFindOneUpdate(ctx, id)
-	if err != nil {
-		return nil, err
+	if len(cms) == 0 {
+		return nil, sql.ErrNoRows
 	}
-
-	c := ContactMethod{
-		ID:               row.ID,
-		Name:             row.Name,
-		Dest:             row.Dest.DestV1,
-		Disabled:         row.Disabled,
-		UserID:           row.UserID.String(),
-		Pending:          row.Pending,
-		StatusUpdates:    row.EnableStatusUpdates,
-		lastTestVerifyAt: row.LastTestVerifyAt,
-	}
-
-	return &c, nil
+	return &cms[0], nil
 }
 
 // UpdateTx updates the contact method with the newly provided values within a transaction.
-func (s *Store) Update(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod) error {
+func (s *Store) Update(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod, scope ...*uuid.UUID) error {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
 		return err
@@ -227,7 +220,7 @@ func (s *Store) Update(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod) er
 		return err
 	}
 
-	cm, err := s.FindOne(ctx, dbtx, c.ID)
+	cm, err := s.FindOneForUpdate(ctx, dbtx, c.ID, scope...)
 	if err != nil {
 		return err
 	}
@@ -238,8 +231,12 @@ func (s *Store) Update(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod) er
 		return validation.NewFieldError("UserID", "cannot update owner of contact method")
 	}
 
+	if n.Private != cm.Private && !permission.System(ctx) && cm.UserID != permission.UserID(ctx) {
+		return permission.NewAccessDenied("only the Contact Method owner can change privacy")
+	}
+
 	if permission.Admin(ctx) {
-		err = gadb.New(dbtx).ContactMethodUpdate(ctx, gadb.ContactMethodUpdateParams{ID: n.ID, Name: n.Name, Disabled: n.Disabled, EnableStatusUpdates: n.StatusUpdates})
+		err = gadb.New(dbtx).ContactMethodUpdate(ctx, gadb.ContactMethodUpdateParams{ID: n.ID, Name: n.Name, Disabled: n.Disabled, EnableStatusUpdates: n.StatusUpdates, Private: n.Private})
 		return err
 	}
 
@@ -248,75 +245,32 @@ func (s *Store) Update(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod) er
 		return err
 	}
 
-	err = gadb.New(dbtx).ContactMethodUpdate(ctx, gadb.ContactMethodUpdateParams{ID: n.ID, Name: n.Name, Disabled: n.Disabled, EnableStatusUpdates: n.StatusUpdates})
+	err = gadb.New(dbtx).ContactMethodUpdate(ctx, gadb.ContactMethodUpdateParams{ID: n.ID, Name: n.Name, Disabled: n.Disabled, EnableStatusUpdates: n.StatusUpdates, Private: n.Private})
 
 	return err
 }
 
 // FindMany will fetch all contact methods matching the given ids.
-func (s *Store) FindMany(ctx context.Context, dbtx gadb.DBTX, ids []string) ([]ContactMethod, error) {
+func (s *Store) FindMany(ctx context.Context, dbtx gadb.DBTX, ids []string, scope ...*uuid.UUID) ([]ContactMethod, error) {
 	uids, err := validate.ParseManyUUID("ContactMethodID", ids, 50)
 	if err != nil {
 		return nil, err
 	}
-
-	err = permission.LimitCheckAny(ctx, permission.User)
-	if err != nil {
+	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
 		return nil, err
 	}
-
-	rows, err := gadb.New(dbtx).ContactMethodFindMany(ctx, uids)
-	if err != nil {
-		return nil, err
-	}
-
-	cms := make([]ContactMethod, len(rows))
-	for i, row := range rows {
-		cms[i] = ContactMethod{
-			ID:               row.ID,
-			Name:             row.Name,
-			Dest:             row.Dest.DestV1,
-			Disabled:         row.Disabled,
-			UserID:           row.UserID.String(),
-			Pending:          row.Pending,
-			StatusUpdates:    row.EnableStatusUpdates,
-			lastTestVerifyAt: row.LastTestVerifyAt,
-		}
-	}
-
-	return cms, nil
+	return s.read(ctx, dbtx, uids, uuid.NullUUID{}, scope)
 }
 
-// FindAll finds all contact methods from the database associated with the given user ID.
-func (s *Store) FindAll(ctx context.Context, dbtx gadb.DBTX, userID string) ([]ContactMethod, error) {
-	uid, err := validate.ParseUUID("ContactMethodID", userID)
+// FindAll returns authorized metadata with owner-only private arguments.
+func (s *Store) FindAll(ctx context.Context, dbtx gadb.DBTX, userID string, scope ...*uuid.UUID) ([]ContactMethod, int, error) {
+	uid, err := validate.ParseUUID("UserID", userID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-
-	err = permission.LimitCheckAny(ctx, permission.All)
-	if err != nil {
-		return nil, err
+	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+		return nil, 0, err
 	}
-
-	rows, err := gadb.New(dbtx).ContactMethodFindAll(ctx, uid)
-	if err != nil {
-		return nil, err
-	}
-
-	cms := make([]ContactMethod, len(rows))
-	for i, row := range rows {
-		cms[i] = ContactMethod{
-			ID:               row.ID,
-			Name:             row.Name,
-			Dest:             row.Dest.DestV1,
-			Disabled:         row.Disabled,
-			UserID:           row.UserID.String(),
-			Pending:          row.Pending,
-			StatusUpdates:    row.EnableStatusUpdates,
-			lastTestVerifyAt: row.LastTestVerifyAt,
-		}
-	}
-
-	return cms, nil
+	cms, err := s.read(ctx, dbtx, nil, uuid.NullUUID{UUID: uid, Valid: true}, scope)
+	return cms, 0, err
 }

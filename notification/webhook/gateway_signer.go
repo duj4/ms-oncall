@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -120,8 +121,10 @@ type GatewayCredentialSource interface {
 	GatewayCredential(context.Context) (GatewayCredential, error)
 }
 
-// GatewayRequestSigner is the narrow optional dependency used by Sender.
+// GatewayRequestSigner supplies one target boundary for payload selection and
+// signing. A matched target must be signed successfully before transmission.
 type GatewayRequestSigner interface {
+	MatchTarget(*url.URL) (canonicalPath string, matches bool, err error)
 	SignRequest(context.Context, *http.Request, []byte) (bool, error)
 }
 
@@ -176,6 +179,16 @@ func gatewaySigningFailure(ctx context.Context) error {
 	return retry.TemporaryError(errGatewaySigningUnavailable)
 }
 
+// MatchTarget uses the same strict matcher as SignRequest, without consulting
+// credentials or producing authentication values.
+func (s *GatewaySigner) MatchTarget(target *url.URL) (string, bool, error) {
+	if s == nil || !s.matcher.valid() || target == nil {
+		return "", false, errGatewaySigningInvalid
+	}
+	path, matches := s.matcher.Match(target)
+	return path, matches, nil
+}
+
 // SignRequest adds Authentication V1 headers only to an exact Gateway target.
 // It computes all values before changing the request, so failures leave no
 // partial authentication headers.
@@ -184,7 +197,10 @@ func (s *GatewaySigner) SignRequest(ctx context.Context, req *http.Request, body
 		req == nil || req.URL == nil {
 		return false, errGatewaySigningInvalid
 	}
-	canonicalPath, matches := s.matcher.Match(req.URL)
+	canonicalPath, matches, err := s.MatchTarget(req.URL)
+	if err != nil {
+		return false, err
+	}
 	if !matches {
 		return false, nil
 	}
