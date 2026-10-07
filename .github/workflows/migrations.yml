@@ -11,13 +11,26 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     name: Validate Migration Order
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Run validation script
         run: ./devtools/scripts/validate-migrations.sh
+
+  migration-label:
+    needs: migrations
+    if: ${{ needs.migrations.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    name: Add Migration Label
+    permissions:
+      pull-requests: write
+    steps:
       - name: Add migration label
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr edit ${{ github.event.number }} --add-label "DB Migration"
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: gh pr edit "$PR_NUMBER" --repo "$GH_REPO" --add-label "DB Migration"
