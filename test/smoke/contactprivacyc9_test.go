@@ -61,12 +61,13 @@ func TestC9ContactPrivacyMatrix(t *testing.T) {
 	} {
 		for _, private := range []bool{false, true} {
 			raw := fmt.Sprint("c9-", private, "-") + dst.raw
-			if dst.field == "phone_number" {
+			switch dst.field {
+			case "phone_number":
 				raw = dst.raw
 				if private {
 					raw = "+15551234568"
 				}
-			} else if dst.field == "webhook_url" {
+			case "webhook_url":
 				raw = dst.raw + fmt.Sprint(private)
 			}
 			id := c9InsertCM(t, h, fmt.Sprintf("c9-%s-%t", dst.typ, private), "user-a", dst.typ, dst.field, raw, private)

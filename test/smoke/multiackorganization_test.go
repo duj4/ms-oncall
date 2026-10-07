@@ -146,7 +146,7 @@ func TestMultiAckOrganizationGraphQLRoundTripAndDenial(t *testing.T) {
 			// Holding the foreign Step must not block source authorization.
 			lock, err := db.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
-			defer lock.Rollback()
+			defer func() { _ = lock.Rollback() }()
 			_, err = lock.Exec(`SELECT id FROM escalation_policy_steps WHERE id=$1 FOR UPDATE`, h.UUID(actor.foreignStep))
 			require.NoError(t, err)
 			for _, enabled := range []bool{true, false} {

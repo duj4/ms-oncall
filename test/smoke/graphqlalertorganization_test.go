@@ -348,7 +348,7 @@ func TestAlertOrganizationNonHumanCompatibilityAndFK(t *testing.T) {
 	require.Error(t, err)
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, `SELECT 1 FROM services WHERE id=$1 FOR UPDATE`, h.UUID("service-a"))
 	require.NoError(t, err)
 	checkCtx, cancel := context.WithTimeout(ctx, time.Second)

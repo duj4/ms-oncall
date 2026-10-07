@@ -1524,7 +1524,7 @@ func assertResourceRootMaterializationPaths(t *testing.T, ctx context.Context, d
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	lockedService, err := serviceStore.FindOneForUpdate(ctx, tx, serviceID, nil)
 	if err != nil {
 		t.Fatal(err)

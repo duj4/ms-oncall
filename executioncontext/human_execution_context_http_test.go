@@ -20,7 +20,7 @@ func TestExecutionContextContextTransportUsesDefensiveCopies(t *testing.T) {
 	if got := WithExecutionContext(base, ExecutionContext{}); got != base || ExecutionContextFromContext(got) != nil {
 		t.Fatal("invalid ExecutionContext was installed")
 	}
-	if WithExecutionContext(nil, value) != nil || ExecutionContextFromContext(nil) != nil {
+	if WithExecutionContext(nil, value) != nil || ExecutionContextFromContext(nil) != nil { //nolint:staticcheck // SA1012: intentional nil Context verifies fail-closed behavior.
 		t.Fatal("nil context exposed or installed ExecutionContext")
 	}
 	ctx := WithExecutionContext(base, value)

@@ -334,7 +334,7 @@ func TestUserOverrideOrganizationNonLockingParent(t *testing.T) {
 			defer cancel()
 			parent, err := h.App().DB().BeginTx(ctx, nil)
 			require.NoError(t, err)
-			defer parent.Rollback()
+			defer func() { _ = parent.Rollback() }()
 			// FOR UPDATE represents the row lock taken by Schedule deletion.
 			// Create's pre-existing FK check requires KEY SHARE, so its control
 			// holds the compatible NO KEY UPDATE lock of a Schedule edit.
@@ -346,7 +346,7 @@ func TestUserOverrideOrganizationNonLockingParent(t *testing.T) {
 			require.NoError(t, err)
 			child, err := h.App().DB().BeginTx(ctx, nil)
 			require.NoError(t, err)
-			defer child.Rollback()
+			defer func() { _ = child.Rollback() }()
 			_, err = child.ExecContext(ctx, `SET LOCAL lock_timeout='1s'`)
 			require.NoError(t, err)
 			s := h.App().OverrideStore

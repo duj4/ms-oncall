@@ -150,7 +150,7 @@ func TestExecutionContextIsImmutableByValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := got
-	organizationID = uuid.New()
+	*spec.effectiveOrganizationID = uuid.New()
 	spec.principalID = "principal:changed"
 	spec.authenticationSourceID = "source:changed"
 	if !reflect.DeepEqual(got, original) {

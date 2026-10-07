@@ -373,7 +373,7 @@ func TestCalendarProductPolicyBeforePostgresLocks(t *testing.T) {
 	ctx := permission.UserContext(config.Config{}.Context(context.Background()), h.users[0], permission.RoleUser)
 	tx, err := h.app.DB().BeginTx(context.Background(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// ACCESS EXCLUSIVE conflicts even with a metadata SELECT. First prove
 	// that the control really blocks the historical SQL, then retain the lock
 	// while calling the production Store, GraphQL, and HTTP auth boundaries.
@@ -400,7 +400,7 @@ func TestCalendarProductPolicyBeforePostgresLocks(t *testing.T) {
 		defer cancel()
 		queryTx, err := h.app.DB().BeginTx(blocked, nil)
 		require.NoError(t, err)
-		defer queryTx.Rollback()
+		defer func() { _ = queryTx.Rollback() }()
 		_, err = h.app.CalSubStore.FindOneForUpdate(blocked, queryTx, tok.ID.String())
 		require.Error(t, err)
 		calendarObservation(t, "postgres/update-before-table-access", err.Error() == "disabled by administrator", false)

@@ -2,19 +2,16 @@ package executioncontext_test
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/organization"
+	"golang.org/x/tools/go/packages"
 )
 
 func TestExternalZeroAndNilValuesExposeNoAuthority(t *testing.T) {
@@ -103,17 +100,26 @@ func TestHumanExecutionContextPackageHasNoImmediateSessionLookup(t *testing.T) {
 		t.Fatal("runtime.Caller could not locate test source")
 	}
 	directory := filepath.Dir(filename)
-	packages, err := parser.ParseDir(token.NewFileSet(), directory, func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
+	// Load only the production package's syntax using the current build tags.
+	loaded, err := packages.Load(&packages.Config{
+		Dir:  directory,
+		Mode: packages.NeedName | packages.NeedCompiledGoFiles | packages.NeedSyntax,
+	}, ".")
 	if err != nil {
-		t.Fatalf("parse executioncontext package: %v", err)
+		t.Fatalf("load executioncontext package: %v", err)
 	}
-	for _, file := range packages["executioncontext"].Files {
+	if len(loaded) != 1 || loaded[0].Name != "executioncontext" {
+		t.Fatalf("expected one executioncontext package, got %v", loaded)
+	}
+	pkg := loaded[0]
+	if len(pkg.Errors) != 0 || len(pkg.Syntax) == 0 {
+		t.Fatalf("executioncontext syntax unavailable: %v", pkg.Errors)
+	}
+	for _, file := range pkg.Syntax {
 		ast.Inspect(file, func(node ast.Node) bool {
 			selector, ok := node.(*ast.SelectorExpr)
 			if ok && selector.Sel.Name == "FindCurrentUserSession" {
-				t.Fatalf("executioncontext retains immediate Session lookup dependency in %s", file.Name.Name)
+				t.Fatalf("executioncontext retains immediate Session lookup dependency at %s", pkg.Fset.Position(selector.Pos()))
 			}
 			return true
 		})

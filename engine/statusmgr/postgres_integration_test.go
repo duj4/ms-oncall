@@ -42,7 +42,7 @@ func TestPostgresStatusMgrLockedRow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer blockTx.Rollback(ctx)
+			defer func() { _ = blockTx.Rollback(ctx) }()
 			if lockedRow == "subscription" {
 				_, err = blockTx.Exec(ctx, `SELECT id FROM alert_status_subscriptions WHERE id = $1 FOR UPDATE`, subID)
 			} else {
@@ -92,7 +92,7 @@ func TestPostgresStatusMgrLockTimeoutRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer blockTx.Rollback(ctx)
+	defer func() { _ = blockTx.Rollback(ctx) }()
 	if _, err := blockTx.Exec(ctx, `SELECT id FROM alert_status_subscriptions WHERE id = $1 FOR UPDATE`, subID); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestPostgresWithTxSharedLockTimeoutRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer blockTx.Rollback(ctx)
+	defer func() { _ = blockTx.Rollback(ctx) }()
 	if _, err := blockTx.Exec(ctx, `SELECT id FROM c2_shared_lock_probe WHERE id = 1 FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
