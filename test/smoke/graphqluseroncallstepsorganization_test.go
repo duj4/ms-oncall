@@ -284,7 +284,7 @@ func TestUserOnCallStepsStoreOrganizationCompatibility(t *testing.T) {
 					var err error
 					tx, err = h.App().DB().BeginTx(ctx, nil)
 					require.NoError(t, err)
-					defer tx.Rollback()
+					defer func() { _ = tx.Rollback() }()
 				}
 				for _, tc := range []struct {
 					target string
@@ -340,7 +340,7 @@ func TestUserOnCallStepsStoreOrganizationCompatibility(t *testing.T) {
 	t.Run("transaction visibility", func(t *testing.T) {
 		tx, err := h.App().DB().BeginTx(ctx, nil)
 		require.NoError(t, err)
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		_, err = tx.ExecContext(ctx, `INSERT INTO ep_step_on_call_users(user_id, ep_step_id) VALUES ($1, $2)`,
 			onCallStepsID("none"), onCallStepsID("a1"))
 		require.NoError(t, err)

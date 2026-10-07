@@ -390,7 +390,7 @@ func TestIntegrationKeyOrganizationNonLockingAndCascade(t *testing.T) {
 	org := uuid.MustParse(harness.SmokeOrganizationID)
 	gate, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer gate.Rollback()
+	defer func() { _ = gate.Rollback() }()
 	var id string
 	require.NoError(t, gate.QueryRowContext(ctx, `SELECT id FROM services WHERE id=$1 FOR NO KEY UPDATE`, h.UUID("service-a")).Scan(&id))
 	created, err := store.Create(ctx, db, &integrationkey.IntegrationKey{ServiceID: id, Name: "Non locking", Type: integrationkey.TypeGeneric}, &org)

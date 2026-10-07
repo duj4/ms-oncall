@@ -57,7 +57,7 @@ func TestRequesterZeroAndNilAccessorsFailClosed(t *testing.T) {
 			}
 		})
 	}
-	if RequesterFromContext(nil) != nil || WithRequester(nil, zero) != nil {
+	if RequesterFromContext(nil) != nil || WithRequester(nil, zero) != nil { //nolint:staticcheck // SA1012: intentional nil Context verifies fail-closed behavior.
 		t.Fatal("nil context exposed or installed a Requester")
 	}
 }

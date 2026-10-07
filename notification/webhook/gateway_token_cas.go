@@ -86,7 +86,7 @@ func nilGatewayDestinationTokenURLCASRepository(repository gatewayDestinationTok
 	}
 	v := reflect.ValueOf(repository)
 	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		return v.IsNil()
 	default:
 		return false
@@ -223,7 +223,7 @@ func gatewayDestinationTokenURLCASRowsAffected(result sql.Result) (rowsAffected 
 	}
 	value := reflect.ValueOf(result)
 	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		if value.IsNil() {
 			return 0, false
 		}
@@ -335,7 +335,7 @@ func gatewayDestinationTokenURLCASNilError(err error) bool {
 		return true
 	}
 	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		return value.IsNil()
 	default:
 		return false

@@ -28,7 +28,7 @@ func TestServiceLabelForeignLockRejection(t *testing.T) {
 			defer cancel()
 			blocker, err := h.App().DB().BeginTx(t.Context(), nil)
 			require.NoError(t, err)
-			defer blocker.Rollback()
+			defer func() { _ = blocker.Rollback() }()
 			var key string
 			require.NoError(t, blocker.QueryRow(`SELECT key FROM labels WHERE tgt_service_id=$1 AND key='org/shared' FOR UPDATE`, serviceLabelID("b")).Scan(&key))
 			ok, err := app.Mutation().SetLabel(ctx, serviceLabelInput("b", key, value))
@@ -47,7 +47,7 @@ func TestServiceLabelForeignLockRejection(t *testing.T) {
 		defer cancel()
 		blocker, err := h.App().DB().BeginTx(t.Context(), nil)
 		require.NoError(t, err)
-		defer blocker.Rollback()
+		defer func() { _ = blocker.Rollback() }()
 		var key string
 		require.NoError(t, blocker.QueryRow(`SELECT key FROM labels WHERE tgt_service_id=$1 AND key='org/shared' FOR UPDATE`, serviceLabelID("a")).Scan(&key))
 		done := make(chan error, 1)
@@ -85,7 +85,7 @@ func TestServiceLabelStoreTransactionScope(t *testing.T) {
 			before := serviceLabelSnapshot(t, h, target)
 			tx, err := h.App().DB().BeginTx(ctx, nil)
 			require.NoError(t, err)
-			defer tx.Rollback()
+			defer func() { _ = tx.Rollback() }()
 			err = s.SetTx(ctx, tx, &label.Label{Target: assignment.ServiceTarget(serviceLabelID(target)), Key: "new/transaction", Value: "value"}, &org)
 			if target == "b" {
 				require.ErrorIs(t, err, sql.ErrNoRows)
@@ -108,7 +108,7 @@ func TestServiceLabelStoreTransactionScope(t *testing.T) {
 	t.Run("parent lookup uses caller transaction and adds no parent lock", func(t *testing.T) {
 		tx, err := h.App().DB().BeginTx(ctx, nil)
 		require.NoError(t, err)
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		_, err = tx.Exec(`INSERT INTO services(id,organization_id,name,escalation_policy_id) VALUES($1,$2,'transaction service',$3)`, serviceLabelID("uncommitted"), org, serviceLabelID("policy-a"))
 		require.NoError(t, err)
 		err = s.SetTx(ctx, tx, &label.Label{Target: assignment.ServiceTarget(serviceLabelID("uncommitted")), Key: "new/transaction", Value: "value"}, &org)
@@ -117,7 +117,7 @@ func TestServiceLabelStoreTransactionScope(t *testing.T) {
 		require.NoError(t, err)
 		other, err := h.App().DB().BeginTx(ctx, nil)
 		require.NoError(t, err)
-		defer other.Rollback()
+		defer func() { _ = other.Rollback() }()
 		var id string
 		require.NoError(t, other.QueryRow(`SELECT id FROM services WHERE id=$1 FOR UPDATE NOWAIT`, serviceLabelID("a")).Scan(&id))
 	})

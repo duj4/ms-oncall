@@ -303,7 +303,7 @@ func TestGraphQLScheduleRotationMixedDeleteLockOrder(t *testing.T) {
 	// but before it can delete R2 and attempt to acquire Schedule S.
 	gate, err := gateConnection.Begin(ctx)
 	require.NoError(t, err)
-	defer gate.Rollback(ctx)
+	defer func() { _ = gate.Rollback(ctx) }()
 	var gatePID int
 	require.NoError(t, gate.QueryRow(ctx, `SELECT pg_backend_pid() FROM rotations WHERE id = $1 FOR UPDATE`, otherRotationID).Scan(&gatePID))
 	observer, err := pgx.ConnectConfig(ctx, connectionConfig)

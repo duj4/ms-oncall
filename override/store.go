@@ -140,13 +140,6 @@ func (s *Store) withTx(ctx context.Context, tx *sql.Tx, fn func(tx *sql.Tx) erro
 	return fn(tx)
 }
 
-func (s *Store) execContext(ctx context.Context, tx *sql.Tx, stmt *sql.Stmt, args ...interface{}) error {
-	return s.withTx(ctx, tx, func(tx *sql.Tx) error {
-		_, err := tx.StmtContext(ctx, stmt).ExecContext(ctx, args...)
-		return err
-	})
-}
-
 func (s *Store) FindOneUserOverrideTx(ctx context.Context, tx *sql.Tx, id string, forUpdate bool) (*UserOverride, error) {
 	return s.FindOneUserOverrideTxScoped(ctx, tx, id, forUpdate, nil)
 }

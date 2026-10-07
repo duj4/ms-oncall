@@ -529,7 +529,7 @@ func TestGraphQLEscalationPolicyStepParentOrganizationLockScope(t *testing.T) {
 	defer cancel()
 	tx, err := h.App().DB().BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	organizationID := uuid.MustParse(harness.SmokeOrganizationID)
 	step, err := h.App().EscalationStore.FindOneStepForUpdateTx(ctx, tx, h.UUID("step-a1"), &organizationID)
 	require.NoError(t, err)
@@ -539,7 +539,7 @@ func TestGraphQLEscalationPolicyStepParentOrganizationLockScope(t *testing.T) {
 
 	other, err := h.App().DB().BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer other.Rollback()
+	defer func() { _ = other.Rollback() }()
 	// The parent and unrelated/foreign Steps remain independently lockable.
 	for _, lock := range []struct{ table, id string }{
 		{"escalation_policies", h.UUID("policy-a")},

@@ -299,7 +299,7 @@ func runRiverGuardTransaction(t *testing.T, ctx context.Context, conn, observer 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func(tx pgx.Tx) { _ = tx.Rollback(ctx) }(tx)
 	for iteration := 1; iteration <= 3; iteration++ {
 		if err := path.mutate(tx, path, phase, iteration); err != nil {
 			t.Fatalf("%s mutation: %v", path.name, err)
@@ -365,7 +365,7 @@ func assertRiverGuardIsolationAndRollback(t *testing.T, ctx context.Context, con
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func(tx pgx.Tx) { _ = tx.Rollback(ctx) }(tx)
 	for _, key := range []struct{ queue, kind, id string }{
 		{"c2-isolation-a", "c2-kind-a", "sameid"},
 		{"c2-isolation-b", "c2-kind-b", "sameid"},
@@ -391,7 +391,7 @@ func assertRiverGuardIsolationAndRollback(t *testing.T, ctx context.Context, con
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func(tx pgx.Tx) { _ = tx.Rollback(ctx) }(tx)
 	if _, err := tx.Exec(ctx, `SELECT fn_util_river_job('c2-rollback', 'c2-rollback-kind', 'rollbackid', '{"ID":"rollbackid"}')`); err != nil {
 		t.Fatal(err)
 	}

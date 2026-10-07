@@ -111,7 +111,7 @@ func TestPostgresHumanExecutionContextSingleStatementLinearization(t *testing.T)
 			organization_role = 'ORG_ADMIN'
 		WHERE user_id = $1
 	`, userID, organizationB.ID); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatal(err)
 	}
 

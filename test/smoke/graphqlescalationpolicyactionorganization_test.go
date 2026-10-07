@@ -487,7 +487,7 @@ func TestGraphQLEscalationPolicyActionOrganizationNonLockingTargets(t *testing.T
 	defer cancel()
 	gate, err := h.App().DB().BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer gate.Rollback()
+	defer func() { _ = gate.Rollback() }()
 	request := func(query string) *stepOrganizationResponse {
 		t.Helper()
 		body, err := json.Marshal(map[string]string{"query": query})

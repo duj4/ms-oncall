@@ -231,7 +231,7 @@ func TestSendSignalOrganizationMissingAuthorityRuntime(t *testing.T) {
 		t.Run(assignment+" HTTP admission", func(t *testing.T) {
 			tx, err := h.pool.Begin(context.Background())
 			require.NoError(t, err)
-			defer tx.Rollback(context.Background())
+			defer func() { _ = tx.Rollback(context.Background()) }()
 			// Create a separate test User with unavailable admission authority.
 			userID := uuid.NewString()
 			_, err = tx.Exec(context.Background(), `INSERT INTO users(id,name,email,role) VALUES($1,'C6 unavailable human','','user')`, userID)
@@ -265,7 +265,7 @@ func TestSendSignalOrganizationBeforePostgresSideEffectLocks(t *testing.T) {
 	ctx := h.humanContext(t, h.users[0], permission.RoleUser)
 	tx, err := h.app.DB().BeginTx(context.Background(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`LOCK TABLE notification_channels, pending_signals, river_job IN ACCESS EXCLUSIVE MODE`)
 	require.NoError(t, err)
 	for _, q := range []string{
@@ -315,7 +315,7 @@ func TestSendSignalOrganizationRequestBoundAndNonHumanCompatibility(t *testing.T
 	// do not rediscover authority after finite-request admission.
 	tx, err := h.app.DB().BeginTx(context.Background(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`LOCK TABLE user_organization_assignments IN ACCESS EXCLUSIVE MODE`)
 	require.NoError(t, err)
 	bounded, cancel := context.WithTimeout(ctx, time.Second)

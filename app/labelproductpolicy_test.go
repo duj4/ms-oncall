@@ -189,7 +189,7 @@ func TestLabelProductPolicySearchAndPostgresLocks(t *testing.T) {
 	// read or mutate labels: any such SQL would wait until the HTTP timeout.
 	tx, err := h.pool.Begin(context.Background())
 	require.NoError(t, err)
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	_, err = tx.Exec(context.Background(), `LOCK TABLE labels IN ACCESS EXCLUSIVE MODE`)
 	require.NoError(t, err)
 	for _, query := range []string{`{labelKeys{nodes}}`, `{labelValues(input:{key:"policy/key"}){nodes}}`, `{labels{nodes{key}}}`, fmt.Sprintf(`mutation{setLabel(input:{target:{type:service,id:%q},key:"policy/key",value:""})}`, targets[0].id)} {
