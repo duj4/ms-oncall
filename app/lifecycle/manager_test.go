@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +25,32 @@ func managerReceive[T any](t *testing.T, ch <-chan T, operation string) T {
 	}
 }
 
+// managerTestBarrier gives the test and its cleanup the same idempotent release.
+func managerTestBarrier() (<-chan struct{}, func()) {
+	ch := make(chan struct{})
+	var once sync.Once
+	return ch, func() { once.Do(func() { close(ch) }) }
+}
+
+// managerCleanup must be registered before workers.Go. Result channels must
+// hold every worker's result even if an assertion stops the test consuming them.
+func managerCleanup(t *testing.T, workers *sync.WaitGroup, cancel context.CancelFunc, releases ...func()) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, release := range releases {
+			release()
+		}
+		cancel()
+		done := make(chan struct{})
+		go func() { workers.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("lifecycle test workers did not complete during cleanup")
+		}
+	})
+}
+
 func TestManagerShutdownDuringStartupCompletes(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -35,10 +62,13 @@ func TestManagerShutdownDuringStartupCompletes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			entered := make(chan struct{})
 			canceled := make(chan struct{})
-			releaseStartup := make(chan struct{})
+			releaseStartup, allowStartup := managerTestBarrier()
 			startupReturned := make(chan struct{})
 			shutdownEntered := make(chan struct{})
-			releaseShutdown := make(chan struct{})
+			releaseShutdown, allowShutdown := managerTestBarrier()
+			ctx, cancel := context.WithCancel(context.Background())
+			var workers sync.WaitGroup
+			managerCleanup(t, &workers, cancel, allowStartup, allowShutdown)
 			var runCalls, shutdownCalls atomic.Int32
 			var cleanupBeforeStartup atomic.Bool
 			mgr := NewManager(
@@ -64,13 +94,13 @@ func TestManagerShutdownDuringStartupCompletes(t *testing.T) {
 				return tc.startupErr
 			}))
 			runResult := make(chan error, 1)
-			go func() { runResult <- mgr.Run(context.Background()) }()
+			workers.Go(func() { runResult <- mgr.Run(ctx) })
 			managerReceive(t, entered, "startup entry")
 			require.Equal(t, StatusStarting, mgr.Status())
 
 			duplicateRuns := make(chan error, 3)
 			for range 3 {
-				go func() { duplicateRuns <- mgr.Run(context.Background()) }()
+				workers.Go(func() { duplicateRuns <- mgr.Run(ctx) })
 			}
 			for range 3 {
 				require.ErrorIs(t, managerReceive(t, duplicateRuns, "duplicate Run"), ErrAlreadyStarted)
@@ -80,10 +110,10 @@ func TestManagerShutdownDuringStartupCompletes(t *testing.T) {
 			waitStarted := make(chan struct{}, waiters)
 			waitResults := make(chan error, waiters)
 			for range waiters {
-				go func() {
+				workers.Go(func() {
 					waitStarted <- struct{}{}
-					waitResults <- mgr.WaitForStartup(context.Background())
-				}()
+					waitResults <- mgr.WaitForStartup(ctx)
+				})
 			}
 			for range waiters {
 				managerReceive(t, waitStarted, "startup waiter entry")
@@ -95,13 +125,13 @@ func TestManagerShutdownDuringStartupCompletes(t *testing.T) {
 			}
 
 			shutdownResults := make(chan error, 4)
-			go func() { shutdownResults <- mgr.Shutdown(context.Background()) }()
+			workers.Go(func() { shutdownResults <- mgr.Shutdown(ctx) })
 			managerReceive(t, canceled, "startup cancellation")
 			require.Equal(t, StatusShutdown, mgr.Status())
 			for range 3 {
-				go func() { shutdownResults <- mgr.Shutdown(context.Background()) }()
+				workers.Go(func() { shutdownResults <- mgr.Shutdown(ctx) })
 			}
-			close(releaseStartup)
+			allowStartup()
 			managerReceive(t, startupReturned, "startup return")
 			require.NoError(t, managerReceive(t, runResult, "interrupted Run"))
 			managerReceive(t, shutdownEntered, "shutdown cleanup entry")
@@ -109,7 +139,7 @@ func TestManagerShutdownDuringStartupCompletes(t *testing.T) {
 				require.ErrorIs(t, managerReceive(t, waitResults, "WaitForStartup"), tc.startupErr)
 			}
 			require.ErrorIs(t, mgr.WaitForStartup(context.Background()), tc.startupErr)
-			close(releaseShutdown)
+			allowShutdown()
 			for range 4 {
 				require.NoError(t, managerReceive(t, shutdownResults, "Shutdown"))
 			}
@@ -133,7 +163,10 @@ func TestManagerStartupTerminalPaths(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entered := make(chan struct{})
-			release := make(chan struct{})
+			release, allowStartup := managerTestBarrier()
+			ctx, cancel := context.WithCancel(context.Background())
+			var workers sync.WaitGroup
+			managerCleanup(t, &workers, cancel, allowStartup)
 			var runCalls, shutdownCalls atomic.Int32
 			mgr := NewManager(
 				func(ctx context.Context) error { runCalls.Add(1); <-ctx.Done(); return ctx.Err() },
@@ -145,13 +178,13 @@ func TestManagerStartupTerminalPaths(t *testing.T) {
 				return tc.startupErr
 			}))
 			runResult := make(chan error, 1)
-			go func() { runResult <- mgr.Run(context.Background()) }()
+			workers.Go(func() { runResult <- mgr.Run(ctx) })
 			managerReceive(t, entered, "startup entry")
 			waitResults := make(chan error, 4)
 			for range 4 {
-				go func() { waitResults <- mgr.WaitForStartup(context.Background()) }()
+				workers.Go(func() { waitResults <- mgr.WaitForStartup(ctx) })
 			}
-			close(release)
+			allowStartup()
 			for range 4 {
 				require.ErrorIs(t, managerReceive(t, waitResults, "WaitForStartup"), tc.startupErr)
 			}
@@ -167,7 +200,7 @@ func TestManagerStartupTerminalPaths(t *testing.T) {
 			}
 			require.ErrorIs(t, mgr.Run(context.Background()), ErrAlreadyStarted)
 			shutdownResult := make(chan error, 1)
-			go func() { shutdownResult <- mgr.Shutdown(context.Background()) }()
+			workers.Go(func() { shutdownResult <- mgr.Shutdown(ctx) })
 			require.NoError(t, managerReceive(t, shutdownResult, "Shutdown"))
 			if tc.startupErr == nil {
 				require.ErrorIs(t, managerReceive(t, runResult, "running Run"), context.Canceled)
@@ -180,6 +213,9 @@ func TestManagerStartupTerminalPaths(t *testing.T) {
 }
 
 func TestManagerShutdownBeforeRunCompletesStartupWait(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var workers sync.WaitGroup
+	managerCleanup(t, &workers, cancel)
 	var startupCalls, runCalls, shutdownCalls atomic.Int32
 	mgr := NewManager(
 		func(context.Context) error { runCalls.Add(1); return nil },
@@ -191,10 +227,10 @@ func TestManagerShutdownBeforeRunCompletesStartupWait(t *testing.T) {
 	}))
 	waitResults := make(chan error, 4)
 	for range 4 {
-		go func() { waitResults <- mgr.WaitForStartup(context.Background()) }()
+		workers.Go(func() { waitResults <- mgr.WaitForStartup(ctx) })
 	}
 	shutdownResult := make(chan error, 1)
-	go func() { shutdownResult <- mgr.Shutdown(context.Background()) }()
+	workers.Go(func() { shutdownResult <- mgr.Shutdown(ctx) })
 	require.NoError(t, managerReceive(t, shutdownResult, "pre-Run Shutdown"))
 	for range 4 {
 		require.NoError(t, managerReceive(t, waitResults, "pre-Run WaitForStartup"))
