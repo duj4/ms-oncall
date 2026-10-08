@@ -71,6 +71,8 @@ func NewServer(authSecret []byte, prefix string) *Server {
 	mux.HandleFunc(path.Join(prefix, pathClientWrite), s.serveClientWrite)
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Virtual session IDs must reach our dialer, never an environment HTTP proxy.
+	transport.Proxy = nil
 	transport.DialContext = s.DialContext
 
 	s.proxy = &httputil.ReverseProxy{
