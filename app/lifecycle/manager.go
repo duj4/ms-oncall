@@ -176,6 +176,7 @@ func (m *Manager) Run(ctx context.Context) error {
 
 	switch s {
 	case StatusShutdown:
+		close(m.startupDone)
 		m.status <- s
 		// no error on shutdown while starting
 		return nil
@@ -234,6 +235,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	case StatusUnknown:
 		initShutdown()
 		close(m.pauseStart)
+		close(m.startupDone)
 		close(m.shutdownDone)
 		return nil
 	case StatusPausing:
