@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -98,7 +99,10 @@ type App struct {
 
 	slackChan *slack.ChannelSender
 
-	ConfigStore *config.Store
+	// ConfigStore may be injected before concurrent application startup or use.
+	// Direct concurrent writes to this field are not synchronized.
+	ConfigStore   *config.Store
+	configStoreMu sync.RWMutex
 
 	AlertStore        *alert.Store
 	AlertLogStore     *alertlog.Store

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 
+	"github.com/target/goalert/config"
 	"github.com/target/goalert/expflag"
 	"github.com/target/goalert/util/log"
 )
@@ -16,9 +17,22 @@ func (app *App) Context(ctx context.Context) context.Context {
 	ctx = expflag.Context(ctx, app.cfg.ExpFlags)
 	ctx = log.WithLogger(ctx, app.cfg.LegacyLogger)
 
-	if app.ConfigStore != nil {
-		ctx = app.ConfigStore.Config().Context(ctx)
+	if store := app.configStoreSnapshot(); store != nil {
+		ctx = store.Config().Context(ctx)
 	}
 
 	return ctx
+}
+
+func (app *App) configStoreSnapshot() *config.Store {
+	app.configStoreMu.RLock()
+	store := app.ConfigStore
+	app.configStoreMu.RUnlock()
+	return store
+}
+
+func (app *App) publishConfigStore(store *config.Store) {
+	app.configStoreMu.Lock()
+	app.ConfigStore = store
+	app.configStoreMu.Unlock()
 }

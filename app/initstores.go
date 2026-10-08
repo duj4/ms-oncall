@@ -47,7 +47,8 @@ func (app *App) initStores(ctx context.Context) error {
 
 	app.DestRegistry = nfydest.NewRegistry()
 
-	if app.ConfigStore == nil {
+	store := app.configStoreSnapshot()
+	if store == nil {
 		var fallback url.URL
 		fallback.Scheme = "http"
 		fallback.Host = app.l.Addr().String()
@@ -59,14 +60,15 @@ func (app *App) initStores(ctx context.Context) error {
 			ExplicitURL:        app.cfg.PublicURL,
 			IngressEmailDomain: app.cfg.EmailIntegrationDomain,
 		}
-		app.ConfigStore, err = config.NewStore(ctx, storeCfg)
-	}
-	if err != nil {
-		return errors.Wrap(err, "init config store")
+		store, err = config.NewStore(ctx, storeCfg)
+		if err != nil {
+			return errors.Wrap(err, "init config store")
+		}
+		app.publishConfigStore(store)
 	}
 	if app.cfg.InitialConfig != nil {
 		permission.SudoContext(ctx, func(ctx context.Context) {
-			err = app.ConfigStore.SetConfig(ctx, *app.cfg.InitialConfig)
+			err = store.SetConfig(ctx, *app.cfg.InitialConfig)
 		})
 		if err != nil {
 			return errors.Wrap(err, "set initial config")
