@@ -326,10 +326,19 @@ func (m *Manager) Pause(ctx context.Context) error {
 		s = <-m.status
 		switch s {
 		case StatusShutdown:
+			m.isPausing = false
 			m.status <- s
 			return ErrShutdown
 		case StatusReady:
 			// ok
+		case StatusStarting:
+			// startupDone publishes startupErr even when startup failed.
+			if m.startupErr != nil {
+				m.isPausing = false
+				m.status <- s
+				return m.startupErr
+			}
+			fallthrough
 		default:
 			m.status <- s
 			panic("unexpected lifecycle state")
