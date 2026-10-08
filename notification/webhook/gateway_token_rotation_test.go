@@ -2324,6 +2324,8 @@ func TestGatewayDestinationTokenRotationCommitUnknownResolvesFenceBeforeRecovery
 	}
 	discardStarted := make(chan struct{})
 	allowResolution := make(chan struct{})
+	var resolutionOnce sync.Once
+	releaseResolution := func() { resolutionOnce.Do(func() { close(allowResolution) }) }
 	conn := &gatewayRotationStoreTestConn{
 		destJSON:  oldDestination,
 		commitErr: errors.New("test-only delayed commit acknowledgement"),
@@ -2360,12 +2362,25 @@ func TestGatewayDestinationTokenRotationCommitUnknownResolvesFenceBeforeRecovery
 	}
 	participant := &gatewayRotationTestParticipant{
 		beginAttempt: attempt,
-		observation: testOnlyRotationObservation(
+		observation: testOnlyRotationObservationAt(
 			t,
 			GatewayDestinationTokenRotationParticipantActiveWithRetiring,
 			GatewayDestinationTokenRotationTokenNew,
+			activatedAt,
 			retirementDeadline,
 		),
+	}
+	participant.observeFn = func(context.Context, GatewayDestinationTokenRotationObserveRequest) (GatewayDestinationTokenRotationObservation, error) {
+		if physical.closeCount() != 1 {
+			return GatewayDestinationTokenRotationObservation{}, errors.New("test-only observation before physical quarantine")
+		}
+		conn.mu.Lock()
+		lockedNew := conn.txOpen && conn.queries == 2 && string(conn.destJSON) == string(newDestination)
+		conn.mu.Unlock()
+		if !lockedNew {
+			return GatewayDestinationTokenRotationObservation{}, errors.New("test-only observation without resolved new Core locking read")
+		}
+		return participant.observation, nil
 	}
 	coordinator, err := NewGatewayDestinationTokenRotationCoordinator(acceptedCAS.matcher, acceptedCAS, store, participant)
 	if err != nil {
@@ -2376,7 +2391,18 @@ func TestGatewayDestinationTokenRotationCommitUnknownResolvesFenceBeforeRecovery
 		err    error
 	}
 	done := make(chan startOutcome, 1)
+	workerFinished := make(chan struct{})
+	// Registered after db.Close and immediately before starting its owned worker.
+	t.Cleanup(func() {
+		releaseResolution()
+		select {
+		case <-workerFinished:
+		case <-time.After(5 * time.Second):
+			t.Error("commit-unknown coordinator worker did not finish during cleanup")
+		}
+	})
 	go func() {
+		defer close(workerFinished)
 		result, err := coordinator.Start(testOnlyGatewayCASSystemContext(), testOnlyRotationStartRequest())
 		done <- startOutcome{result: result, err: err}
 	}()
@@ -2385,16 +2411,21 @@ func TestGatewayDestinationTokenRotationCommitUnknownResolvesFenceBeforeRecovery
 	case <-time.After(time.Second):
 		t.Fatal("commit-unknown path did not begin physical connection destruction")
 	}
-	if _, observe, rollback, finalize := participant.counts(); observe != 0 || rollback != 0 || finalize != 0 {
+	if begin, observe, rollback, finalize := participant.counts(); begin != 1 || observe != 0 || rollback != 0 || finalize != 0 {
 		t.Fatal("recovery reached Gateway before the unknown Core transaction fence resolved")
 	}
 	conn.mu.Lock()
 	queriesBeforeResolution := conn.queries
+	initialFencedAttempt := conn.connects == 1 && conn.begins == 1 && conn.execs == 1 &&
+		conn.commits == 1 && conn.rollbacks == 0 && conn.txOpen
 	conn.mu.Unlock()
 	if queriesBeforeResolution != 1 {
 		t.Fatal("authoritative recovery read started before commit-unknown connection destruction completed")
 	}
-	close(allowResolution)
+	if !initialFencedAttempt {
+		t.Fatal("commit-unknown path did not retain exactly one ambiguous fenced Core attempt")
+	}
+	releaseResolution()
 	select {
 	case outcome := <-done:
 		if outcome.err != nil || outcome.result.Status() != GatewayDestinationTokenRotationPendingFinalization {
@@ -2406,11 +2437,21 @@ func TestGatewayDestinationTokenRotationCommitUnknownResolvesFenceBeforeRecovery
 	if physical.closeCount() != 1 || autocommitRepository.callCount() != 0 {
 		t.Fatal("commit-unknown recovery did not destroy exactly the fenced physical connection")
 	}
+	if begin, observe, rollback, finalize := participant.counts(); begin != 1 || observe != 1 || rollback != 0 || finalize != 0 {
+		t.Fatal("commit-unknown recovery did not preserve exact Gateway callback counts")
+	}
 	conn.mu.Lock()
 	queriesAfterResolution := conn.queries
+	recoveredFencedAttempt := conn.connects == 2 && conn.begins == 2 && conn.execs == 1 &&
+		conn.commits == 1 && conn.rollbacks == 1 && !conn.txOpen &&
+		string(conn.destJSON) == string(newDestination) &&
+		fmt.Sprint(conn.sequence) == "[begin lock update commit begin lock rollback]"
 	conn.mu.Unlock()
 	if queriesAfterResolution != 2 {
 		t.Fatal("commit-unknown recovery did not perform one ordered authoritative locking read")
+	}
+	if !recoveredFencedAttempt {
+		t.Fatal("commit-unknown recovery did not preserve exact Core transaction counts and resolved new destination")
 	}
 }
 
