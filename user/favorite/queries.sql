@@ -7,11 +7,11 @@ ON CONFLICT
 -- name: UserFavUnset :exec
 DELETE FROM user_favorites
 WHERE user_id = $1
-    AND tgt_service_id = $2
-    OR tgt_schedule_id = $3
-    OR tgt_rotation_id = $4
-    OR tgt_escalation_policy_id = $5
-    OR tgt_user_id = $6;
+    AND (tgt_service_id = $2
+        OR tgt_schedule_id = $3
+        OR tgt_rotation_id = $4
+        OR tgt_escalation_policy_id = $5
+        OR tgt_user_id = $6);
 
 -- name: UserFavFindAll :many
 SELECT
