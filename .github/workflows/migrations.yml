@@ -18,6 +18,8 @@ jobs:
         with:
           fetch-depth: 0
       - name: Run validation script
+        env:
+          MAIN_BRANCH: ${{ github.base_ref }}
         run: ./devtools/scripts/validate-migrations.sh
 
   migration-label:
