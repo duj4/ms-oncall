@@ -202,3 +202,136 @@ rc=0
 CHECKS=$((CHECKS + 1))
 echo 'PASS: wrapper rejects ordinary XL changes before gh calls'
 echo "All $CHECKS deterministic fixture checks passed."
+
+EXISTING_CHECKS=$CHECKS
+[ "$EXISTING_CHECKS" -eq 45 ]
+check_wrapper_failure() {
+    local rc=0
+    rm -f "$SCRATCH/rejected-gh-log"
+    (cd "$REPO" && PATH="$SCRATCH/bin:$PATH" FAKE_GH_LOG="$SCRATCH/rejected-gh-log" PR_NUMBER=123 \
+        MAIN_BRANCH=main DIFF_HEAD_REF=refs/remotes/pull/123/merge FAIL_IF_XL=1 \
+        "$MY_DIR/github-set-pr-label.sh") > "$SCRATCH/wrapper-out" 2> "$SCRATCH/wrapper-err" || rc=$?
+    [ "$rc" -eq 1 ] && [ ! -e "$SCRATCH/rejected-gh-log" ]
+    CHECKS=$((CHECKS + 1))
+    echo "PASS: wrapper rejects $1 before label edits"
+}
+
+# Real committed blobs: late NUL, forced textual diff, invalid UTF-8 and controls.
+for kind in late-nul separate-binary attribute-nul invalid-utf8 control c1-control utf8-text executable copy mixed-attributes working-text working-binary; do
+    new_fixture "$kind"
+    if [ "$kind" = attribute-nul ]; then
+        printf '*_test.go diff\n' > "$REPO/.gitattributes"
+        commit_fixture
+        BASE=$(git -C "$REPO" rev-parse HEAD)
+        git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
+    fi
+    python3 - "$REPO" "$kind" <<'PY'
+import pathlib, sys
+repo, kind = pathlib.Path(sys.argv[1]), sys.argv[2]
+data = bytearray(('package fixture\n' + ''.join('// padded line %04d\n' % i for i in range(814))).encode())
+if kind in ('late-nul', 'working-text'):
+    data[10599] = 0
+elif kind == 'attribute-nul':
+    data[30] = 0
+elif kind == 'invalid-utf8':
+    data[10599] = 255
+elif kind == 'control':
+    data[10599] = 1
+elif kind == 'c1-control':
+    data[10599:10601] = b'\xc2\x85'
+else:
+    data = ('package fixture\n' + '// 文本 café\n' * 813).encode()
+(repo / 'added_test.go').write_bytes(data)
+if kind == 'separate-binary':
+    binary = bytearray(b'//' + b'x' * 12000 + b'\n'); binary[10599] = 0
+    (repo / 'binary_test.go').write_bytes(binary)
+elif kind == 'copy':
+    (repo / 'copied_test.go').write_bytes((repo / 'old_test.go').read_bytes())
+elif kind == 'mixed-attributes':
+    (repo / '.gitattributes').write_text('*_test.go diff\n')
+PY
+    if [ "$kind" = executable ]; then chmod +x "$REPO/added_test.go"; fi
+    finish_fixture
+    size=815 rc=1
+    case "$kind" in
+        utf8-text | executable | working-binary) size=814; rc=0 ;;
+    esac
+    # Neither a clean nor a binary unrelated working-tree copy may change eligibility.
+    case "$kind" in
+        working-text) printf 'package fixture\n' > "$REPO/added_test.go" ;;
+        working-binary) printf 'binary\0copy\n' > "$REPO/added_test.go" ;;
+    esac
+    check "$kind" "$rc" size/xl "$size"
+    if [ "$rc" -eq 1 ]; then check_wrapper_failure "$kind"; fi
+done
+
+new_fixture hidden-submodule
+lines 814 added_test.go
+finish_fixture
+git -C "$REPO" checkout -q --detach refs/remotes/pull/123/merge
+git -C "$REPO" update-index --add --cacheinfo "160000,$BASE,component_test.go"
+git -C "$REPO" -c core.hooksPath=/dev/null -c commit.gpgsign=false \
+    -c user.name='CI size fixture' -c user.email='ci-size-fixture@example.invalid' commit -qm fixture
+git -C "$REPO" update-ref refs/remotes/pull/123/merge HEAD
+git -C "$REPO" checkout -q --detach "$BASE"
+git -C "$REPO" config diff.ignoreSubmodules all
+check hidden-submodule 1 size/xl 814
+check_wrapper_failure hidden-submodule
+
+# Corrupt only qualification evidence; size counting and all other Git calls are real.
+new_fixture malformed-evidence
+lines 814 added_test.go
+finish_fixture
+cat > "$SCRATCH/bin/git" <<'PY'
+#!/usr/bin/env python3
+import os, subprocess, sys
+args, case = sys.argv[1:], os.environ['EVIDENCE_CASE']
+result = subprocess.run([os.environ['REAL_GIT'], *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+data = result.stdout
+path = b'added_test.go'
+status = b'A\0' + path + b'\0'
+stat = b'814\t0\t' + path + b'\0'
+if '--name-status' in args:
+    data = {'status-trailing': status + b'M', 'status-path-partial': status[:-1],
+            'status-missing-path': b'A\0', 'status-empty': b'', 'status-unknown': b'X\0' + path + b'\0',
+            'status-duplicate': status * 2, 'status-inconsistent': b'M\0' + path + b'\0',
+            'status-unmatched': b'A\0other_test.go\0', 'status-extra': status + b'junk\0'}.get(case, data)
+elif '--numstat' in args and '-z' in args:
+    data = {'numstat-empty': b'', 'numstat-partial': stat[:-1], 'numstat-missing-path': b'814\t0\0',
+            'numstat-invalid': b'bad\t0\t' + path + b'\0', 'numstat-negative': b'-1\t0\t' + path + b'\0',
+            'numstat-binary': b'-\t-\t' + path + b'\0', 'numstat-duplicate': stat * 2,
+            'numstat-unmatched': b'814\t0\tother_test.go\0', 'numstat-extra': stat[:-1] + b'\textra\0'}.get(case, data)
+elif args[0] == 'ls-tree' and data:
+    oid = data.split(b' ')[2].split(b'\t')[0]
+    data = {'tree-partial': data[:-1], 'tree-empty': b'', 'tree-duplicate': data * 2,
+            'tree-prefix': b'100644 blob ', 'tree-mode': data.replace(b'100644', b'100600', 1),
+            'tree-type': data.replace(b' blob ', b' commit ', 1),
+            'tree-oid': data.replace(oid, b'1234', 1), 'tree-zero-oid': data.replace(oid, b'0' * len(oid), 1),
+            'tree-nonhex-oid': data.replace(oid, b'g' * len(oid), 1),
+            'tree-wrong-oid': data.replace(oid, b'f' * len(oid), 1),
+            'tree-path': data.replace(path, b'other_test.go'), 'tree-extra': data + b'junk'}.get(case, data)
+elif args[0] == 'cat-file':
+    if case == 'blob-failure' and args[1] == 'blob': sys.exit(42)
+    if case == 'blob-partial' and args[1] == 'blob': data = data[:-1]
+    if case == 'blob-identity' and args[1] == 'blob': data = b'X' + data[1:]
+    if case == 'blob-type' and args[1] == '-t': data = b'tree\n'
+    if case == 'blob-size' and args[1] == '-s': data = b'-1\n'
+    if case == 'blob-size-partial' and args[1] == '-s': data = data[:-1]
+elif args[0] == 'merge-base':
+    data = {'base-oid': b'1234\n', 'base-multiple': data * 2}.get(case, data)
+elif args[0] == 'rev-parse' and '--verify' in args:
+    data = {'head-oid': b'1234\n', 'head-partial': data[:-1]}.get(case, data)
+sys.stdout.buffer.write(data)
+sys.stderr.buffer.write(result.stderr)
+sys.exit(result.returncode)
+PY
+chmod +x "$SCRATCH/bin/git"
+for evidence in status-trailing status-path-partial status-missing-path status-empty status-unknown status-duplicate status-inconsistent status-unmatched status-extra \
+    numstat-empty numstat-partial numstat-missing-path numstat-invalid numstat-negative numstat-binary numstat-duplicate numstat-unmatched numstat-extra \
+    tree-partial tree-empty tree-duplicate tree-prefix tree-mode tree-type tree-oid tree-zero-oid tree-nonhex-oid tree-wrong-oid tree-path tree-extra \
+    blob-failure blob-partial blob-identity blob-type blob-size blob-size-partial base-oid base-multiple head-oid head-partial; do
+    PATH="$SCRATCH/bin:$PATH" REAL_GIT="$REAL_GIT" EVIDENCE_CASE="$evidence" check "$evidence" 1 size/xl 814
+    REAL_GIT="$REAL_GIT" EVIDENCE_CASE="$evidence" check_wrapper_failure "$evidence"
+done
+rm "$SCRATCH/bin/git"
+echo "Existing cases: $EXISTING_CHECKS; new P2 regressions: $((CHECKS - EXISTING_CHECKS)); total: $CHECKS PASS."
