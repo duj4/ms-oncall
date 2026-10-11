@@ -22,6 +22,7 @@ M_MAX=250
 L_LABEL=size/l
 L_MAX=500
 XL_LABEL=size/xl
+TEST_ONLY_MAX=1000
 
 if [ -z "$DEBUG" ]; then
     DEBUG=0
@@ -72,7 +73,7 @@ done < <(cat "$IGNORE_PATTERN_FILE" 2>/dev/null)
 # $IGNORE_ARGS[@]: list of `:(exclude)file` patterns to ignore
 OUTPUT=$(
     if [ "$DEBUG" = "1" ]; then set -x; fi
-    git diff --ignore-blank-lines --numstat -w --diff-filter=d --minimal \
+    git diff --no-ext-diff --no-textconv --ignore-blank-lines --numstat -w --diff-filter=d --minimal \
     "origin/$MAIN_BRANCH...${DIFF_HEAD_REF:-HEAD}" \
     -- "${IGNORE_ARGS[@]}"
 )
@@ -104,7 +105,111 @@ fi
 
 debug "LABEL: $LABEL"
 
+# Parse complete committed evidence; never infer text from Git's diff heuristics.
+test_only_diff() (
+    python3 -I - "origin/$MAIN_BRANCH" "${DIFF_HEAD_REF:-HEAD}" <<'PY'
+import hashlib, re, subprocess, sys
+
+def require(condition):
+    if not condition:
+        raise ValueError('ineligible or incomplete Git evidence')
+
+def git(*args):
+    return subprocess.run(['git', *args], check=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE).stdout
+
+def records(data, empty=False):
+    require((empty and not data) or (bool(data) and data.endswith(b'\0')))
+    return data[:-1].split(b'\0') if data else []
+
+def object_id(data):
+    require(re.fullmatch(b'[0-9a-f]{' + str(oid_length).encode() + b'}', data)
+            and data != b'0' * oid_length)
+    return data.decode('ascii')
+
+def tree(revision, path, required):
+    rows = records(git('ls-tree', '-z', '--full-tree', revision, '--', path), empty=not required)
+    if not rows:
+        return None
+    require(len(rows) == 1)
+    metadata, name = rows[0].split(b'\t')
+    mode, kind, oid = metadata.split(b' ')
+    require(name == path.encode('ascii') and mode in (b'100644', b'100755') and kind == b'blob')
+    return object_id(oid)
+
+def text_blob(oid):
+    require(git('cat-file', '-t', oid) == b'blob\n')
+    size = git('cat-file', '-s', oid)
+    require(re.fullmatch(rb'(0|[1-9][0-9]*)\n', size))
+    content = git('cat-file', 'blob', oid)
+    require(len(content) == int(size) and b'\0' not in content)
+    identity = b'blob ' + str(len(content)).encode('ascii') + b'\0' + content
+    require(hashlib.new(object_format, identity, usedforsecurity=False).hexdigest() == oid)
+    # Text must be complete, strict UTF-8 with no C0/C1 controls except HT/LF/CR.
+    text = content.decode('utf-8')
+    require(all((ord(c) >= 32 or c in '\t\n\r') and not 127 <= ord(c) < 160 for c in text))
+    return content
+
+try:
+    format_data = git('rev-parse', '--show-object-format')
+    require(format_data in (b'sha1\n', b'sha256\n'))
+    object_format = format_data[:-1].decode('ascii')
+    oid_length = 40 if object_format == 'sha1' else 64
+    head_data = git('rev-parse', '--verify', '--end-of-options', sys.argv[2] + '^{commit}')
+    require(head_data.endswith(b'\n'))
+    head = object_id(head_data[:-1])
+    base_data = git('merge-base', '--all', sys.argv[1], head)
+    require(base_data.endswith(b'\n'))
+    base = object_id(base_data[:-1])
+    options = ('--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--diff-algorithm=myers')
+    fields = records(git('diff', *options, '--name-status', '-z', '--find-renames',
+                         '--find-copies', '--find-copies-harder', '-l0', base, head, '--'))
+    require(len(fields) % 2 == 0)
+    changes = {}
+    for status, path in zip(fields[::2], fields[1::2]):
+        require(status in (b'A', b'M') and re.fullmatch(rb'[A-Za-z0-9_./-]+_test\.go', path))
+        require(all(part and part not in (b'.', b'..') for part in path.split(b'/')))
+        require(path not in changes)
+        changes[path] = status
+    require(bool(changes))
+    counts = {}
+    for row in records(git('diff', *options, '--numstat', '-z', '--no-renames', base, head, '--')):
+        added, removed, path = row.split(b'\t')
+        require(re.fullmatch(rb'0|[1-9][0-9]*', added) and re.fullmatch(rb'0|[1-9][0-9]*', removed))
+        require(path not in counts)
+        counts[path] = (added, removed)
+    require(counts.keys() == changes.keys())
+    for path, status in changes.items():
+        name = path.decode('ascii')
+        previous = tree(base, name, required=status == b'M')
+        require((previous is None) == (status == b'A'))
+        current = tree(head, name, required=True)
+        require(current != previous)
+        contents = {oid: text_blob(oid) for oid in (previous, current) if oid is not None}
+        if previous is None:
+            content = contents[current]
+            # Git counts LF-delimited lines and a nonempty unterminated final line.
+            lines = content.count(b'\n') + bool(content and not content.endswith(b'\n'))
+            require(tuple(map(int, counts[path])) == (lines, 0))
+        else:
+            # Compare complete raw Git counts for the verified blobs, with the same algorithm.
+            expected = b'\t'.join(counts[path]) + b'\t' + previous.encode() + b' => ' + current.encode() + b'\n'
+            require(git('diff', *options, '--numstat', '--no-renames', '--text', previous, current, '--') == expected)
+        markers = subprocess.run(['git', 'grep', '-q', '-e', r'^// Code generated .* DO NOT EDIT\.',
+                                  '-e', 'generated by .* DO NOT EDIT', base, head, '--', name],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        require(markers.returncode == 1)
+except (ValueError, OSError, UnicodeError, subprocess.SubprocessError):
+    sys.exit(1)
+PY
+)
+
 if [ $FAIL_IF_XL -eq 1 ] && [ "$LABEL" = "$XL_LABEL" ]; then
+    if [ "$sum" -le "$TEST_ONLY_MAX" ] && test_only_diff; then
+        debug "TEST-ONLY: within $TEST_ONLY_MAX lines"
+        echo "$LABEL"
+        exit 0
+    fi
     echo ""
     echo "ERROR: This PR exceeds the maximum size of $L_MAX lines."
     echo "Please make sure you are NOT addressing multiple issues with one PR."
