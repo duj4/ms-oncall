@@ -27,11 +27,12 @@ func supportedMultiAckFixture(url string, enabled bool) string {
 	`, url, url, enabled)
 }
 
-// The existing snapshot/current-Step matrix remains intact. These positives
-// add real Webhook receipts and signed-session human ACK/Close independently
-// of SMS reply handling, including cancellation before a remaining delayed rule.
+// Historical C8 tests remain intact. Current supported-product positives use
+// ordinary single ACK with real Webhook receipts and signed-session ACK/Close.
+// ACK-01 remains confirmed/unrepaired; this test preparation does not implement
+// MultiAck hard-disable or repair second-human GraphQL ACK.
 func TestSupportedMultiAckLifecycle(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
+	for _, enabled := range []bool{false} {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
 			r := newSupportedWebhookReceiver(t)
 			h := harness.NewHarness(t, supportedMultiAckFixture(r.URL, enabled), "")
@@ -71,6 +72,7 @@ func TestSupportedMultiAckLifecycle(t *testing.T) {
 			h.FastForward(time.Minute)
 			supportedStatus(t, h, "u1", "StatusAcknowledged")
 			h.Trigger()
+			require.Empty(t, multiAckCycles(t, h, 198), "first ordinary ACK cancels both users' cycles")
 			expectStatus("Acknowledged by First") // River status work is asynchronous
 			multiAckStatus(t, h, 198, "active")
 			multiAckLogUsers(t, h, 198, h.UUID("u1"))
@@ -79,19 +81,8 @@ func TestSupportedMultiAckLifecycle(t *testing.T) {
 
 			h.FastForward(31 * time.Minute)
 			h.Trigger()
-			if enabled {
-				paths = append(paths, "/second")
-				cycles := multiAckCycles(t, h, 198)
-				require.Len(t, cycles, 1)
-				require.Equal(t, before[h.UUID("u2")], cycles[h.UUID("u2")])
-			} else {
-				require.Empty(t, multiAckCycles(t, h, 198))
-			}
+			require.Empty(t, multiAckCycles(t, h, 198))
 			r.expectAlerts(t, h, paths...)
-			// updateAlerts currently updates only a strictly greater status, so
-			// it cannot record a second actor's ACK of an already active alert.
-			// Keep that source-backed Stage 1 gap explicit; do not pretend that
-			// bulk GraphQL implements the callback's UpdateStatusTx contract.
 			supportedStatus(t, h, "u1", "StatusClosed")
 			h.FastForward(61 * time.Minute)
 			h.Trigger()
@@ -108,12 +99,34 @@ func TestSupportedMultiAckLifecycle(t *testing.T) {
 
 func TestSupportedCloseCancelsUnacknowledgedUser(t *testing.T) {
 	r := newSupportedWebhookReceiver(t)
-	h := harness.NewHarness(t, supportedMultiAckFixture(r.URL, true), "")
+	h := harness.NewHarness(t, supportedMultiAckFixture(r.URL, false), "")
 	defer h.Close()
 	r.expectAlerts(t, h, "/first", "/second")
+	multiAckStatus(t, h, 198, "triggered")
+	cycles := multiAckCycles(t, h, 198)
+	require.Len(t, cycles, 2, "Close must cancel cycles that still exist")
+	for _, cycle := range cycles {
+		require.False(t, cycle.MultiAck)
+	}
 	h.FastForward(time.Minute)
-	supportedStatus(t, h, "u1", "StatusAcknowledged")
 	supportedStatus(t, h, "u1", "StatusClosed")
+	h.Trigger()
+	require.Empty(t, multiAckCycles(t, h, 198))
+	multiAckLogUsers(t, h, 198) // direct Close must not invent an ACK
+	var closeCount int
+	var closedBy string
+	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*), min(sub_user_id::text) FROM alert_logs WHERE alert_id=198 AND event='closed'`).Scan(&closeCount, &closedBy))
+	require.Equal(t, 1, closeCount)
+	require.Equal(t, h.UUID("u1"), closedBy)
+	require.Eventually(t, func() bool { return len(r.events("AlertStatus")) >= 2 }, 10*time.Second, 10*time.Millisecond)
+	var statusPaths []string
+	for _, receipt := range r.events("AlertStatus") {
+		var payload struct{ LogEntry string }
+		require.NoError(t, json.Unmarshal(receipt.Body, &payload))
+		require.True(t, strings.HasPrefix(payload.LogEntry, "Closed by First"))
+		statusPaths = append(statusPaths, receipt.Path)
+	}
+	require.ElementsMatch(t, []string{"/first", "/second"}, statusPaths)
 	h.FastForward(61 * time.Minute)
 	h.Trigger()
 	r.expectAlerts(t, h, "/first", "/second")
@@ -121,4 +134,5 @@ func TestSupportedCloseCancelsUnacknowledgedUser(t *testing.T) {
 	multiAckStatus(t, h, 198, "closed")
 	h.Trigger()
 	r.expectAlerts(t, h, "/first", "/second")
+	require.Len(t, r.events("AlertStatus"), 2, "Close must not revive status or delayed activity")
 }
