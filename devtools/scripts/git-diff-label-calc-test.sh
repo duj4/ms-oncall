@@ -204,20 +204,24 @@ echo 'PASS: wrapper rejects ordinary XL changes before gh calls'
 echo "All $CHECKS deterministic fixture checks passed."
 
 EXISTING_CHECKS=$CHECKS
-[ "$EXISTING_CHECKS" -eq 45 ]
+if [ "$EXISTING_CHECKS" -ne 45 ]; then echo 'FAIL: historical case count' >&2; exit 1; fi
 check_wrapper_failure() {
     local rc=0
     rm -f "$SCRATCH/rejected-gh-log"
     (cd "$REPO" && PATH="$SCRATCH/bin:$PATH" FAKE_GH_LOG="$SCRATCH/rejected-gh-log" PR_NUMBER=123 \
         MAIN_BRANCH=main DIFF_HEAD_REF=refs/remotes/pull/123/merge FAIL_IF_XL=1 \
         "$MY_DIR/github-set-pr-label.sh") > "$SCRATCH/wrapper-out" 2> "$SCRATCH/wrapper-err" || rc=$?
-    [ "$rc" -eq 1 ] && [ ! -e "$SCRATCH/rejected-gh-log" ]
+    if [ "$rc" -ne 1 ] || [ -e "$SCRATCH/rejected-gh-log" ]; then
+        cat "$SCRATCH/wrapper-out" "$SCRATCH/wrapper-err" >&2
+        echo "FAIL: wrapper $1 (exit $rc; expected exit 1 and no label edits)" >&2
+        exit 1
+    fi
     CHECKS=$((CHECKS + 1))
     echo "PASS: wrapper rejects $1 before label edits"
 }
 
 # Real committed blobs: late NUL, forced textual diff, invalid UTF-8 and controls.
-for kind in late-nul separate-binary attribute-nul invalid-utf8 control c1-control utf8-text executable copy mixed-attributes working-text working-binary; do
+for kind in late-nul separate-binary attribute-nul invalid-utf8 control c1-control utf8-text executable copy mixed-attributes working-text working-binary empty-added modified-whitespace modified-blank crlf no-final-newline; do
     new_fixture "$kind"
     if [ "$kind" = attribute-nul ]; then
         printf '*_test.go diff\n' > "$REPO/.gitattributes"
@@ -241,6 +245,11 @@ elif kind == 'c1-control':
     data[10599:10601] = b'\xc2\x85'
 else:
     data = ('package fixture\n' + '// 文本 café\n' * 813).encode()
+if kind == 'empty-added': (repo / 'empty_test.go').write_bytes(b'')
+if kind == 'modified-whitespace': (repo / 'old_test.go').write_bytes(b'package  fixture\n')
+if kind == 'modified-blank': (repo / 'old_test.go').write_bytes(b'package fixture\n\n')
+if kind == 'crlf': data = data.replace(b'\n', b'\r\n')
+if kind == 'no-final-newline': data = data[:-1]
 (repo / 'added_test.go').write_bytes(data)
 if kind == 'separate-binary':
     binary = bytearray(b'//' + b'x' * 12000 + b'\n'); binary[10599] = 0
@@ -254,7 +263,7 @@ PY
     finish_fixture
     size=815 rc=1
     case "$kind" in
-        utf8-text | executable | working-binary) size=814; rc=0 ;;
+        utf8-text | executable | working-binary | empty-added | modified-whitespace | modified-blank | crlf | no-final-newline) size=814; rc=0 ;;
     esac
     # Neither a clean nor a binary unrelated working-tree copy may change eligibility.
     case "$kind" in
@@ -288,7 +297,7 @@ import os, subprocess, sys
 args, case = sys.argv[1:], os.environ['EVIDENCE_CASE']
 result = subprocess.run([os.environ['REAL_GIT'], *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 data = result.stdout
-path = b'added_test.go'
+path = os.environ.get('EVIDENCE_PATH', 'added_test.go').encode('ascii')
 status = b'A\0' + path + b'\0'
 stat = b'814\t0\t' + path + b'\0'
 if '--name-status' in args:
@@ -298,6 +307,7 @@ if '--name-status' in args:
             'status-unmatched': b'A\0other_test.go\0', 'status-extra': status + b'junk\0'}.get(case, data)
 elif '--numstat' in args and '-z' in args:
     data = {'numstat-empty': b'', 'numstat-partial': stat[:-1], 'numstat-missing-path': b'814\t0\0',
+            'numstat-deletion': b'814\t1\t' + path + b'\0', 'numstat-zero': b'0\t0\t' + path + b'\0', 'numstat-one': b'1\t0\t' + path + b'\0',
             'numstat-invalid': b'bad\t0\t' + path + b'\0', 'numstat-negative': b'-1\t0\t' + path + b'\0',
             'numstat-binary': b'-\t-\t' + path + b'\0', 'numstat-duplicate': stat * 2,
             'numstat-unmatched': b'814\t0\tother_test.go\0', 'numstat-extra': stat[:-1] + b'\textra\0'}.get(case, data)
@@ -327,11 +337,20 @@ sys.exit(result.returncode)
 PY
 chmod +x "$SCRATCH/bin/git"
 for evidence in status-trailing status-path-partial status-missing-path status-empty status-unknown status-duplicate status-inconsistent status-unmatched status-extra \
-    numstat-empty numstat-partial numstat-missing-path numstat-invalid numstat-negative numstat-binary numstat-duplicate numstat-unmatched numstat-extra \
+    numstat-empty numstat-partial numstat-missing-path numstat-invalid numstat-negative numstat-binary numstat-duplicate numstat-unmatched numstat-extra numstat-deletion numstat-zero numstat-one \
     tree-partial tree-empty tree-duplicate tree-prefix tree-mode tree-type tree-oid tree-zero-oid tree-nonhex-oid tree-wrong-oid tree-path tree-extra \
     blob-failure blob-partial blob-identity blob-type blob-size blob-size-partial base-oid base-multiple head-oid head-partial; do
     PATH="$SCRATCH/bin:$PATH" REAL_GIT="$REAL_GIT" EVIDENCE_CASE="$evidence" check "$evidence" 1 size/xl 814
     REAL_GIT="$REAL_GIT" EVIDENCE_CASE="$evidence" check_wrapper_failure "$evidence"
 done
+new_fixture modified-evidence
+lines 814 old_test.go
+finish_fixture
+check modified-evidence 0 size/xl 813
+for evidence in numstat-deletion numstat-zero numstat-one; do
+    PATH="$SCRATCH/bin:$PATH" REAL_GIT="$REAL_GIT" EVIDENCE_CASE="$evidence" EVIDENCE_PATH=old_test.go check "modified-$evidence" 1 size/xl 813
+    REAL_GIT="$REAL_GIT" EVIDENCE_CASE="$evidence" EVIDENCE_PATH=old_test.go check_wrapper_failure "modified-$evidence"
+done
 rm "$SCRATCH/bin/git"
-echo "Existing cases: $EXISTING_CHECKS; new P2 regressions: $((CHECKS - EXISTING_CHECKS)); total: $CHECKS PASS."
+if [ "$CHECKS" -ne 166 ]; then echo 'FAIL: complete case count' >&2; exit 1; fi
+echo "Historical cases: $EXISTING_CHECKS original + 103 P2; new consistency cases: $((CHECKS - EXISTING_CHECKS - 103)); total: $CHECKS PASS."
