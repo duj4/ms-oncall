@@ -37,6 +37,7 @@ type Store struct {
 
 	updateByStatusAndService *sql.Stmt
 	updateByIDAndStatus      *sql.Stmt
+	selectActiveMultiAck     *sql.Stmt
 
 	escalate *sql.Stmt
 	epState  *sql.Stmt
@@ -143,6 +144,16 @@ func NewStore(ctx context.Context, db *sql.DB, logDB *alertlog.Store) (*Store, e
 			RETURNING id
 		`),
 
+		selectActiveMultiAck: p(`
+			SELECT a.id FROM alerts a
+			WHERE a.id = ANY($1::bigint[]) AND a.status = 'active'
+				AND NOT (a.id = ANY(COALESCE($2::bigint[], '{}'::bigint[])))
+				AND EXISTS (
+					SELECT 1 FROM escalation_policy_state state
+					JOIN escalation_policy_steps step ON step.id = state.escalation_policy_step_id
+					WHERE state.alert_id = a.id AND step.multi_ack
+				)
+		`),
 		escalate: p(`
 			UPDATE escalation_policy_state state
 			SET force_escalation = true
@@ -459,30 +470,52 @@ func (s *Store) UpdateManyAlertStatusScoped(ctx context.Context, status Status, 
 		t = alertlog.TypeClosed
 	}
 
-	var updatedIDs []int
-
 	err = gadb.New(tx).Alert_LockManyAlertServices(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := tx.StmtContext(ctx, s.updateByIDAndStatus).QueryContext(ctx, status, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id int
-		err = rows.Scan(&id)
+	readIDs := func(stmt *sql.Stmt, args ...any) ([]int, error) {
+		rows, err := tx.StmtContext(ctx, stmt).QueryContext(ctx, args...)
 		if err != nil {
 			return nil, err
 		}
-		updatedIDs = append(updatedIDs, id)
+		defer rows.Close()
+		var result []int
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			result = append(result, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	advancedIDs, err := readIDs(s.updateByIDAndStatus, status, ids)
+	if err != nil {
+		return nil, err
+	}
+	successfulIDs := advancedIDs
+	source := permission.Source(ctx)
+	if status == StatusActive && organizationID != nil && !permission.System(ctx) &&
+		permission.User(ctx) && permission.UserID(ctx) != "" && source != nil && source.Type == permission.SourceTypeAuthProvider {
+		// GraphQL validates human authority before supplying the Organization.
+		// The SELECT excludes newly advanced IDs, so each alert is logged once
+		// even if the input contained duplicates. Eligibility follows the live Step.
+		additionalIDs, err := readIDs(s.selectActiveMultiAck, ids, sqlutil.IntArray(advancedIDs))
+		if err != nil {
+			return nil, err
+		}
+		successfulIDs = append(successfulIDs, additionalIDs...)
 	}
 
-	// Logging Batch Updates for every alertID whose status was updated
-	err = s.logDB.LogManyTx(ctx, tx, updatedIDs, t, logMeta)
+	err = s.logDB.LogManyTx(ctx, tx, successfulIDs, t, logMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +525,7 @@ func (s *Store) UpdateManyAlertStatusScoped(ctx context.Context, status Status, 
 		return nil, err
 	}
 
-	return updatedIDs, nil
+	return successfulIDs, nil
 }
 
 func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, a *Alert) (*Alert, error) {
