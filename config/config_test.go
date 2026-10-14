@@ -104,7 +104,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Twilio.Voice*", func(t *testing.T) {
 		var cfg Config
 		cfg.Twilio.VoiceName = "Test"
-		assert.ErrorContains(t, cfg.Validate(), "Twilio.VoiceLanguage", "language should be required if name is set")
+		assert.NoError(t, cfg.Validate(), "dormant voice settings cannot constrain supported configuration")
 
 		cfg = Config{}
 		cfg.Twilio.VoiceName = "Test"
@@ -117,6 +117,6 @@ func TestConfig_Validate(t *testing.T) {
 
 		cfg = Config{}
 		cfg.Twilio.VoiceLanguage = "\x00" // non-ASCII value
-		assert.Error(t, cfg.Validate(), "language must be a valid string")
+		assert.NoError(t, cfg.Validate(), "dormant voice language is ignored")
 	})
 }

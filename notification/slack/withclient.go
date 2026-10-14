@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/slack-go/slack"
 	"github.com/target/goalert/config"
+	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/util"
 )
 
@@ -24,6 +25,9 @@ func waitContext(ctx context.Context, delay time.Duration) error {
 
 // withClient is a wrapper for slack.Client that adds retry logic.
 func (cs *ChannelSender) withClient(ctx context.Context, withFn func(*slack.Client) error) error {
+	if config.NotificationDestinationDisabled(DestTypeSlackChannel) {
+		return nfydest.ErrNotEnabled
+	}
 	opts := []slack.Option{
 		slack.OptionHTTPClient(cs.cfg.Client),
 	}

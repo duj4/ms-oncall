@@ -31,6 +31,9 @@ func (s *ChannelSender) UserGroupSender() *UserGroupSender {
 
 // Send implements notification.Sender.
 func (s *UserGroupSender) SendMessage(ctx context.Context, msg notification.Message) (*notification.SentMessage, error) {
+	if config.NotificationDestinationDisabled(DestTypeSlackUsergroup) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	err := permission.LimitCheckAny(ctx, permission.User, permission.System)
 	if err != nil {
 		return nil, err
