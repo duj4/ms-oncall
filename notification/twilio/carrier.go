@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/target/goalert/config"
+	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user/contactmethod"
@@ -61,6 +62,9 @@ func (c *Config) dbCarrierInfo(ctx context.Context, number string) (*CarrierInfo
 // CarrierInfo will return carrier information for the provided number. If fetch is true, it will fetch
 // data from the Twilio API if it is not available from the DB.
 func (c *Config) CarrierInfo(ctx context.Context, number string, fetch bool) (*CarrierInfo, error) {
+	if config.NotificationDestinationDisabled(DestTypeTwilioSMS) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	if c.CMStore == nil {
 		return nil, nil
 	}
@@ -78,6 +82,9 @@ func (c *Config) CarrierInfo(ctx context.Context, number string, fetch bool) (*C
 
 // FetchCarrierInfo will lookup carrier information for the provided number using the Twilio API.
 func (c Config) FetchCarrierInfo(ctx context.Context, number string) (info *CarrierInfo, err error) {
+	if config.NotificationDestinationDisabled(DestTypeTwilioSMS) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	if c.CMStore == nil {
 		return nil, nil
 	}

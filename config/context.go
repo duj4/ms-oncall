@@ -15,5 +15,5 @@ func (cfg Config) Context(ctx context.Context) context.Context {
 //
 // It panics if config is not available on the current context.
 func FromContext(ctx context.Context) Config {
-	return ctx.Value(contextKeyConfig).(Config)
+	return ctx.Value(contextKeyConfig).(Config).withProductPolicy()
 }

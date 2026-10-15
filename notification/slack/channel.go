@@ -158,6 +158,9 @@ func mapError(ctx context.Context, err error) error {
 }
 
 func (s *ChannelSender) ValidateChannel(ctx context.Context, id string) error {
+	if config.NotificationDestinationDisabled(DestTypeSlackChannel) {
+		return nfydest.ErrNotEnabled
+	}
 	err := permission.LimitCheckAny(ctx, permission.User, permission.System)
 	if err != nil {
 		return err
@@ -191,6 +194,9 @@ func (s *ChannelSender) ValidateChannel(ctx context.Context, id string) error {
 
 // Channel will lookup a single Slack channel for the bot.
 func (s *ChannelSender) Channel(ctx context.Context, channelID string) (*Channel, error) {
+	if config.NotificationDestinationDisabled(DestTypeSlackChannel) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	err := permission.LimitCheckAny(ctx, permission.User, permission.System)
 	if err != nil {
 		return nil, err
@@ -212,6 +218,9 @@ func (s *ChannelSender) Channel(ctx context.Context, channelID string) (*Channel
 }
 
 func (s *ChannelSender) Team(ctx context.Context, id string) (t *Team, err error) {
+	if config.NotificationDestinationDisabled(DestTypeSlackChannel) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	s.teamInfoMx.Lock()
 	defer s.teamInfoMx.Unlock()
 
@@ -288,6 +297,9 @@ func (s *ChannelSender) loadChannel(ctx context.Context, channelID string) (*Cha
 
 // ListChannels will return a list of channels visible to the slack bot.
 func (s *ChannelSender) ListChannels(ctx context.Context) ([]Channel, error) {
+	if config.NotificationDestinationDisabled(DestTypeSlackChannel) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	err := permission.LimitCheckAny(ctx, permission.User, permission.System)
 	if err != nil {
 		return nil, err
@@ -472,6 +484,9 @@ func chanTS(origChannelID, externalID string) (channelID, ts string) {
 }
 
 func (s *ChannelSender) SendMessage(ctx context.Context, msg notification.Message) (*notification.SentMessage, error) {
+	if config.NotificationDestinationDisabled(DestTypeSlackChannel) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	cfg := config.FromContext(ctx)
 
 	// Note: We don't use cfg.ApplicationName() here since that is configured in the Slack app as the bot name.
@@ -563,6 +578,9 @@ func (s *ChannelSender) SendMessage(ctx context.Context, msg notification.Messag
 }
 
 func (s *ChannelSender) tokenInfo(ctx context.Context) (*slack.AuthTestResponse, error) {
+	if config.NotificationDestinationDisabled(DestTypeSlackChannel) {
+		return nil, nfydest.ErrNotEnabled
+	}
 	cfg := config.FromContext(ctx)
 
 	s.teamMx.Lock()
