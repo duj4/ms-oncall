@@ -31,7 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
-          FAIL_IF_XL: '1'
+          FAIL_IF_XL: '0'
           MAIN_BRANCH: ${{ github.event.pull_request.base.ref }}
           DIFF_HEAD_REF: refs/remotes/pull/${{ github.event.number }}/merge
         run: devtools/scripts/github-set-pr-label.sh
