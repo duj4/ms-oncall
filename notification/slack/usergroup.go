@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/slack-go/slack"
-	"github.com/target/goalert/config"
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/validation"
@@ -53,9 +52,6 @@ func (s *ChannelSender) UserGroup(ctx context.Context, id string) (*UserGroup, e
 
 // User will lookup a single Slack user group.
 func (s *ChannelSender) _UserGroup(ctx context.Context, id string) (*UserGroup, error) {
-	if config.NotificationDestinationDisabled(DestTypeSlackUsergroup) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	err := permission.LimitCheckAny(ctx, permission.User, permission.System)
 	if err != nil {
 		return nil, err
@@ -83,9 +79,6 @@ func (s *ChannelSender) _UserGroup(ctx context.Context, id string) (*UserGroup, 
 
 // ListUserGroups will return a list of all Slack user groups.
 func (s *ChannelSender) ListUserGroups(ctx context.Context) ([]UserGroup, error) {
-	if config.NotificationDestinationDisabled(DestTypeSlackUsergroup) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	err := permission.LimitCheckAny(ctx, permission.User, permission.System)
 	if err != nil {
 		return nil, err

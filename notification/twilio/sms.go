@@ -86,9 +86,6 @@ func (s *SMS) MessageStatus(ctx context.Context, externalID string) (*notificati
 
 // Send implements the notification.Sender interface.
 func (s *SMS) SendMessage(ctx context.Context, msg notification.Message) (*notification.SentMessage, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioSMS) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	cfg := config.FromContext(ctx)
 	if !cfg.Twilio.Enable {
 		return nil, errors.New("Twilio provider is disabled")

@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	"github.com/slack-go/slack"
-	"github.com/target/goalert/config"
-	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/validation"
 )
@@ -30,9 +28,6 @@ func (s *ChannelSender) ValidateUser(ctx context.Context, id string) error {
 
 // User will lookup a single Slack user.
 func (s *ChannelSender) User(ctx context.Context, id string) (*User, error) {
-	if config.NotificationDestinationDisabled(DestTypeSlackDirectMessage) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	err := permission.LimitCheckAny(ctx, permission.User, permission.System)
 	if err != nil {
 		return nil, err

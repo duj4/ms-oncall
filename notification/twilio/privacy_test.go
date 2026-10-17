@@ -17,6 +17,7 @@ import (
 	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
+	"github.com/target/goalert/user/contactmethod"
 	"github.com/target/goalert/util/log"
 )
 
@@ -26,13 +27,9 @@ func (c9FailTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return nil, errors.New("failed dialing " + req.URL.String() + " +15551234567 c9-private-leak@example.invalid")
 }
 
-type c9StatusReceiver struct {
-	notification.Receiver
-	calls int
-}
+type c9StatusReceiver struct{ notification.Receiver }
 
-func (r *c9StatusReceiver) SetMessageStatus(context.Context, string, *notification.Status) error {
-	r.calls++
+func (c9StatusReceiver) SetMessageStatus(context.Context, string, *notification.Status) error {
 	return nil
 }
 
@@ -45,7 +42,6 @@ func TestC9TwilioCallbackStructuredLogs(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Twilio.Enable = true
 	ctx := cfg.Context(log.WithLogger(context.Background(), logger))
-	recv := new(c9StatusReceiver)
 	for _, status := range []string{"delivered", "failed to +15551234567"} {
 		for _, voice := range []bool{false, true} {
 			values := url.Values{"To": {"+15551234567"}, "From": {"+15550001111"}}
@@ -60,20 +56,19 @@ func TestC9TwilioCallbackStructuredLogs(t *testing.T) {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			response := httptest.NewRecorder()
 			if voice {
-				v := Voice{r: recv}
+				v := Voice{r: c9StatusReceiver{}}
 				v.ServeStatusCallback(response, req)
 			} else {
-				s := SMS{r: recv}
+				s := SMS{r: c9StatusReceiver{}}
 				s.ServeStatusCallback(response, req)
 			}
-			require.Equal(t, http.StatusForbidden, response.Code)
+			require.Equal(t, 200, response.Code)
 		}
 	}
 	require.NotContains(t, captured.String(), "+15551234567")
 	require.NotContains(t, captured.String(), "Number")
-	require.Contains(t, captured.String(), "Twilio provider is disabled")
-	require.NotContains(t, captured.String(), "SID")
-	require.Zero(t, recv.calls)
+	require.Contains(t, captured.String(), "TwilioSMS")
+	require.Contains(t, captured.String(), "SID")
 }
 
 func TestC9TwilioSDKDiagnostics(t *testing.T) {
@@ -90,9 +85,7 @@ func TestC9TwilioSDKDiagnostics(t *testing.T) {
 		require.Equal(t, "failed: [21614]", status.Details)
 		require.NotContains(t, status.Details, raw)
 	}
-	// Retain the upstream transport-error privacy regression independently of
-	// the product entry points, which now reject before invoking any transport.
-	client := &http.Client{Transport: c9FailTransport{}}
+	client := Config{Client: &http.Client{Transport: c9FailTransport{}}, BaseURL: "https://example.invalid/c9-super-secret-token", CMStore: new(contactmethod.Store)}
 	logger := log.NewLogger()
 	logger.EnableJSON()
 	logger.EnableDebug()
@@ -100,17 +93,11 @@ func TestC9TwilioSDKDiagnostics(t *testing.T) {
 	logger.SetOutput(&captured)
 	ctx := permission.SystemContext(log.WithLogger(context.Background(), logger), "C9ProviderTest")
 	ctx = config.Config{}.Context(ctx)
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://example.invalid/c9-super-secret-token", nil)
-	require.NoError(t, err)
-	_, err = client.Do(req)
-	err = nfymsg.ProviderError(err)
+	_, err := client.FetchCarrierInfo(ctx, "+15551234567")
 	require.Error(t, err)
 	require.True(t, retry.IsTemporaryError(err))
 	log.Log(ctx, err)
-	req, err = http.NewRequestWithContext(ctx, "GET", "https://example.invalid/private/c9-super-secret-token", nil)
-	require.NoError(t, err)
-	_, err = client.Do(req)
-	err = nfymsg.ProviderError(err)
+	_, err = client.get(ctx, "https://example.invalid/private/c9-super-secret-token")
 	require.Error(t, err)
 	log.Debug(ctx, err)
 	for _, secret := range []string{"+15551234567", "c9-private-leak@example.invalid", "c9-super-secret-token"} {

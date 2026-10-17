@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/target/goalert/config"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/validation"
@@ -61,13 +60,7 @@ func (r *Registry) StubNotifiers() {
 	r.stubSender = true
 }
 
-func (r *Registry) Provider(id string) Provider {
-	// Excluded IDs have the same safe error contract as unavailable types.
-	if config.NotificationDestinationDisabled(id) {
-		return nil
-	}
-	return r.providers[id]
-}
+func (r *Registry) Provider(id string) Provider { return r.providers[id] }
 
 func (r *Registry) TypeInfo(ctx context.Context, typeID string) (*TypeInfo, error) {
 	p := r.Provider(typeID)
@@ -97,7 +90,7 @@ func (r *Registry) LookupTypeName(ctx context.Context, typeID string) (string, e
 }
 
 func (r *Registry) RegisterProvider(ctx context.Context, p Provider) {
-	if r.providers[p.ID()] != nil {
+	if r.Provider(p.ID()) != nil {
 		panic(fmt.Sprintf("provider with ID %s already registered", p.ID()))
 	}
 
@@ -128,9 +121,6 @@ func (r *Registry) ValidateField(ctx context.Context, typeID, fieldID, value str
 func (r *Registry) Types(ctx context.Context) ([]TypeInfo, error) {
 	var out []TypeInfo
 	for _, id := range r.ids {
-		if config.NotificationDestinationDisabled(id) {
-			continue // Filter before TypeInfo, which may query provider metadata.
-		}
 		ti, err := r.providers[id].TypeInfo(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("get type info for %s: %w", id, err)
