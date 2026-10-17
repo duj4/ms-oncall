@@ -14,7 +14,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/notification"
-	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/notification/nfymsg"
 	"github.com/target/goalert/util/log"
 )
@@ -92,9 +91,6 @@ func (c *Config) httpClient() *http.Client {
 }
 
 func (c *Config) get(ctx context.Context, urlStr string) (*http.Response, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioSMS) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return nil, err
@@ -110,9 +106,6 @@ func (c *Config) get(ctx context.Context, urlStr string) (*http.Response, error)
 }
 
 func (c *Config) post(ctx context.Context, urlStr string, v url.Values) (*http.Response, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioSMS) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	req, err := http.NewRequest("POST", urlStr, bytes.NewBufferString(v.Encode()))
 	if err != nil {
 		return nil, err
@@ -128,9 +121,6 @@ func (c *Config) post(ctx context.Context, urlStr string, v url.Values) (*http.R
 
 // GetSMS will return the current state of a Message from Twilio.
 func (c *Config) GetSMS(ctx context.Context, sid string) (*Message, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioSMS) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	cfg := config.FromContext(ctx)
 	urlStr := c.url("Accounts", cfg.Twilio.AccountSID, "Messages", sid+".json")
 	resp, err := c.get(ctx, urlStr)
@@ -164,9 +154,6 @@ func (c *Config) GetSMS(ctx context.Context, sid string) (*Message, error) {
 
 // GetVoice will return the current state of a voice call from Twilio.
 func (c *Config) GetVoice(ctx context.Context, sid string) (*Call, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioVoice) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	cfg := config.FromContext(ctx)
 	urlStr := c.url("Accounts", cfg.Twilio.AccountSID, "Calls", sid+".json")
 	resp, err := c.post(ctx, urlStr, nil)
@@ -271,9 +258,6 @@ func (sms *SMSOptions) StatusCallbackURL(cfg config.Config) (string, error) {
 
 // StartVoice will initiate a voice call to the given number.
 func (c *Config) StartVoice(ctx context.Context, to string, o *VoiceOptions) (*Call, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioVoice) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	cfg := config.FromContext(ctx)
 	v := make(url.Values)
 	v.Set("To", to)
@@ -333,9 +317,6 @@ func (c *Config) StartVoice(ctx context.Context, to string, o *VoiceOptions) (*C
 
 // SendSMS will send an SMS using Twilio.
 func (c *Config) SendSMS(ctx context.Context, to, body string, o *SMSOptions) (*Message, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioSMS) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	if o == nil {
 		o = &SMSOptions{}
 	}

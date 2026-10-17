@@ -172,9 +172,6 @@ func spellCode(code string) string {
 
 // Send implements the notification.Sender interface.
 func (v *Voice) SendMessage(ctx context.Context, msg notification.Message) (*notification.SentMessage, error) {
-	if config.NotificationDestinationDisabled(DestTypeTwilioVoice) {
-		return nil, nfydest.ErrNotEnabled
-	}
 	cfg := config.FromContext(ctx)
 	if !cfg.Twilio.Enable {
 		return nil, errors.New("Twilio provider is disabled")

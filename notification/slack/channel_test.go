@@ -11,11 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/config"
-	"github.com/target/goalert/notification/nfydest"
 )
 
 func TestChannelSender_LoadChannels(t *testing.T) {
-	var requests int
 	var waitUntil time.Time
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +42,6 @@ func TestChannelSender_LoadChannels(t *testing.T) {
 		_, _ = io.WriteString(w, `{"ok":true,"team_id":"team_1"}`)
 	})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
 		t.Log("Request:", r.URL.String())
 		mux.ServeHTTP(w, r)
 	}))
@@ -58,8 +55,13 @@ func TestChannelSender_LoadChannels(t *testing.T) {
 	require.NoError(t, err)
 
 	ch, err := sender.loadChannels(ctx)
-	require.ErrorIs(t, err, nfydest.ErrNotEnabled)
-	assert.Empty(t, ch)
-	assert.Zero(t, requests, "disabled policy must prevent pagination and retry requests")
+	require.NoError(t, err)
 
+	assert.ElementsMatch(t, []Channel{
+		{ID: "C1", Name: "#channel1", TeamID: "team_1"},
+		{ID: "C2", Name: "#channel2", TeamID: "team_1"},
+		{ID: "C3", Name: "#channel3", TeamID: "team_1"},
+		{ID: "C4", Name: "#channel4", TeamID: "team_1"},
+		{ID: "C5", Name: "#channel5", TeamID: "team_1"},
+	}, ch)
 }

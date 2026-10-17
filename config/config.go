@@ -431,13 +431,6 @@ func validateEnable(prefix string, isEnabled bool, vals ...string) error {
 
 // Validate will check that the Config values are valid.
 func (cfg Config) Validate() error {
-	return validateConfig(cfg)
-}
-
-func validateConfig(cfg Config) error {
-	// Validate a copy without dormant provider settings; retain raw import data.
-	cfg.Twilio = Config{}.Twilio
-	cfg.Slack = Config{}.Slack
 	var err error
 	if cfg.General.PublicURL != "" {
 		err = validate.Many(

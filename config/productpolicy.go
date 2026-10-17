@@ -10,22 +10,7 @@ func CalendarSubscriptionsDisabled() bool { return true }
 // target. Configuration and caller privileges cannot enable dormant Labels.
 func LabelsDisabled() bool { return true }
 
-// NotificationDestinationDisabled excludes only the retained upstream provider
-// IDs outside MS OnCall product scope. Stored settings cannot enable them.
-func NotificationDestinationDisabled(id string) bool {
-	switch id {
-	case "builtin-twilio-sms", "builtin-twilio-voice",
-		"builtin-slack-dm", "builtin-slack-channel", "builtin-slack-usergroup":
-		return true
-	}
-	return false
-}
-
 func (cfg Config) withProductPolicy() Config {
-	cfg.Twilio.Enable = false
-	cfg.Twilio.SMSCarrierLookup = false
-	cfg.Slack.Enable = false
-	cfg.Slack.InteractiveMessages = false
 	cfg.General.DisableCalendarSubscriptions = CalendarSubscriptionsDisabled()
 	if LabelsDisabled() {
 		cfg.General.DisableLabelCreation = true
