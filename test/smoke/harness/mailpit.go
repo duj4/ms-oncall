@@ -3,11 +3,13 @@ package harness
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/mail"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -25,9 +27,14 @@ type mailpit struct {
 	smtpAddr string
 	apiAddr  string
 	cleanup  func() error
+	database string
+	cmd      *exec.Cmd
+	done     <-chan struct{}
 }
 
 var mailpitStartLock sync.Mutex
+
+const mailpitStopTimeout = 5 * time.Second
 
 func newMailpit(t *testing.T) (mp *mailpit) {
 	t.Helper()
@@ -42,25 +49,110 @@ func newMailpit(t *testing.T) (mp *mailpit) {
 	var output bytes.Buffer
 	cmdpath := filepath.Join(filepath.Dir(file), "../../../bin/tools/mailpit")
 
-	cmd := exec.Command(cmdpath, "-s", addrs[0], "-l", addrs[1], "--allow-internal-http-requests")
+	// Keep SQLite (including WAL/SHM) and any child-created temporary files
+	// together. Unlike t.TempDir, this cleanup can retain storage if the child
+	// cannot be reaped, rather than deleting files still in use.
+	dir, err := os.MkdirTemp("", "goalert-mailpit-")
+	require.NoError(t, err, "expected to create mailpit storage")
+	database := filepath.Join(dir, "mailpit.db")
+	cmd := exec.Command(cmdpath, "-s", addrs[0], "-l", addrs[1], "--allow-internal-http-requests", "--database", database)
+	cmd.Env = append(os.Environ(), "TMPDIR="+dir, "TMP="+dir, "TEMP="+dir)
 	cmd.Stdout, cmd.Stderr = &output, &output
+	cmd.WaitDelay = mailpitStopTimeout
+	done := make(chan struct{})
+	var waitErr error // Read only after done closes, including output/ProcessState.
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			select {
+			case <-done:
+			default:
+				t.Errorf("mailpit has not been reaped; retaining storage: %s", dir)
+				return
+			}
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove mailpit storage: %v", err)
+		}
+	})
 	require.NoError(t, cmd.Start(), "expected to start mailpit")
 
-	require.Eventually(t, func() bool {
-		// check if the process is still running
-		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-			t.Error(output.String())
-			return false
+	cleanup := sync.OnceValue(func() error {
+		select {
+		case <-done:
+			return waitErr
+		default:
 		}
-		return isListening(addrs[0]) && isListening(addrs[1])
-	}, 30*time.Second, 100*time.Millisecond, "expected to find mailpit listening on ports")
+		// Mailpit handles Interrupt by closing its database before exiting.
+		if err := cmd.Process.Signal(os.Interrupt); err == nil {
+			timer := time.NewTimer(mailpitStopTimeout)
+			defer timer.Stop()
+			select {
+			case <-done:
+				return waitErr
+			case <-timer.C:
+			}
+		} else if !errors.Is(err, os.ErrProcessDone) {
+			t.Logf("mailpit interrupt unavailable; forcing shutdown: %v", err)
+		}
+		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("kill mailpit: %w", err)
+		}
+		timer := time.NewTimer(mailpitStopTimeout)
+		defer timer.Stop()
+		select {
+		case <-done:
+			t.Logf("mailpit forced shutdown reaped: %v", waitErr)
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
+				return nil // A forced kill is expected to have a nonzero exit.
+			}
+			return waitErr
+		case <-timer.C:
+			return fmt.Errorf("mailpit did not finish Wait within %s after kill", mailpitStopTimeout)
+		}
+	})
+	t.Cleanup(func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("stop mailpit: %v", err)
+		}
+		if t.Failed() {
+			select {
+			case <-done:
+				t.Log(output.String())
+			default:
+				// The output writer may still be running; do not race with it.
+			}
+		}
+	})
+	go func() {
+		waitErr = cmd.Wait() // The sole reaper, also observes early startup exit.
+		close(done)
+	}()
 
-	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	return &mailpit{
+	mp = &mailpit{
 		t:        t,
 		smtpAddr: addrs[0],
 		apiAddr:  addrs[1],
-		cleanup:  cmd.Process.Kill,
+		cleanup:  cleanup,
+		database: database,
+		cmd:      cmd,
+		done:     done,
+	}
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			t.Fatalf("mailpit exited before readiness: %v\n%s", waitErr, output.String())
+		case <-timer.C:
+			t.Fatal("expected to find mailpit listening on ports")
+		case <-ticker.C:
+			if isListening(addrs[0]) && isListening(addrs[1]) {
+				return mp
+			}
+		}
 	}
 }
 
