@@ -15,10 +15,10 @@ import (
 type Store struct {
 	db *sql.DB
 
-	insert       *sql.Stmt
-	delete       *sql.Stmt
-	findAll      *sql.Stmt
-	lookupUserID *sql.Stmt
+	insert      *sql.Stmt
+	delete      *sql.Stmt
+	findAll     *sql.Stmt
+	deleteOwned *sql.Stmt
 }
 
 // NewDB will create a DB backend from a sql.DB. An error will be returned if statements fail to prepare.
@@ -30,7 +30,20 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	s.insert = p("INSERT INTO user_notification_rules (id,user_id,delay_minutes,contact_method_id) VALUES ($1,$2,$3,$4)")
 	s.findAll = p("SELECT id,user_id,delay_minutes,contact_method_id FROM user_notification_rules WHERE user_id = $1")
 	s.delete = p("DELETE FROM user_notification_rules WHERE id = any($1)")
-	s.lookupUserID = p("SELECT user_id FROM user_notification_rules WHERE id = any($1)")
+	// Lock the complete existing set before checking ownership, including when
+	// another transaction has changed a target while this statement was waiting.
+	s.deleteOwned = p(`WITH targets AS MATERIALIZED (
+		SELECT id, user_id FROM user_notification_rules
+		WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE
+	), ownership AS (
+		SELECT count(*) FILTER (WHERE user_id <> $2::uuid) = 0 AS allowed FROM targets
+	), deleted AS (
+		DELETE FROM user_notification_rules
+		WHERE id IN (SELECT id FROM targets) AND user_id = $2::uuid
+			AND (SELECT allowed FROM ownership)
+		RETURNING id
+	)
+	SELECT allowed FROM ownership`)
 
 	return s, prep.Err
 }
@@ -93,28 +106,20 @@ func (s *Store) DeleteTx(ctx context.Context, tx *sql.Tx, ids ...string) error {
 		return err
 	}
 
-	rows, err := wrapTx(ctx, tx, s.lookupUserID).QueryContext(ctx, sqlutil.UUIDArray(ids))
+	owner, err := uuid.Parse(permission.UserID(ctx))
+	if err != nil || owner == uuid.Nil {
+		return permission.NewAccessDenied("")
+	}
+
+	var allowed bool
+	err = wrapTx(ctx, tx, s.deleteOwned).QueryRowContext(ctx, sqlutil.UUIDArray(ids), owner).Scan(&allowed)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	var checks []permission.Checker
-	var userID string
-	for rows.Next() {
-		err = rows.Scan(&userID)
-		if err != nil {
-			return err
-		}
-		checks = append(checks, permission.MatchUser(userID))
+	if !allowed {
+		return permission.NewAccessDenied("")
 	}
-
-	err = permission.LimitCheckAny(ctx, checks...)
-	if err != nil {
-		return err
-	}
-	_, err = wrapTx(ctx, tx, s.delete).ExecContext(ctx, sqlutil.UUIDArray(ids))
-	return err
+	return nil
 }
 
 // FindAll implements the NotificationRuleStore interface.

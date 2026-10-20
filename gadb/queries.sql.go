@@ -2189,6 +2189,40 @@ func (q *Queries) DeleteContactMethod(ctx context.Context, dollar_1 []uuid.UUID)
 	return err
 }
 
+const deleteContactMethodsOwnedBy = `-- name: DeleteContactMethodsOwnedBy :one
+WITH targets AS MATERIALIZED (
+    SELECT id, user_id
+    FROM user_contact_methods
+    WHERE id = ANY ($1::uuid[])
+    ORDER BY id
+    FOR UPDATE
+), ownership AS (
+    SELECT count(*) FILTER (WHERE user_id <> $2::uuid) = 0 AS allowed
+    FROM targets
+), deleted AS (
+    DELETE FROM user_contact_methods
+    WHERE id IN (SELECT id FROM targets)
+        AND user_id = $2::uuid
+        AND (SELECT allowed FROM ownership)
+    RETURNING id
+)
+SELECT allowed FROM ownership
+`
+
+type DeleteContactMethodsOwnedByParams struct {
+	Ids    []uuid.UUID
+	UserID uuid.UUID
+}
+
+// Lock the complete existing set before checking ownership. Missing IDs remain
+// a no-op; duplicates are set members. The final DELETE is owner constrained.
+func (q *Queries) DeleteContactMethodsOwnedBy(ctx context.Context, arg DeleteContactMethodsOwnedByParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, deleteContactMethodsOwnedBy, pq.Array(arg.Ids), arg.UserID)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
 const deleteManyCalSub = `-- name: DeleteManyCalSub :exec
 DELETE FROM user_calendar_subscriptions
 WHERE id = ANY ($1::uuid[])

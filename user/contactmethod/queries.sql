@@ -26,6 +26,27 @@ WHERE
 DELETE FROM user_contact_methods
 WHERE id = ANY ($1::uuid[]);
 
+-- name: DeleteContactMethodsOwnedBy :one
+-- Lock the complete existing set before checking ownership. Missing IDs remain
+-- a no-op; duplicates are set members. The final DELETE is owner constrained.
+WITH targets AS MATERIALIZED (
+    SELECT id, user_id
+    FROM user_contact_methods
+    WHERE id = ANY (@ids::uuid[])
+    ORDER BY id
+    FOR UPDATE
+), ownership AS (
+    SELECT count(*) FILTER (WHERE user_id <> @user_id::uuid) = 0 AS allowed
+    FROM targets
+), deleted AS (
+    DELETE FROM user_contact_methods
+    WHERE id IN (SELECT id FROM targets)
+        AND user_id = @user_id::uuid
+        AND (SELECT allowed FROM ownership)
+    RETURNING id
+)
+SELECT allowed FROM ownership;
+
 -- name: ContactMethodFineOne :one
 SELECT
     *
