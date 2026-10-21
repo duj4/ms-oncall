@@ -432,11 +432,12 @@ func TestCMNROwnershipConcurrent(t *testing.T) {
 					require.True(t, permission.IsPermissionError(workerErr), "%v", workerErr)
 				}
 				want := maps.Clone(before)
-				if operation == "own_delete" {
+				switch operation {
+				case "own_delete":
 					want = cmnrWithout(before, f, typ, ids[:2])
-				} else if operation == "delete" {
+				case "delete":
 					want = cmnrWithout(before, f, typ, ids[:1])
-				} else {
+				default:
 					// The one deliberate authorized concurrent metadata change is
 					// the only permitted difference; all other contents remain exact.
 					var row string
