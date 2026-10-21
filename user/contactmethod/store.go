@@ -174,23 +174,22 @@ func (s *Store) Delete(ctx context.Context, dbtx gadb.DBTX, ids ...string) error
 		return err
 	}
 
-	rows, err := gadb.New(dbtx).ContactMethodLookupUserID(ctx, uids)
+	owner, err := uuid.Parse(permission.UserID(ctx))
+	if err != nil || owner == uuid.Nil {
+		return permission.NewAccessDenied("")
+	}
+
+	allowed, err := gadb.New(dbtx).DeleteContactMethodsOwnedBy(ctx, gadb.DeleteContactMethodsOwnedByParams{
+		Ids:    uids,
+		UserID: owner,
+	})
 	if err != nil {
 		return err
 	}
-
-	var checks []permission.Checker
-	for _, id := range rows {
-		checks = append(checks, permission.MatchUser(id.String()))
+	if !allowed {
+		return permission.NewAccessDenied("")
 	}
-
-	err = permission.LimitCheckAny(ctx, checks...)
-	if err != nil {
-		return err
-	}
-
-	err = gadb.New(dbtx).DeleteContactMethod(ctx, uids)
-	return err
+	return nil
 }
 
 // FindOneTx finds the contact method from the database using the provided ID within a transaction.
