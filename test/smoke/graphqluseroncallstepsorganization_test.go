@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -436,27 +435,12 @@ func TestUserOnCallStepsResolverAuthority(t *testing.T) {
 
 func TestGraphQLUserOnCallStepsAPIKeyCompatibility(t *testing.T) {
 	h := onCallStepsHarness(t)
-	created := stepOrganizationPost(t, h, map[string]any{
-		"query": `mutation CreateKey($expires: ISOTimestamp!, $query: String!) {
-		 createGQLAPIKey(input: {name: "on-call-steps-compatibility", description: "on-call steps compatibility test", expiresAt: $expires, role: admin, query: $query}) {token}
-		}`,
-		"variables": map[string]any{"expires": time.Now().Add(time.Hour).Format(time.RFC3339), "query": onCallStepsDocument},
-	}, h.GraphQLToken(harness.DefaultGraphQLAdminUserID), false)
-	require.Empty(t, created.Errors)
-	var key struct{ CreateGQLAPIKey struct{ Token string } }
-	require.NoError(t, json.Unmarshal(created.Data, &key))
-	require.True(t, key.CreateGQLAPIKey.Token != "", "test API key must be created")
-	for _, tc := range []struct {
-		target string
-		want   []string
-	}{
-		{"user-a", []string{"a1", "a2", "a3", "b1"}},
-		{"user-b", []string{"a1", "a2", "a3", "b1"}},
-		{"foreign-only", []string{"b1"}},
-	} {
-		t.Run(tc.target, func(t *testing.T) {
-			response := onCallStepsHTTP(t, h, tc.target, key.CreateGQLAPIKey.Token, true)
-			onCallStepsCheckHTTP(t, response, tc.target, tc.want...)
+	token := legacyRetirementToken(t, h, onCallStepsDocument)
+	for _, target := range []string{"user-a", "user-b", "foreign-only"} {
+		t.Run(target, func(t *testing.T) {
+			legacyRetirementDenied(t, h, token, map[string]any{
+				"operationName": "OnCallSteps", "variables": map[string]string{"id": onCallStepsID(target)},
+			})
 		})
 	}
 }

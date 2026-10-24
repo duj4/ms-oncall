@@ -332,11 +332,11 @@ func TestSendSignalOrganizationRequestBoundAndNonHumanCompatibility(t *testing.T
 	r = h.query(h.users[0], sendSignalOrganizationQuery(h.services[1], "subsequent-Org-B", `{message:"allowed"}`))
 	require.Empty(t, r.Errors)
 
-	// Exercise the actual existing API-key HTTP route; credentials are created
-	// only in this disposable DB, held in memory, and never logged.
+	// Legacy Machine authentication is retired. Build a historical fixture
+	// directly in this disposable DB and verify denial before enqueue effects.
 	query := `mutation($input:SendSignalInput!){sendSignal(input:$input)}`
-	_, token, err := h.app.APIKeyStore.CreateAdminGraphQLKey(permission.UserContext(context.Background(), h.admin, permission.RoleAdmin), apikey.NewAdminGQLKeyOpts{Name: "C6 test key", Role: permission.RoleUser, Query: query, Expires: time.Now().Add(time.Hour)})
-	require.NoError(t, err)
+	_, token := insertLegacyGraphQLKey(t, h.calendarPolicyRuntime, apikey.GQLPolicy{Version: 1, Role: permission.RoleUser, Query: query}, time.Now().Add(time.Hour), false)
+	before = h.state(t)
 	for i, serviceID := range h.services {
 		payload, err := json.Marshal(map[string]any{"query": query, "variables": map[string]any{"input": map[string]any{"serviceID": serviceID, "dest": map[string]any{"type": h.provider.ID(), "args": map[string]string{"target": fmt.Sprintf("api-key-%d", i)}}, "params": map[string]string{"message": "compatibility"}}}})
 		require.NoError(t, err)
@@ -344,12 +344,9 @@ func TestSendSignalOrganizationRequestBoundAndNonHumanCompatibility(t *testing.T
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
-		code, body := h.do(req)
-		require.Equal(t, http.StatusOK, code)
-		var result calendarGraphQLResult
-		require.NoError(t, json.Unmarshal(body, &result))
-		require.Empty(t, result.Errors)
-		require.JSONEq(t, `true`, string(result.Data["sendSignal"]))
+		code, _ := h.do(req)
+		require.Equal(t, http.StatusUnauthorized, code)
+		require.Equal(t, before, h.state(t))
 	}
 	for i, serviceID := range h.services {
 		ctx := expflag.Context(permission.SystemContext(context.Background(), "C6Test"), expflag.FlagSet{expflag.UnivKeys})
