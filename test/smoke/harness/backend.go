@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type expectedBackendError struct {
@@ -67,7 +69,7 @@ func (h *Harness) ExpectBackendError(substr string) func() {
 		}
 		h.mx.Unlock()
 		if pending {
-			h.t.Errorf("expected backend error containing %q", substr)
+			h.t.Error("expected backend error was not observed (match text withheld)")
 			return
 		}
 
@@ -91,7 +93,7 @@ func (h *Harness) watchBackendLogs(r io.Reader) {
 			// writers don't block forever. Without this, a parse failure here
 			// can deadlock app startup/shutdown.
 			if !h.isClosing() {
-				h.t.Errorf("failed to read JSON logs: %v", err)
+				h.t.Error("failed to read JSON logs (details withheld)")
 			}
 			_, _ = io.Copy(io.Discard, r)
 			return
@@ -109,7 +111,7 @@ func (h *Harness) watchBackendLogs(r io.Reader) {
 			URL          string
 		}
 		if err := json.Unmarshal(raw, &entry); err != nil {
-			h.t.Logf("Backend: failed to parse log entry: %v\n%s", err, string(raw))
+			h.t.Log("Backend: failed to parse log entry (details withheld)")
 			continue
 		}
 
@@ -126,10 +128,34 @@ func (h *Harness) watchBackendLogs(r io.Reader) {
 				// ignore printed SQL errors
 				continue
 			}
-			h.t.Errorf("Backend: %s(%s) %s: %s\n%s", strings.ToUpper(entry.Level), entry.Source, string(entry.Error), entry.Message, string(raw))
+			h.t.Errorf("Backend: %s: %s", safeBackendLevel(entry.Level), safeBackendError(entry.Error))
 			continue
 		} else {
-			h.t.Logf("Backend: %s %s", strings.ToUpper(entry.Level), entry.Message)
+			h.t.Logf("Backend: %s: %s", safeBackendLevel(entry.Level), safeBackendError(entry.Error))
 		}
 	}
+}
+
+// Free-form backend fields (including msg, Source and raw JSON) can contain a
+// DSN even at non-error levels. Keep matching and failure decisions on the
+// original entry above, but only render allowlisted diagnostic fields.
+func safeBackendLevel(level string) string {
+	switch level {
+	case "trace", "debug", "info", "warn", "warning", "error", "fatal", "panic",
+		"ignore[trace]", "ignore[debug]", "ignore[info]", "ignore[warn]", "ignore[warning]",
+		"ignore[error]", "ignore[fatal]", "ignore[panic]":
+		return strings.ToUpper(level)
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func safeBackendError(raw json.RawMessage) string {
+	var fields struct {
+		Code string
+	}
+	if json.Unmarshal(raw, &fields) == nil && fields.Code != "" {
+		return safeDBError(&pgconn.PgError{Code: fields.Code})
+	}
+	return "log details withheld"
 }
