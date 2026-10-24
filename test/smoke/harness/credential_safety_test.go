@@ -50,7 +50,7 @@ func (credentialRollbackDriver) Open(mode string) (driver.Conn, error) {
 }
 func (credentialRollbackConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (credentialRollbackConn) Close() error                        { return nil }
-func (c credentialRollbackConn) Begin() (driver.Tx, error)         { return credentialRollbackTx{c.mode}, nil }
+func (c credentialRollbackConn) Begin() (driver.Tx, error)         { return credentialRollbackTx(c), nil }
 func (credentialRollbackTx) Commit() error                         { return nil }
 func (tx credentialRollbackTx) Rollback() error {
 	switch tx.mode {
