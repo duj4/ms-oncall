@@ -155,6 +155,13 @@ type App struct {
 
 // NewApp constructs a new App and binds the listening socket.
 func NewApp(c Config, pool *pgxpool.Pool) (*App, error) {
+	// Reject SysAPI before opening the database or binding HTTP/status sockets.
+	// Startup has not served those sockets yet, so HTTP Shutdown cannot clean
+	// them up if a later SysAPI configuration check fails.
+	if err := c.validateSysAPI(); err != nil {
+		return nil, err
+	}
+
 	if c.Logger == nil {
 		return nil, errors.New("Logger is required")
 	}

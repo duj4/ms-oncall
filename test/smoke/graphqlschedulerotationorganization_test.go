@@ -197,49 +197,25 @@ func TestGraphQLScheduleRotationSameOrganization(t *testing.T) {
 		}
 	})
 
-	t.Run("API key compatibility and human removal of an unavailable relationship", func(t *testing.T) {
-		// Create the cross-Organization relationship through the supported
-		// non-human mutation path, then prove that a human can remove it.
+	t.Run("retired API key and human removal of an unavailable historical relationship", func(t *testing.T) {
 		const document = `mutation ScheduleRotationCompatibility($scheduleID: ID!, $rotationID: ID!) {
 			updateScheduleTarget(input: {scheduleID: $scheduleID, target: {type: rotation, id: $rotationID}, rules: [{}, {}]})
 		}`
-		createdResponse := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
-			mutation CreateScheduleRotationCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
-				createGQLAPIKey(input: {
-					name: "schedule-rotation-compatibility"
-					description: "schedule rotation compatibility smoke"
-					expiresAt: $expires
-					role: admin
-					query: $query
-				}) { token }
-			}
-		`, "CreateScheduleRotationCompatibilityKey", map[string]any{
-			"expires": time.Now().Add(time.Hour).Format(time.RFC3339),
-			"query":   document,
-		})
-		require.Empty(t, createdResponse.Errors)
-		var created struct{ CreateGQLAPIKey struct{ Token string } }
-		require.NoError(t, json.Unmarshal(createdResponse.Data, &created))
-		require.NotEmpty(t, created.CreateGQLAPIKey.Token)
-		body, err := json.Marshal(map[string]any{
+		token := legacyRetirementToken(t, h, document)
+		beforeDenied := snapshot(t)
+		legacyRetirementDenied(t, h, token, map[string]any{
 			"operationName": "ScheduleRotationCompatibility",
-			"variables": map[string]string{
-				"scheduleID": h.UUID("schedule-a"),
-				"rotationID": h.UUID("rotation-b"),
-			},
+			"variables":     map[string]string{"scheduleID": h.UUID("schedule-a"), "rotationID": h.UUID("rotation-b")},
 		})
+		require.Equal(t, beforeDenied, snapshot(t), "retired Machine must not create schedule rules")
+		require.Zero(t, rotationRuleCount(t, h.UUID("rotation-b")))
+
+		// Test-only historical rows satisfy the real foreign keys while modeling
+		// an old cross-Organization relationship. No production API bypass or
+		// retired credential is used to prepare the Human cleanup regression.
+		_, err := h.App().DB().Exec(`INSERT INTO schedule_rules (schedule_id, tgt_rotation_id)
+			VALUES ($1, $2), ($1, $2)`, h.UUID("schedule-a"), h.UUID("rotation-b"))
 		require.NoError(t, err)
-		req, err := http.NewRequest(http.MethodPost, h.URL()+"/api/graphql", bytes.NewReader(body))
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+created.CreateGQLAPIKey.Token)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		var result response
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
-		success(t, &result)
 		require.Equal(t, 2, rotationRuleCount(t, h.UUID("rotation-b")))
 
 		before := snapshot(t)

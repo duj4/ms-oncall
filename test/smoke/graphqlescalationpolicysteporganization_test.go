@@ -450,42 +450,13 @@ func TestGraphQLEscalationPolicyStepParentOrganizationAPIKeyCompatibility(t *tes
 			actions: [{type: "builtin-user", args: {user_id: $user}}]}) {id}
 		updated: updateEscalationPolicyStep(input: {id: $step, delayMinutes: 8, actions: []})
 	}`
-	created := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
-		mutation CreateStepCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
-			createGQLAPIKey(input: {name: "step-parent-compatibility", description: "Step compatibility smoke",
-				expiresAt: $expires, role: admin, query: $query}) {token}
-		}
-	`, "CreateStepCompatibilityKey", map[string]any{
-		"expires": time.Now().Add(time.Hour).Format(time.RFC3339), "query": document,
-	})
-	require.Empty(t, created.Errors)
-	var key struct{ CreateGQLAPIKey struct{ Token string } }
-	require.NoError(t, json.Unmarshal(created.Data, &key))
-	require.NotEmpty(t, key.CreateGQLAPIKey.Token)
-	response := stepOrganizationPost(t, h, map[string]any{
+	token := legacyRetirementToken(t, h, document)
+	before := stepOrganizationSnapshot(t, h)
+	legacyRetirementDenied(t, h, token, map[string]any{
 		"operationName": "StepCompatibility",
 		"variables":     map[string]string{"policy": h.UUID("policy-b"), "step": h.UUID("step-b1"), "user": h.UUID("user-a")},
-	}, key.CreateGQLAPIKey.Token, true)
-	require.Empty(t, response.Errors)
-	var result struct {
-		Created struct{ ID string }
-		Updated bool
-	}
-	require.NoError(t, json.Unmarshal(response.Data, &result))
-	require.True(t, result.Updated)
-	var policyID, userID string
-	var delay, actionCount int
-	err := h.App().DB().QueryRow(`
-		SELECT s.escalation_policy_id, a.user_id
-		FROM escalation_policy_steps s JOIN escalation_policy_actions a ON a.escalation_policy_step_id = s.id WHERE s.id = $1
-	`, result.Created.ID).Scan(&policyID, &userID)
-	require.NoError(t, err)
-	require.Equal(t, h.UUID("policy-b"), policyID)
-	require.Equal(t, h.UUID("user-a"), userID)
-	require.NoError(t, h.App().DB().QueryRow(`SELECT delay FROM escalation_policy_steps WHERE id = $1`, h.UUID("step-b1")).Scan(&delay))
-	require.Equal(t, 8, delay)
-	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM escalation_policy_actions WHERE escalation_policy_step_id = $1`, h.UUID("step-b1")).Scan(&actionCount))
-	require.Zero(t, actionCount)
+	})
+	require.Equal(t, before, stepOrganizationSnapshot(t, h), "retired Machine must not create, update or partially commit business rows")
 }
 
 func TestGraphQLEscalationPolicyStepParentOrganizationFailsClosed(t *testing.T) {

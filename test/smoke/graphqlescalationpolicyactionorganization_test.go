@@ -441,35 +441,16 @@ func TestGraphQLEscalationPolicyActionOrganizationAPIKeyCompatibility(t *testing
 			{type: "builtin-rotation", args: {rotation_id: $rotation}}
 		]})
 	}`
-	created := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
-		mutation CreateActionCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
-			createGQLAPIKey(input: {name: "step-action-compatibility", description: "Action compatibility smoke",
-				expiresAt: $expires, role: admin, query: $query}) {token}
-		}
-	`, "CreateActionCompatibilityKey", map[string]any{
-		"expires": time.Now().Add(time.Hour).Format(time.RFC3339), "query": document,
-	})
-	require.Empty(t, created.Errors)
-	var key struct{ CreateGQLAPIKey struct{ Token string } }
-	require.NoError(t, json.Unmarshal(created.Data, &key))
-	require.NotEmpty(t, key.CreateGQLAPIKey.Token)
-	response := stepOrganizationPost(t, h, map[string]any{
+	token := legacyRetirementToken(t, h, document)
+	before := stepOrganizationSnapshot(t, h)
+	legacyRetirementDenied(t, h, token, map[string]any{
 		"operationName": "ActionCompatibility",
 		"variables": map[string]string{
 			"policy": h.UUID("policy-a"), "step": h.UUID("step-a1"),
 			"schedule": h.UUID("schedule-b"), "rotation": h.UUID("rotation-b"),
 		},
-	}, key.CreateGQLAPIKey.Token, true)
-	require.Empty(t, response.Errors)
-	var result struct {
-		Created struct{ ID string }
-		Updated bool
-	}
-	require.NoError(t, json.Unmarshal(response.Data, &result))
-	require.True(t, result.Updated)
-	for _, step := range []string{result.Created.ID, h.UUID("step-a1")} {
-		require.ElementsMatch(t, []string{"schedule:" + h.UUID("schedule-b"), "rotation:" + h.UUID("rotation-b")}, stepActionOrganizationRows(t, h, step))
-	}
+	})
+	require.Equal(t, before, stepOrganizationSnapshot(t, h), "retired Machine must not create, update or partially commit business rows")
 }
 
 func TestGraphQLEscalationPolicyActionOrganizationNonLockingTargets(t *testing.T) {

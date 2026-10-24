@@ -1,9 +1,7 @@
 package smoke
 
 import (
-	"bytes"
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -11,91 +9,38 @@ import (
 	"github.com/target/goalert/test/smoke/harness"
 )
 
-// TestGQLAPIKeys tests most operations on API keys API via GraphQL endpoint.
+// TestGQLAPIKeys verifies retirement of legacy issuance while preserving normal
+// Human GraphQL access. Historical-key authentication is covered by the real
+// PostgreSQL/HTTP tests in app; no production issuance backdoor is used there.
 func TestGQLAPIKeys(t *testing.T) {
-	const keyQueryDoc = `
-	query ListAPIKeys {
-		gqlAPIKeys {
-			id
-			name
-		}
-	}
-	
-	mutation DeleteAPIKey($id: ID!) {
-		deleteGQLAPIKey(id: $id)
-	}
-	
-	query ServiceInfo($firstID: ID!) {
-	  service(id: $firstID) {
-		id
-	  }
-	}
-	
-	query ServiceInfo2($secondID: ID!) {
-	  service(id: $secondID) {
-		id
-	  }
-	}
-	`
-
 	h := harness.NewHarness(t, "", "")
 	defer h.Close()
 
-	var createVars struct {
-		Expires string `json:"expires,omitempty"`
-		Query   string `json:"query,omitempty"`
+	for _, role := range []string{"admin", "user"} {
+		t.Run(role, func(t *testing.T) {
+			vars := map[string]string{
+				"expires": time.Now().Add(time.Hour).Format(time.RFC3339),
+				"query":   `query { user { id } }`,
+				"role":    role,
+			}
+			resp := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
+			mutation($expires: ISOTimestamp!, $query: String!, $role: UserRole!){
+				createGQLAPIKey(input:{name:"retired",description:"synthetic",expiresAt:$expires,role:$role,query:$query}){id token}
+			}`, "", vars)
+			require.Len(t, resp.Errors, 1)
+			require.Equal(t, "access denied: legacy GraphQL API key issuance is disabled in MS OnCall", resp.Errors[0].Message)
+			var result struct{ CreateGQLAPIKey json.RawMessage }
+			require.NoError(t, json.Unmarshal(resp.Data, &result))
+			require.True(t, len(result.CreateGQLAPIKey) == 0 || string(result.CreateGQLAPIKey) == "null", "denied issuance returned data")
+		})
 	}
-	createVars.Expires = time.Now().Add(time.Hour).Format(time.RFC3339)
-	createVars.Query = keyQueryDoc
-	// create API key
-	gqlResp := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
-	mutation($expires: ISOTimestamp!, $query: String!){
-		createGQLAPIKey(input:{
-			name:"test",
-			description:"desc",
-			expiresAt: $expires,
-			role: admin,
-			query: $query
-		}) {id, token}
-	}`, "", createVars)
-	var keyResp struct {
-		CreateGQLAPIKey struct {
-			ID    string
-			Token string
-		}
+	resp := h.GraphQLQuery2(`query { user { id } gqlAPIKeys { id name } }`)
+	require.Empty(t, resp.Errors)
+	var result struct {
+		User       struct{ ID string }
+		GQLAPIKeys []json.RawMessage
 	}
-	err := json.Unmarshal(gqlResp.Data, &keyResp)
-	require.NoError(t, err)
-	require.Empty(t, gqlResp.Errors)
-
-	var reqData struct {
-		Op string `json:"operationName"`
-		V  struct {
-			ID     string `json:"id,omitempty"`
-			First  string `json:"firstID,omitempty"`
-			Second string `json:"secondID,omitempty"`
-		} `json:"variables"`
-	}
-	reqData.Op = "ServiceInfo"
-	reqData.V.First = "00000000-0000-0000-0000-000000000001"
-	data, err := json.Marshal(reqData)
-	require.NoError(t, err)
-
-	t.Log("Data:", string(data))
-
-	req, err := http.NewRequest("POST", h.URL()+"/api/graphql", bytes.NewReader(data))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+keyResp.CreateGQLAPIKey.Token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	require.Equal(t, 200, resp.StatusCode)
-
-	var respData struct {
-		Errors []struct{ Message string }
-	}
-	err = json.NewDecoder(resp.Body).Decode(&respData)
-	require.NoError(t, err)
-	require.Empty(t, respData.Errors)
-
+	require.NoError(t, json.Unmarshal(resp.Data, &result))
+	require.Equal(t, harness.DefaultGraphQLAdminUserID, result.User.ID)
+	require.Empty(t, result.GQLAPIKeys, "denied issuance persisted a key")
 }

@@ -1,14 +1,11 @@
 package smoke
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -418,7 +415,7 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 		}
 	})
 
-	t.Run("GQL API key retains unscoped compatibility", func(t *testing.T) {
+	t.Run("retired GQL API key cannot read roots", func(t *testing.T) {
 		const queryDocument = `
 			query RootCompatibility($serviceID: ID!, $scheduleID: ID!, $rotationID: ID!, $policyID: ID!) {
 				serviceValue: service(id: $serviceID) { id }
@@ -427,61 +424,14 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 				policyValue: escalationPolicy(id: $policyID) { id }
 			}
 		`
-		createResponse := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
-			mutation CreateCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
-				createGQLAPIKey(input: {
-					name: "root-scope-compatibility"
-					description: "root scope compatibility smoke"
-					expiresAt: $expires
-					role: admin
-					query: $query
-				}) { token }
-			}
-		`, "CreateCompatibilityKey", map[string]any{
-			"expires": time.Now().Add(time.Hour).Format(time.RFC3339),
-			"query":   queryDocument,
-		})
-		require.Empty(t, createResponse.Errors)
-		var created struct {
-			CreateGQLAPIKey struct{ Token string }
-		}
-		require.NoError(t, json.Unmarshal(createResponse.Data, &created))
-		require.NotEmpty(t, created.CreateGQLAPIKey.Token)
-
-		requestBody, err := json.Marshal(map[string]any{
+		token := legacyRetirementToken(t, h, queryDocument)
+		legacyRetirementDenied(t, h, token, map[string]any{
 			"operationName": "RootCompatibility",
 			"variables": map[string]string{
-				"serviceID":  h.UUID("service-b1"),
-				"scheduleID": h.UUID("schedule-b1"),
-				"rotationID": h.UUID("rotation-b1"),
-				"policyID":   h.UUID("policy-b1"),
+				"serviceID": h.UUID("service-b1"), "scheduleID": h.UUID("schedule-b1"),
+				"rotationID": h.UUID("rotation-b1"), "policyID": h.UUID("policy-b1"),
 			},
 		})
-		require.NoError(t, err)
-		req, err := http.NewRequest(http.MethodPost, h.URL()+"/api/graphql", bytes.NewReader(requestBody))
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+created.CreateGQLAPIKey.Token)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var result struct {
-			Data struct {
-				ServiceValue  *struct{ ID string }
-				ScheduleValue *struct{ ID string }
-				RotationValue *struct{ ID string }
-				PolicyValue   *struct{ ID string }
-			}
-			Errors []struct{ Message string }
-		}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
-		require.Empty(t, result.Errors)
-		require.Equal(t, h.UUID("service-b1"), result.Data.ServiceValue.ID)
-		require.Equal(t, h.UUID("schedule-b1"), result.Data.ScheduleValue.ID)
-		require.Equal(t, h.UUID("rotation-b1"), result.Data.RotationValue.ID)
-		require.Equal(t, h.UUID("policy-b1"), result.Data.PolicyValue.ID)
 	})
 }
 
@@ -595,65 +545,12 @@ func TestGraphQLUserOnCallOverviewOrganizationScoped(t *testing.T) {
 			}
 		}
 	`
-	createResponse := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
-		mutation CreateOnCallCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
-			createGQLAPIKey(input: {
-				name: "on-call-overview-scope-compatibility"
-				description: "on-call overview scope compatibility smoke"
-				expiresAt: $expires
-				role: admin
-				query: $query
-			}) { token }
-		}
-	`, "CreateOnCallCompatibilityKey", map[string]any{
-		"expires": time.Now().Add(time.Hour).Format(time.RFC3339),
-		"query":   queryDocument,
-	})
-	require.Empty(t, createResponse.Errors)
-	var created struct {
-		CreateGQLAPIKey struct{ Token string }
-	}
-	require.NoError(t, json.Unmarshal(createResponse.Data, &created))
-	require.NotEmpty(t, created.CreateGQLAPIKey.Token)
-
-	requestBody, err := json.Marshal(map[string]any{
-		"operationName": "OnCallCompatibility",
-		"variables":     map[string]string{"userID": h.UUID("scoped-user-b")},
-	})
-	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, h.URL()+"/api/graphql", bytes.NewReader(requestBody))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+created.CreateGQLAPIKey.Token)
-	req.Header.Set("Content-Type", "application/json")
+	token := legacyRetirementToken(t, h, queryDocument)
 	h.Trigger()
 	assertCurrentOnCall()
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var compatibilityResult struct {
-		Data struct {
-			User struct {
-				OnCallOverview scopedSmokeOnCallOverview `json:"onCallOverview"`
-			} `json:"user"`
-		} `json:"data"`
-		Errors []struct{ Message string } `json:"errors"`
-	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&compatibilityResult))
-	require.Empty(t, compatibilityResult.Errors)
-	require.Equal(t, 4, compatibilityResult.Data.User.OnCallOverview.ServiceCount)
-	nonHumanServiceIDs := make([]string, 0, len(compatibilityResult.Data.User.OnCallOverview.ServiceAssignments))
-	for _, assignment := range compatibilityResult.Data.User.OnCallOverview.ServiceAssignments {
-		nonHumanServiceIDs = append(nonHumanServiceIDs, assignment.ServiceID)
-		require.Equal(t, h.UUID("policy-b1"), assignment.EscalationPolicyID)
-	}
-	require.ElementsMatch(t, []string{
-		h.UUID("service-a2"),
-		h.UUID("service-b1"),
-		h.UUID("service-delete-b"),
-		h.UUID("service-mixed-b"),
-	}, nonHumanServiceIDs)
+	legacyRetirementDenied(t, h, token, map[string]any{
+		"operationName": "OnCallCompatibility", "variables": map[string]string{"userID": h.UUID("scoped-user-b")},
+	})
 	assertCurrentOnCall()
 }
 
@@ -833,56 +730,8 @@ func TestGraphQLMessageLogsOrganizationScoped(t *testing.T) {
 			debugMessages(input: {first: 10}) { id serviceID serviceName }
 		}
 	`
-	createResponse := h.GraphQLQueryUserVarsT(t, harness.DefaultGraphQLAdminUserID, `
-		mutation CreateMessageLogCompatibilityKey($expires: ISOTimestamp!, $query: String!) {
-			createGQLAPIKey(input: {
-				name: "message-log-scope-compatibility"
-				description: "message-log scope compatibility smoke"
-				expiresAt: $expires
-				role: admin
-				query: $query
-			}) { token }
-		}
-	`, "CreateMessageLogCompatibilityKey", map[string]any{
-		"expires": time.Now().Add(time.Hour).Format(time.RFC3339),
-		"query":   queryDocument,
-	})
-	require.Empty(t, createResponse.Errors)
-	var created struct {
-		CreateGQLAPIKey struct{ Token string }
-	}
-	require.NoError(t, json.Unmarshal(createResponse.Data, &created))
-	require.NotEmpty(t, created.CreateGQLAPIKey.Token)
-
-	requestBody, err := json.Marshal(map[string]any{"operationName": "MessageLogCompatibility"})
-	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, h.URL()+"/api/graphql", bytes.NewReader(requestBody))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+created.CreateGQLAPIKey.Token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var compatibilityResult struct {
-		Data struct {
-			MessageLogs        scopedSmokeMessageLogConnection `json:"messageLogs"`
-			CrossServiceSearch scopedSmokeMessageLogConnection `json:"crossServiceSearch"`
-			DebugMessages      []scopedSmokeMessageLogNode     `json:"debugMessages"`
-		} `json:"data"`
-		Errors []struct{ Message string } `json:"errors"`
-	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&compatibilityResult))
-	require.Empty(t, compatibilityResult.Errors)
-	requireScopedSmokeMessageLogNodes(t, compatibilityResult.Data.MessageLogs.Nodes, h, true)
-	requireScopedSmokeMessageLogIDs(t, compatibilityResult.Data.CrossServiceSearch.Nodes, h.UUID("message-log-cross"))
-	require.NotNil(t, compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceID)
-	require.Equal(t, h.UUID("service-b1"), *compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceID)
-	require.NotNil(t, compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceName)
-	require.Equal(t, "Human Scoped Service 02", *compatibilityResult.Data.CrossServiceSearch.Nodes[0].ServiceName)
-	require.False(t, compatibilityResult.Data.CrossServiceSearch.PageInfo.HasNextPage)
-	requireScopedSmokeMessageLogNodes(t, compatibilityResult.Data.DebugMessages, h, true)
+	token := legacyRetirementToken(t, h, queryDocument)
+	legacyRetirementDenied(t, h, token, map[string]any{"operationName": "MessageLogCompatibility"})
 }
 
 func scopedSmokeRowCount(t *testing.T, h *harness.Harness, table, id string) int {
