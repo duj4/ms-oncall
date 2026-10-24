@@ -8,6 +8,7 @@ import (
 	"io"
 	stdlog "log"
 	"log/slog"
+	"net"
 	"net/http/httptest"
 	"net/smtp"
 	"net/url"
@@ -60,8 +61,65 @@ func init() {
 	var err error
 	dbURL, err = url.Parse(dbURLStr)
 	if err != nil {
-		panic(err)
+		panic("parse smoke database URL: " + safeDBError(err))
 	}
+}
+
+// Database errors can contain the original DSN, query parameters, or server
+// messages containing credentials. Only emit fixed classifications and a
+// validated SQLSTATE; never retain or format the original error in diagnostics.
+func safeDBError(err error) string {
+	var pgErr *pgconn.PgError
+	var parseErr *pgconn.ParseConfigError
+	var connectErr *pgconn.ConnectError
+	var netErr net.Error
+	switch {
+	case errors.As(err, &pgErr):
+		code := pgErr.Code
+		if len(code) == 5 && strings.IndexFunc(code, func(r rune) bool {
+			return (r < '0' || r > '9') && (r < 'A' || r > 'Z')
+		}) == -1 {
+			return "PostgreSQL error (SQLSTATE " + code + ")"
+		}
+		return "PostgreSQL error (SQLSTATE unavailable)"
+	case errors.As(err, &parseErr):
+		return "invalid PostgreSQL connection configuration"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "database operation timed out"
+	case errors.Is(err, context.Canceled):
+		return "database operation canceled"
+	case errors.As(err, &connectErr):
+		return "PostgreSQL connection error"
+	case errors.As(err, &netErr):
+		return "database network error"
+	default:
+		return "database error (details withheld)"
+	}
+}
+
+type dbErrorReporter interface {
+	Helper()
+	Fatalf(string, ...any)
+	Errorf(string, ...any)
+}
+
+func requireDBNoError(t dbErrorReporter, err error, operation string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %s", operation, safeDBError(err))
+	}
+}
+
+func assertDBNoError(t dbErrorReporter, err error, operation string) {
+	t.Helper()
+	if err != nil {
+		t.Errorf("%s: %s", operation, safeDBError(err))
+	}
+}
+
+func stopForDebugDB(t dbErrorReporter, name string) {
+	t.Helper()
+	t.Fatalf("DEBUG DB: database %q; inspect using your existing PostgreSQL connection settings and this database name (credentials omitted)", name)
 }
 
 func DBURL(name string) string {
@@ -155,7 +213,7 @@ func NewHarnessDebugDB(t *testing.T, initSQL, migrationName string) *Harness {
 	h := NewStoppedHarness(t, initSQL, nil, migrationName)
 	h.Migrate("")
 
-	t.Fatal("DEBUG DB ::", h.dbURL)
+	stopForDebugDB(t, h.dbName)
 	return nil
 }
 
@@ -180,24 +238,20 @@ func NewStoppedHarnessWithFlags(t *testing.T, initSQL string, sqlData interface{
 		t.Skip("skipping Harness tests for short mode")
 	}
 
-	t.Logf("Using DB URL: %s", dbURL)
+	t.Log("Connecting to smoke test database")
 	name := strings.ReplaceAll("smoketest_"+time.Now().Format("2006_01_02_15_04_05")+uuid.New().String(), "-", "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, DBURL(""))
-	if err != nil {
-		t.Fatal("connect to db:", err)
-	}
+	requireDBNoError(t, err, "connect to db")
 	defer conn.Close(ctx)
 	_, err = conn.Exec(ctx, "create database "+sqlutil.QuoteID(name))
-	if err != nil {
-		t.Fatal("create db:", err)
-	}
+	requireDBNoError(t, err, "create db")
 	conn.Close(ctx)
 
-	t.Logf("created test database '%s': %s", name, dbURL)
+	t.Logf("created test database %q", name)
 
 	twCfg := mocktwilio.Config{
 		AuthToken:    twilioAuthToken,
@@ -206,9 +260,7 @@ func NewStoppedHarnessWithFlags(t *testing.T, initSQL string, sqlData interface{
 	}
 
 	pgTime, err := pgmocktime.New(ctx, DBURL(name))
-	if err != nil {
-		t.Fatal("create pgmocktime:", err)
-	}
+	requireDBNoError(t, err, "create pgmocktime")
 
 	h := &Harness{
 		uuidG:    NewDataGen(t, "UUID", DataGenFunc(GenUUID)),
@@ -241,13 +293,9 @@ func NewStoppedHarnessWithFlags(t *testing.T, initSQL string, sqlData interface{
 	h.twS = httptest.NewServer(h.tw)
 
 	err = h.pgTime.Inject(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireDBNoError(t, err, "inject pgmocktime")
 	err = h.pgTime.SetSpeed(ctx, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireDBNoError(t, err, "freeze pgmocktime")
 
 	h.Migrate(migrationName)
 	h.ensureSmokeOrganization()
@@ -292,23 +340,17 @@ func (h *Harness) StartWithAppCfgHook(fn func(*app.Config)) {
 
 	l := log.NewLogger()
 	l.ErrorsOnly()
+	// Migration failures are reported through the credential-safe diagnostic below.
+	l.SetOutput(io.Discard)
 	_, err := migrate.ApplyAll(log.WithLogger(context.Background(), l), h.dbURL)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) {
-			h.t.Fatalf("failed to migrate backend: %#v\n", pgErr)
-		}
-		h.t.Fatalf("failed to migrate backend: %v\n", err)
-	}
+	requireDBNoError(h.t, err, "migrate backend")
 	h.ensureSmokeOrganization()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	err = h.pgTime.SetSpeed(ctx, 1)
-	if err != nil {
-		h.t.Fatalf("resume flow of time: %v", err)
-	}
+	requireDBNoError(h.t, err, "resume flow of time")
 
 	appCfg := app.Defaults()
 	appCfg.ForceRiverDBTime = true
@@ -339,32 +381,26 @@ func (h *Harness) StartWithAppCfgHook(fn func(*app.Config)) {
 	go h.watchBackendLogs(r)
 
 	poolCfg, err := pgxpool.ParseConfig(h.dbURL)
-	if err != nil {
-		h.t.Fatalf("failed to parse db url: %v", err)
-	}
+	requireDBNoError(h.t, err, "parse db url")
 	poolCfg.MaxConns = 5
 
 	h.appPool, err = pgxpool.NewWithConfig(ctx, poolCfg)
-	require.NoError(h.t, err, "create pgx pool")
+	requireDBNoError(h.t, err, "create pgx pool")
 
 	if fn != nil {
 		fn(&appCfg)
 	}
 
 	h.backend, err = app.NewApp(appCfg, h.appPool)
-	if err != nil {
-		h.t.Fatalf("failed to start backend: %v", err)
-	}
+	requireDBNoError(h.t, err, "start backend")
 	h.TwilioNumber("") // register default number
 	h.slack.SetActionURL(h.slackApp.ClientID, h.backend.URL()+"/api/v2/slack/message-action")
 
 	go func() {
-		assert.NoError(h.t, h.backend.Run(context.Background())) // can't use require.NoError because we're in the background
+		assertDBNoError(h.t, h.backend.Run(context.Background()), "run backend") // cannot fail immediately from a background goroutine
 	}()
 	err = h.backend.WaitForStartup(ctx)
-	if err != nil {
-		h.t.Fatalf("failed to start backend: %v", err)
-	}
+	requireDBNoError(h.t, err, "start backend")
 }
 
 // RestartGoAlertWithConfig will restart the backend with the provided config.
@@ -384,25 +420,19 @@ func (h *Harness) RestartGoAlertWithAppCfgHook(reconfig func(*app.Config)) {
 	defer cancel()
 
 	err := h.backend.Shutdown(ctx)
-	if err != nil {
-		h.t.Error("failed to shutdown backend cleanly:", err)
-	}
+	assertDBNoError(h.t, err, "shutdown backend cleanly")
 
 	h.t.Logf("Restarting backend")
 	reconfig(&h.appCfg)
 	h.backend, err = app.NewApp(h.appCfg, h.appPool)
-	if err != nil {
-		h.t.Fatalf("failed to start backend: %v", err)
-	}
+	requireDBNoError(h.t, err, "start backend")
 	h.slack.SetActionURL(h.slackApp.ClientID, h.backend.URL()+"/api/v2/slack/message-action")
 
 	go func() {
-		assert.NoError(h.t, h.backend.Run(context.Background())) // can't use require.NoError because we're in the background
+		assertDBNoError(h.t, h.backend.Run(context.Background()), "run backend") // cannot fail immediately from a background goroutine
 	}()
 	err = h.backend.WaitForStartup(ctx)
-	if err != nil {
-		h.t.Fatalf("failed to start backend: %v", err)
-	}
+	requireDBNoError(h.t, err, "start backend")
 
 	h.t.Logf("Backend restarted")
 }
@@ -426,10 +456,10 @@ func (h *Harness) Migrate(migrationName string) {
 	h.t.Logf("Running migrations (target: %s)", migrationName)
 	l := log.NewLogger()
 	l.ErrorsOnly()
+	// Migration failures are reported through the credential-safe diagnostic below.
+	l.SetOutput(io.Discard)
 	_, err := migrate.Up(log.WithLogger(context.Background(), l), h.dbURL, migrationName)
-	if err != nil {
-		h.t.Fatalf("failed to run migration: %v", err)
-	}
+	requireDBNoError(h.t, err, "run migration")
 }
 
 // IgnoreErrorsWith will cause the Harness to ignore backend errors containing the specified substring.
@@ -445,7 +475,7 @@ func (h *Harness) Now() time.Time {
 
 	var now time.Time
 	err := h.appPool.QueryRow(context.Background(), "SELECT NOW()").Scan(&now)
-	require.NoError(h.t, err, "get now()")
+	requireDBNoError(h.t, err, "get now()")
 
 	return now
 }
@@ -472,9 +502,7 @@ func (h *Harness) FastForward(d time.Duration) {
 	h.t.Helper()
 	h.t.Logf("Fast-forward %s", d.String())
 	err := h.pgTime.AdvanceTime(context.Background(), d)
-	if err != nil {
-		h.t.Fatalf("failed to fast-forward time: %v", err)
-	}
+	requireDBNoError(h.t, err, "fast-forward time")
 }
 
 func (h *Harness) execQuery(sql string, data interface{}) {
@@ -504,9 +532,7 @@ func (h *Harness) execQuery(sql string, data interface{}) {
 	}
 
 	err = ExecSQLBatch(context.Background(), h.dbURL, b.String())
-	if err != nil {
-		h.t.Fatalf("failed to exec query: %v\n%s", err, b.String())
-	}
+	requireDBNoError(h.t, err, "exec query")
 }
 
 // CreateAlerts will create one or more unacknowledged alerts for a service.
@@ -532,17 +558,17 @@ func (t testAlert) setStatus(stat alert.Status) {
 	permission.SudoContext(context.Background(), func(ctx context.Context) {
 		t.h.t.Helper()
 		tx, err := t.h.backend.DB().BeginTx(ctx, nil)
-		require.NoError(t.h.t, err, "begin tx")
+		requireDBNoError(t.h.t, err, "begin tx")
 		defer SQLRollback(t.h.t, "harness: set alert status", tx)
 
 		t.a.Status = stat
 
 		result, isNew, err := t.h.backend.AlertStore.CreateOrUpdateTx(ctx, tx, &t.a)
-		require.NoErrorf(t.h.t, err, "set alert to %s", stat)
+		requireDBNoError(t.h.t, err, "set alert status")
 		require.False(t.h.t, isNew, "not be new")
 		require.NotNil(t.h.t, result)
 
-		require.NoError(t.h.t, tx.Commit(), "commit tx")
+		requireDBNoError(t.h.t, tx.Commit(), "commit tx")
 	})
 }
 
@@ -555,7 +581,7 @@ func (t testAlert) Escalate() {
 		t.h.t.Helper()
 
 		err := t.h.backend.AlertStore.Escalate(ctx, t.a.ID, 0)
-		require.NoErrorf(t.h.t, err, "escalate alert %d", t.a.ID)
+		requireDBNoError(t.h.t, err, "escalate alert")
 	})
 }
 
@@ -567,9 +593,7 @@ func (h *Harness) CreateAlertWithDetails(serviceID, summary, details string) Tes
 	permission.SudoContext(context.Background(), func(ctx context.Context) {
 		h.t.Helper()
 		tx, err := h.backend.DB().BeginTx(ctx, nil)
-		if err != nil {
-			h.t.Fatalf("failed to start tx: %v", err)
-		}
+		requireDBNoError(h.t, err, "start tx")
 		defer SQLRollback(h.t, "harness: create alert", tx)
 
 		a := &alert.Alert{
@@ -580,18 +604,14 @@ func (h *Harness) CreateAlertWithDetails(serviceID, summary, details string) Tes
 
 		h.t.Logf("insert alert: %v", a)
 		_newAlert, isNew, err := h.backend.AlertStore.CreateOrUpdateTx(ctx, tx, a)
-		if err != nil {
-			h.t.Fatalf("failed to insert alert: %v", err)
-		}
+		requireDBNoError(h.t, err, "insert alert")
 		if !isNew {
 			h.t.Fatal("could not create duplicate alert with summary: " + summary)
 		}
 		newAlert = *_newAlert
 
 		err = tx.Commit()
-		if err != nil {
-			h.t.Fatalf("failed to commit tx: %v", err)
-		}
+		requireDBNoError(h.t, err, "commit tx")
 	})
 
 	return testAlert{h: h, a: newAlert}
@@ -609,9 +629,7 @@ func (h *Harness) AddNotificationRule(userID, cmID string, delayMinutes int) {
 	permission.SudoContext(context.Background(), func(ctx context.Context) {
 		h.t.Helper()
 		_, err := h.backend.NotificationRuleStore.Insert(ctx, nr)
-		if err != nil {
-			h.t.Fatalf("failed to insert notification rule: %v", err)
-		}
+		requireDBNoError(h.t, err, "insert notification rule")
 	})
 }
 
@@ -619,14 +637,14 @@ func (h *Harness) AddNotificationRule(userID, cmID string, delayMinutes int) {
 func (h *Harness) Trigger() {
 	id := h.backend.Engine.NextCycleID()
 	go h.backend.Engine.Trigger()
-	require.NoError(h.t, h.backend.Engine.WaitCycleID(context.Background(), id))
+	requireDBNoError(h.t, h.backend.Engine.WaitCycleID(context.Background(), id), "wait for engine cycle")
 }
 
 // Escalate will escalate an alert in the database, when 'level' matches.
 func (h *Harness) Escalate(alertID, level int) {
 	h.t.Helper()
 	err := h.EscalateAlertErr(alertID)
-	require.NoError(h.t, err, "escalate alert")
+	requireDBNoError(h.t, err, "escalate alert")
 }
 
 func (h *Harness) EscalateAlertErr(alertID int) (err error) {
@@ -666,16 +684,12 @@ func (h *Harness) dumpDB() {
 	}
 
 	conn, err := pgx.Connect(context.Background(), h.dbURL)
-	if err != nil {
-		h.t.Fatalf("failed to get db connection: %v", err)
-	}
+	requireDBNoError(h.t, err, "connect to dump database")
 	defer conn.Close(context.Background())
 
 	var t time.Time
 	err = conn.QueryRow(context.Background(), "select now()").Scan(&t)
-	if err != nil {
-		h.t.Fatalf("failed to get current timestamp: %v", err)
-	}
+	requireDBNoError(h.t, err, "read dump timestamp")
 
 	fd, err := os.Create(file)
 	if err != nil {
@@ -684,9 +698,7 @@ func (h *Harness) dumpDB() {
 	defer fd.Close()
 
 	err = pgdump.DumpData(context.Background(), conn, fd, nil)
-	if err != nil {
-		h.t.Errorf("failed to dump database '%s': %v", h.dbName, err)
-	}
+	assertDBNoError(h.t, err, "dump database")
 
 	_, err = fmt.Fprintf(fd, "\n-- Last Timestamp: %s\n", t.Format(time.RFC3339Nano))
 	if err != nil {
@@ -731,9 +743,7 @@ func (h *Harness) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	err := h.backend.Shutdown(ctx)
-	if err != nil {
-		h.t.Error("failed to shutdown backend cleanly:", err)
-	}
+	assertDBNoError(h.t, err, "shutdown backend cleanly")
 
 	h.slackS.Close()
 	h.twS.Close()
@@ -745,14 +755,10 @@ func (h *Harness) Close() {
 	h.appPool.Close()
 
 	conn, err := pgx.Connect(ctx, DBURL(""))
-	if err != nil {
-		h.t.Error("failed to connect to DB:", err)
-	}
+	assertDBNoError(h.t, err, "connect to drop database")
 	defer conn.Close(ctx)
 	_, err = conn.Exec(ctx, "drop database "+sqlutil.QuoteID(h.dbName))
-	if err != nil {
-		h.t.Errorf("failed to drop database '%s': %v", h.dbName, err)
-	}
+	assertDBNoError(h.t, err, "drop database")
 }
 
 // SetCarrierName will set the carrier name for the given phone number.
@@ -834,9 +840,7 @@ func (h *Harness) CreateUser() (u *user.User) {
 			Email: fmt.Sprintf("generated%d@example.com", h.userGeneratedIndex),
 		})
 	})
-	if err != nil {
-		h.t.Fatal(errors.Wrap(err, "generate random user"))
-	}
+	requireDBNoError(h.t, err, "generate random user")
 	h.userGeneratedIndex++
 	return u
 }
