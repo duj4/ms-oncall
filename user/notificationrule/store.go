@@ -5,9 +5,12 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
+	"github.com/target/goalert/executioncontext"
+	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/permission"
+	"github.com/target/goalert/user/contactmethod"
 	"github.com/target/goalert/util"
-	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation/validate"
 )
 
@@ -15,10 +18,8 @@ import (
 type Store struct {
 	db *sql.DB
 
-	insert      *sql.Stmt
-	delete      *sql.Stmt
-	findAll     *sql.Stmt
-	deleteOwned *sql.Stmt
+	insert  *sql.Stmt
+	findAll *sql.Stmt
 }
 
 // NewDB will create a DB backend from a sql.DB. An error will be returned if statements fail to prepare.
@@ -29,21 +30,6 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 
 	s.insert = p("INSERT INTO user_notification_rules (id,user_id,delay_minutes,contact_method_id) VALUES ($1,$2,$3,$4)")
 	s.findAll = p("SELECT id,user_id,delay_minutes,contact_method_id FROM user_notification_rules WHERE user_id = $1")
-	s.delete = p("DELETE FROM user_notification_rules WHERE id = any($1)")
-	// Lock the complete existing set before checking ownership, including when
-	// another transaction has changed a target while this statement was waiting.
-	s.deleteOwned = p(`WITH targets AS MATERIALIZED (
-		SELECT id, user_id FROM user_notification_rules
-		WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE
-	), ownership AS (
-		SELECT count(*) FILTER (WHERE user_id <> $2::uuid) = 0 AS allowed FROM targets
-	), deleted AS (
-		DELETE FROM user_notification_rules
-		WHERE id IN (SELECT id FROM targets) AND user_id = $2::uuid
-			AND (SELECT allowed FROM ownership)
-		RETURNING id
-	)
-	SELECT allowed FROM ownership`)
 
 	return s, prep.Err
 }
@@ -57,11 +43,14 @@ func (s *Store) Insert(ctx context.Context, n *NotificationRule) (*NotificationR
 // CreateTx implements the NotificationRuleStore interface by inserting the new NotificationRule into the database.
 // A new ID is always created.
 func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, n *NotificationRule) (*NotificationRule, error) {
-	err := permission.LimitCheckAny(ctx, permission.System, permission.Admin, permission.MatchUser(n.UserID))
+	authority, err := executioncontext.CheckCMNRMutationAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	if n == nil {
+		return nil, permission.NewAccessDenied("")
+	}
 	n, err = n.Normalize(false)
 	if err != nil {
 		return nil, err
@@ -69,7 +58,25 @@ func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, n *NotificationRule) (
 
 	n.ID = uuid.New().String()
 
-	_, err = wrapTx(ctx, tx, s.insert).ExecContext(ctx, n.ID, n.UserID, n.DelayMinutes, n.ContactMethodID)
+	var db gadb.DBTX = s.db
+	if tx != nil {
+		db = tx
+	}
+	err = executioncontext.WithCMNRTransaction(ctx, db, func(tx *sql.Tx) error {
+		cms, err := contactmethod.LockCMNRContactMethods(ctx, tx, []uuid.UUID{n.ContactMethodID})
+		if err != nil {
+			return err
+		}
+		owner := uuid.MustParse(n.UserID)
+		if owner == uuid.Nil || cms[n.ContactMethodID] != owner {
+			return permission.NewAccessDenied("")
+		}
+		if err := authority.AuthorizeUser(ctx, tx, owner); err != nil {
+			return err
+		}
+		_, err = wrapTx(ctx, tx, s.insert).ExecContext(ctx, n.ID, n.UserID, n.DelayMinutes, n.ContactMethodID)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +94,7 @@ func wrapTx(ctx context.Context, tx *sql.Tx, stmt *sql.Stmt) *sql.Stmt {
 
 // DeleteTx will delete notification rules with the provided ids.
 func (s *Store) DeleteTx(ctx context.Context, tx *sql.Tx, ids ...string) error {
-	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
+	authority, err := executioncontext.CheckCMNRMutationAuthority(ctx)
 	if err != nil {
 		return err
 	}
@@ -96,30 +103,76 @@ func (s *Store) DeleteTx(ctx context.Context, tx *sql.Tx, ids ...string) error {
 		return nil
 	}
 
-	err = validate.ManyUUID("NotificationRuleID", ids, 50)
+	uids, err := validate.ParseManyUUID("NotificationRuleID", ids, 50)
 	if err != nil {
 		return err
 	}
 
-	if permission.Admin(ctx) {
-		_, err = wrapTx(ctx, tx, s.delete).ExecContext(ctx, sqlutil.UUIDArray(ids))
-		return err
+	var db gadb.DBTX = s.db
+	if tx != nil {
+		db = tx
 	}
+	return executioncontext.WithCMNRTransaction(ctx, db, func(tx *sql.Tx) error {
+		return deleteCMNRTargets(ctx, tx, authority, uids)
+	})
+}
 
-	owner, err := uuid.Parse(permission.UserID(ctx))
-	if err != nil || owner == uuid.Nil {
-		return permission.NewAccessDenied("")
-	}
-
-	var allowed bool
-	err = wrapTx(ctx, tx, s.deleteOwned).QueryRowContext(ctx, sqlutil.UUIDArray(ids), owner).Scan(&allowed)
+func deleteCMNRTargets(ctx context.Context, tx *sql.Tx, authority executioncontext.CMNRMutationAuthority, ids []uuid.UUID) error {
+	// Discover parents only to establish CM-before-NR lock order. Discovery is
+	// never an authorization result. Re-read every NR under its own row lock,
+	// then reject a changed/missing parent outside the locked CM set.
+	rows, err := tx.QueryContext(ctx, `SELECT contact_method_id FROM user_notification_rules WHERE id=ANY($1::uuid[])`, pq.Array(ids))
 	if err != nil {
 		return err
 	}
-	if !allowed {
-		return permission.NewAccessDenied("")
+	var cmIDs []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		cmIDs = append(cmIDs, id)
 	}
-	return nil
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	cms, err := contactmethod.LockCMNRContactMethods(ctx, tx, cmIDs)
+	if err != nil {
+		return err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT id,user_id,contact_method_id FROM user_notification_rules
+		WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`, pq.Array(ids))
+	if err != nil {
+		return err
+	}
+	lockedIDs := make([]uuid.UUID, 0, len(ids))
+	owners := make(map[uuid.UUID]uuid.UUID)
+	for rows.Next() {
+		var id, owner, cm uuid.UUID
+		if err := rows.Scan(&id, &owner, &cm); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if owner == uuid.Nil || cms[cm] != owner {
+			_ = rows.Close()
+			return permission.NewAccessDenied("")
+		}
+		lockedIDs = append(lockedIDs, id)
+		owners[cm] = owner
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if err := contactmethod.AuthorizeCMNROwners(ctx, tx, authority, owners); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM user_notification_rules WHERE id=ANY($1::uuid[])`, pq.Array(lockedIDs))
+	return err
 }
 
 // FindAll implements the NotificationRuleStore interface.

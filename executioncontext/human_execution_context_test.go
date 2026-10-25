@@ -91,7 +91,8 @@ func TestHumanExecutionContextAcceptedOrdinaryRolesWithOneObservation(t *testing
 	}{
 		{name: "user member", globalRole: permission.RoleUser, orgRole: organization.OrganizationRoleMember},
 		{name: "user Organization admin", globalRole: permission.RoleUser, orgRole: organization.OrganizationRoleAdmin},
-		{name: "global admin remains ordinary member", globalRole: permission.RoleAdmin, orgRole: organization.OrganizationRoleMember},
+		{name: "global admin retains Home member", globalRole: permission.RoleAdmin, orgRole: organization.OrganizationRoleMember},
+		{name: "global admin retains Home admin", globalRole: permission.RoleAdmin, orgRole: organization.OrganizationRoleAdmin},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newHumanExecutionContextFixture(t)
@@ -109,7 +110,7 @@ func TestHumanExecutionContextAcceptedOrdinaryRolesWithOneObservation(t *testing
 			if source := got.AuthenticationSource(); source == nil || source.Type() != permission.SourceTypeAuthProvider.String() || source.ID() != fixture.sessionID.String() {
 				t.Fatalf("AuthenticationSource = %#v", source)
 			}
-			if privileges := got.Privileges(); privileges == nil || privileges.OrganizationRole() != test.orgRole || privileges.PlatformAdmin() {
+			if privileges := got.Privileges(); privileges == nil || privileges.OrganizationRole() != test.orgRole || privileges.PlatformAdmin() != (test.globalRole == permission.RoleAdmin) {
 				t.Fatalf("Privileges = %#v", privileges)
 			}
 			if id, present := got.EffectiveOrganizationID(); !present || id != fixture.orgID {

@@ -36,6 +36,8 @@ func TestExecutionContextAcceptsStructuralPrincipalMatrix(t *testing.T) {
 	}{
 		{name: "human member", spec: organizationScopedTestSpec(PrincipalKindHuman, organization.OrganizationRoleMember, false, normalID)},
 		{name: "human Organization admin", spec: organizationScopedTestSpec(PrincipalKindHuman, organization.OrganizationRoleAdmin, false, normalID)},
+		{name: "human PlatformAdmin with Home member", spec: organizationScopedTestSpec(PrincipalKindHuman, organization.OrganizationRoleMember, true, normalID)},
+		{name: "human PlatformAdmin with Home admin", spec: organizationScopedTestSpec(PrincipalKindHuman, organization.OrganizationRoleAdmin, true, normalID)},
 		{name: "human Default restricted", spec: structuralTestSpec(PrincipalKindHuman, AuthorityModeDefaultRestricted, organization.OrganizationRoleNone, false)},
 		{name: "human platform global", spec: structuralTestSpec(PrincipalKindHuman, AuthorityModePlatformGlobal, organization.OrganizationRoleNone, true)},
 		{name: "integration", spec: organizationScopedTestSpec(PrincipalKindIntegration, organization.OrganizationRoleNone, false, normalID)},
@@ -90,7 +92,6 @@ func TestExecutionContextRejectsContradictoryStructure(t *testing.T) {
 		{name: "nil Organization scope", mutate: func(v *executionContextSpec) { v.effectiveOrganizationID = pointerTo(uuid.Nil) }},
 		{name: "Default used as Organization scope", mutate: func(v *executionContextSpec) { v.effectiveOrganizationID = &defaultID }},
 		{name: "human NONE role Organization scope", mutate: func(v *executionContextSpec) { v.organizationRole = organization.OrganizationRoleNone }},
-		{name: "human PlatformAdmin Organization scope", mutate: func(v *executionContextSpec) { v.platformAdmin = true }},
 		{name: "effective Organization in Default mode", mutate: func(v *executionContextSpec) { v.authorityMode = AuthorityModeDefaultRestricted }},
 		{name: "effective Organization in platform mode", mutate: func(v *executionContextSpec) {
 			v.authorityMode = AuthorityModePlatformGlobal
