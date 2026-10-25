@@ -409,7 +409,9 @@ func TestCMNRPlatformAdminDoesNotGrantOtherResourceGlobalDelete(t *testing.T) {
 	require.NoError(t, err)
 	before := cmnrSnapshot(t, h.App().DB())
 	query := fmt.Sprintf(`mutation{deleteAll(input:[{type:escalationPolicy,id:%q},{type:notificationRule,id:%q}])}`, id, f.nr[0])
+	wait := h.ExpectBackendError("delete escalation policies: sql: no rows in result set")
 	result := h.GraphQLQueryUserT(t, harness.DefaultGraphQLAdminUserID, query)
+	wait()
 	require.NotEmpty(t, result.Errors)
 	require.Equal(t, before, cmnrSnapshot(t, h.App().DB()))
 	var exists bool
