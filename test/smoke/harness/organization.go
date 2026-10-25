@@ -29,7 +29,7 @@ func (h *Harness) ensureSmokeOrganization() {
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, h.dbURL)
-	require.NoError(h.t, err, "connect to install smoke Organization")
+	requireDBNoError(h.t, err, "connect to install smoke Organization")
 	defer conn.Close(ctx)
 
 	var schemaReady bool
@@ -37,13 +37,13 @@ func (h *Harness) ensureSmokeOrganization() {
 		SELECT to_regclass('public.organizations') IS NOT NULL
 			AND to_regclass('public.normal_organizations') IS NOT NULL
 	`).Scan(&schemaReady)
-	require.NoError(h.t, err, "inspect smoke Organization schema")
+	requireDBNoError(h.t, err, "inspect smoke Organization schema")
 	if !schemaReady {
 		return
 	}
 
 	tx, err := conn.Begin(ctx)
-	require.NoError(h.t, err, "begin smoke Organization fixture")
+	requireDBNoError(h.t, err, "begin smoke Organization fixture")
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	_, err = tx.Exec(ctx, `
@@ -52,7 +52,7 @@ func (h *Harness) ensureSmokeOrganization() {
 		) VALUES ($1, 'NORMAL', $2, $3)
 		ON CONFLICT (id) DO NOTHING
 	`, SmokeOrganizationID, smokeOrganizationDisplayName, smokeOrganizationCanonicalName)
-	require.NoError(h.t, err, "install smoke Organization base")
+	requireDBNoError(h.t, err, "install smoke Organization base")
 	_, err = tx.Exec(ctx, `
 		INSERT INTO public.normal_organizations (
 			organization_id, organization_classification,
@@ -60,7 +60,7 @@ func (h *Harness) ensureSmokeOrganization() {
 		) VALUES ($1, 'NORMAL', $2, $3)
 		ON CONFLICT (organization_id) DO NOTHING
 	`, SmokeOrganizationID, smokeOrganizationCorporateMappingKey, smokeOrganizationTimeZone)
-	require.NoError(h.t, err, "install smoke NormalOrganization subtype")
+	requireDBNoError(h.t, err, "install smoke NormalOrganization subtype")
 
 	var classification, displayName, canonicalName, subtypeClassification, mappingKey, timeZone string
 	err = tx.QueryRow(ctx, `
@@ -82,14 +82,14 @@ func (h *Harness) ensureSmokeOrganization() {
 		&mappingKey,
 		&timeZone,
 	)
-	require.NoError(h.t, err, "read smoke NormalOrganization fixture")
+	requireDBNoError(h.t, err, "read smoke NormalOrganization fixture")
 	require.Equal(h.t, "NORMAL", classification)
 	require.Equal(h.t, smokeOrganizationDisplayName, displayName)
 	require.Equal(h.t, smokeOrganizationCanonicalName, canonicalName)
 	require.Equal(h.t, "NORMAL", subtypeClassification)
 	require.Equal(h.t, smokeOrganizationCorporateMappingKey, mappingKey)
 	require.Equal(h.t, smokeOrganizationTimeZone, timeZone)
-	require.NoError(h.t, tx.Commit(ctx), "commit smoke Organization fixture")
+	requireDBNoError(h.t, tx.Commit(ctx), "commit smoke Organization fixture")
 }
 
 // ensureSmokeUserOrganizationAssignments gives users declared by smoke SQL a
@@ -102,14 +102,14 @@ func (h *Harness) ensureSmokeUserOrganizationAssignments() {
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, h.dbURL)
-	require.NoError(h.t, err, "connect to install smoke user Organization assignments")
+	requireDBNoError(h.t, err, "connect to install smoke user Organization assignments")
 	defer conn.Close(ctx)
 
 	var schemaReady bool
 	err = conn.QueryRow(ctx, `
 		SELECT to_regclass('public.user_organization_assignments') IS NOT NULL
 	`).Scan(&schemaReady)
-	require.NoError(h.t, err, "inspect smoke user Organization assignment schema")
+	requireDBNoError(h.t, err, "inspect smoke user Organization assignment schema")
 	if !schemaReady {
 		return
 	}
@@ -139,5 +139,5 @@ func (h *Harness) ensureSmokeUserOrganizationAssignments() {
 		FROM public.users AS u
 		ON CONFLICT (user_id) DO NOTHING
 	`, SmokeOrganizationID)
-	require.NoError(h.t, err, "install smoke user Organization assignments")
+	requireDBNoError(h.t, err, "install smoke user Organization assignments")
 }

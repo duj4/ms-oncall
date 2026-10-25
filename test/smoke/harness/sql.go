@@ -72,6 +72,7 @@ func SQLRollback(t *testing.T, errMsg string, tx *sql.Tx) {
 	case errors.Is(err, sql.ErrTxDone):
 	case errors.Is(err, sql.ErrConnDone):
 	default:
-		t.Fatalf("ERROR: %s: tx rollback: %v", errMsg, err)
+		// Both the error and caller-supplied context may contain credentials.
+		t.Fatalf("rollback database transaction: %s", safeDBError(err))
 	}
 }
