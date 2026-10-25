@@ -25,8 +25,8 @@ type CMNRMutationAuthority struct {
 // CheckCMNRMutationAuthority binds admitted Human evidence to the authenticated
 // Requester, actual actor, Session and legacy authentication metadata. It does
 // not refresh admission or read Session state during an in-flight request.
-// Legacy internal UserContext callers retain owner-only capability, including
-// synthetic RoleAdmin; only the canonical constructor supplies Human global
+// Source-less legacy internal UserContext callers retain owner-only capability,
+// including synthetic RoleAdmin; only the canonical constructor supplies Human global
 // evidence. System/Sudo remains a separately trusted compiled-code boundary.
 func CheckCMNRMutationAuthority(ctx context.Context) (CMNRMutationAuthority, error) {
 	var zero CMNRMutationAuthority
@@ -46,8 +46,7 @@ func CheckCMNRMutationAuthority(ctx context.Context) (CMNRMutationAuthority, err
 	requester := auth.RequesterFromContext(ctx)
 	value := ExecutionContextFromContext(ctx)
 	source := permission.Source(ctx)
-	human := requester != nil || value != nil || (source != nil && source.Type == permission.SourceTypeAuthProvider)
-	if !human {
+	if requester == nil && value == nil && source == nil {
 		return CMNRMutationAuthority{valid: true, owner: owner}, nil
 	}
 	if requester == nil || value == nil || source == nil ||
