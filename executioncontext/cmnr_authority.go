@@ -85,8 +85,23 @@ func (a CMNRMutationAuthority) AuthorizeUser(ctx context.Context, tx *sql.Tx, ow
 		}
 		return err
 	}
+	// Lock stable identity keys before resolving the mutable Organization JOIN.
+	// After a concurrent Assignment update, READ COMMITTED gives the separate
+	// authorization statement below a fresh snapshot. Existence grants nothing.
+	var id uuid.UUID
+	err := tx.QueryRowContext(ctx, `SELECT a.user_id
+		FROM public.users u
+		JOIN public.user_organization_assignments a ON a.user_id=u.id
+		WHERE u.id=$1
+		FOR SHARE OF u,a`, owner).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return permission.NewAccessDenied("")
+	}
+	if err != nil {
+		return err
+	}
 	var organizationID uuid.UUID
-	err := tx.QueryRowContext(ctx, `SELECT a.effective_organization_id
+	err = tx.QueryRowContext(ctx, `SELECT a.effective_organization_id
 		FROM public.users u
 		JOIN public.user_organization_assignments a ON a.user_id=u.id
 		JOIN public.organizations o ON o.id=a.effective_organization_id
