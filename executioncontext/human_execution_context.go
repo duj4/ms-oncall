@@ -112,7 +112,7 @@ func (c *HumanExecutionContextConstructor) Construct(ctx context.Context) (Execu
 		authenticationSourceType: permission.SourceTypeAuthProvider.String(),
 		authenticationSourceID:   sessionID.String(),
 		organizationRole:         current.Role,
-		platformAdmin:            false,
+		platformAdmin:            current.UserRole == permission.RoleAdmin,
 		authorityMode:            AuthorityModeOrganizationScoped,
 		effectiveOrganizationID:  &effectiveOrganizationID,
 	})

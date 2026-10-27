@@ -360,7 +360,13 @@ func TestCMNROwnershipLegacyCompatibility(t *testing.T) {
 				before := cmnrSnapshot(t, h.App().DB())
 				deleteTargets := []string{ids[0], ids[3]}
 				if actor == "admin" {
-					require.NoError(t, cmnrDelete(permission.UserContext(t.Context(), cmnrUser("alice"), permission.RoleAdmin), h, typ, nil, deleteTargets))
+					// A synthetic RoleAdmin is owner-only, not canonical Human
+					// global evidence. This deliberately replaces S0A's legacy
+					// Admin compatibility assertion under the accepted S0B policy.
+					err := cmnrDelete(permission.UserContext(t.Context(), cmnrUser("alice"), permission.RoleAdmin), h, typ, nil, deleteTargets)
+					require.True(t, permission.IsPermissionError(err))
+					require.Equal(t, before, cmnrSnapshot(t, h.App().DB()))
+					return
 				} else {
 					permission.SudoContext(t.Context(), func(ctx context.Context) { require.NoError(t, cmnrDelete(ctx, h, typ, nil, deleteTargets)) })
 				}
@@ -392,6 +398,10 @@ func TestCMNROwnershipConcurrent(t *testing.T) {
 				field := "name='CMNR concurrently updated'"
 				if typ == "NR" {
 					table, field = "user_notification_rules", "delay_minutes=7"
+					// Both Store participants acquire CM before NR. Avoid an
+					// artificial inversion in this caller-owned blocker setup.
+					_, err = blocker.ExecContext(ctx, `SELECT id FROM user_contact_methods WHERE id=$1 FOR UPDATE`, f.cm[0])
+					require.NoError(t, err)
 				}
 				_, err = blocker.ExecContext(ctx, "SELECT id FROM "+table+" WHERE id=$1 FOR UPDATE", ids[0])
 				require.NoError(t, err)

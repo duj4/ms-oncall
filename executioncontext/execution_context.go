@@ -307,8 +307,7 @@ func validHumanAuthorityCombination(spec executionContextSpec) bool {
 		return spec.platformAdmin &&
 			spec.organizationRole == organization.OrganizationRoleNone
 	case AuthorityModeOrganizationScoped:
-		return !spec.platformAdmin &&
-			(spec.organizationRole == organization.OrganizationRoleMember || spec.organizationRole == organization.OrganizationRoleAdmin)
+		return spec.organizationRole == organization.OrganizationRoleMember || spec.organizationRole == organization.OrganizationRoleAdmin
 	default:
 		return false
 	}

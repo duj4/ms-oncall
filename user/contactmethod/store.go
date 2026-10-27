@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/permission"
@@ -155,7 +156,7 @@ func (s *Store) Create(ctx context.Context, dbtx gadb.DBTX, c *ContactMethod, sc
 
 // Delete removes the ContactMethod from the database using the provided ID within a transaction.
 func (s *Store) Delete(ctx context.Context, dbtx gadb.DBTX, ids ...string) error {
-	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
+	authority, err := executioncontext.CheckCMNRMutationAuthority(ctx)
 	if err != nil {
 		return err
 	}
@@ -169,27 +170,9 @@ func (s *Store) Delete(ctx context.Context, dbtx gadb.DBTX, ids ...string) error
 		return err
 	}
 
-	if permission.Admin(ctx) {
-		err = gadb.New(dbtx).DeleteContactMethod(ctx, uids)
-		return err
-	}
-
-	owner, err := uuid.Parse(permission.UserID(ctx))
-	if err != nil || owner == uuid.Nil {
-		return permission.NewAccessDenied("")
-	}
-
-	allowed, err := gadb.New(dbtx).DeleteContactMethodsOwnedBy(ctx, gadb.DeleteContactMethodsOwnedByParams{
-		Ids:    uids,
-		UserID: owner,
+	return executioncontext.WithCMNRTransaction(ctx, dbtx, func(tx *sql.Tx) error {
+		return deleteCMNRTargets(ctx, tx, authority, uids)
 	})
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return permission.NewAccessDenied("")
-	}
-	return nil
 }
 
 // FindOneTx finds the contact method from the database using the provided ID within a transaction.
