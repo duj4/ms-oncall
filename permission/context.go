@@ -17,7 +17,12 @@ func SourceContext(ctx context.Context, src *SourceInfo) context.Context {
 	}
 	// make a copy, so it's read-only
 	dup := *src
-	ctx = log.WithField(ctx, "AuthSource", src.String())
+	logSource := dup.Type.String()
+	if dup.Type != SourceTypeIntegrationKey {
+		logSource = dup.String()
+	}
+	// A traditional integration key's ID is a credential, not log metadata.
+	ctx = log.WithField(ctx, "AuthSource", logSource)
 	return context.WithValue(ctx, contextKeySourceInfo, dup)
 }
 
