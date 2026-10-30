@@ -39,7 +39,7 @@ type ikAuthorityFixture struct {
 type ikAuthorityConnector struct{ f *ikAuthorityFixture }
 
 func (c ikAuthorityConnector) Connect(context.Context) (driver.Conn, error) {
-	return ikAuthorityConn{c.f}, nil
+	return ikAuthorityConn(c), nil
 }
 func (c ikAuthorityConnector) Driver() driver.Driver { return ikAuthorityDriver{} }
 
