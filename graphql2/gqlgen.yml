@@ -63,6 +63,9 @@ models:
     model: github.com/target/goalert/schedule/rotation.Type
   IntegrationKey:
     model: github.com/target/goalert/integrationkey.IntegrationKey
+    fields:
+      id:
+        resolver: true
   Label:
     model: github.com/target/goalert/label.Label
   ClockTime:

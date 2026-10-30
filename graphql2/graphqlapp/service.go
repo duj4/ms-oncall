@@ -223,9 +223,16 @@ func (s *Service) OnCallUsers(ctx context.Context, raw *service.Service) ([]onca
 }
 
 func (s *Service) IntegrationKeys(ctx context.Context, raw *service.Service) ([]integrationkey.IntegrationKey, error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	authority, err := integrationKeyManagementAuthority(ctx)
 	if err != nil {
 		return nil, err
+	}
+	organizationID, err := authority.serviceTarget(ctx, s.DB, raw.ID, integrationkey.TypeGeneric)
+	if err != nil {
+		return nil, err
+	}
+	if authority.platformAdmin && *organizationID != *authority.home {
+		return s.IntKeyStore.FindNonUIKByService(ctx, raw.ID, *organizationID)
 	}
 	return s.IntKeyStore.FindAllByService(ctx, raw.ID, organizationID)
 }
@@ -235,6 +242,15 @@ func (s *Service) HeartbeatMonitors(ctx context.Context, raw *service.Service) (
 }
 
 func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServiceInput) (result *service.Service, err error) {
+	for _, key := range input.NewIntegrationKeys {
+		if integrationkey.Type(key.Type) == integrationkey.TypeUniversal {
+			continue
+		}
+		if _, err := integrationKeyManagementAuthority(ctx); err != nil {
+			return nil, err
+		}
+		break
+	}
 	if config.LabelsDisabled() && len(input.Labels) != 0 {
 		return nil, label.ErrDisabled
 	}

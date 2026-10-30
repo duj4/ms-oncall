@@ -90,6 +90,8 @@ func integrationKeyOrganizationApp(h *harness.Harness) *graphqlapp.App {
 
 func TestGraphQLIntegrationKeyOrganizationMaterialization(t *testing.T) {
 	h := integrationKeyOrganizationHarness(t)
+	_, err := h.App().DB().Exec(`UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1`, h.UUID("user-a"))
+	require.NoError(t, err)
 	for _, kind := range []string{"generic", "universal"} {
 		fields := "id serviceID href type"
 		if kind == "universal" {
@@ -104,6 +106,7 @@ func TestGraphQLIntegrationKeyOrganizationMaterialization(t *testing.T) {
 		foreign := query(h.UUID(kind + "-b"))
 		missing := query(h.UUID("missing"))
 		require.Equal(t, missing, foreign)
+		require.NotEmpty(t, foreign.Errors)
 		require.JSONEq(t, `{"integrationKey":null}`, string(foreign.Data))
 	}
 	// Every object-producing list boundary must prevent legacy Href exposure.
@@ -141,7 +144,7 @@ func TestGraphQLIntegrationKeyOrganizationMaterialization(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, own, 2)
 	foreign, err := app.Service().IntegrationKeys(ctx, &service.Service{ID: h.UUID("service-b")})
-	require.NoError(t, err)
+	require.True(t, permission.IsPermissionError(err))
 	require.Empty(t, foreign)
 	// Even a raw IntegrationKey cannot expose configuration or token hints.
 	for _, id := range []string{h.UUID("universal-b"), h.UUID("missing")} {
@@ -162,6 +165,8 @@ func TestGraphQLIntegrationKeyOrganizationMaterialization(t *testing.T) {
 
 func TestGraphQLIntegrationKeyOrganizationCreate(t *testing.T) {
 	h := integrationKeyOrganizationHarness(t)
+	_, err := h.App().DB().Exec(`UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1`, h.UUID("user-a"))
+	require.NoError(t, err)
 	create := func(serviceID, name string) *stepOrganizationResponse {
 		return stepOrganizationQuery(t, h, fmt.Sprintf(`mutation {createIntegrationKey(input:{serviceID:%q, name:%q, type:generic}) {id serviceID href}}`, serviceID, name))
 	}

@@ -33,7 +33,11 @@ func (k *KeyConfig) OneRule(ctx context.Context, key *gadb.UIKConfigV1, ruleID s
 }
 
 func (q *Query) IntegrationKey(ctx context.Context, id string) (*integrationkey.IntegrationKey, error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	authority, err := integrationKeyManagementAuthority(ctx)
+	if err != nil {
+		return nil, err
+	}
+	organizationID, _, err := authority.keyTarget(ctx, q.DB, id)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +217,7 @@ func (m *Mutation) UpdateKeyConfig(ctx context.Context, input graphql2.UpdateKey
 }
 
 func (m *Mutation) CreateIntegrationKey(ctx context.Context, input graphql2.CreateIntegrationKeyInput) (key *integrationkey.IntegrationKey, err error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	authority, err := integrationKeyManagementAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -229,6 +233,15 @@ func (m *Mutation) CreateIntegrationKey(ctx context.Context, input graphql2.Crea
 		}
 		if input.ExternalSystemName != nil {
 			key.ExternalSystemName = *input.ExternalSystemName
+		}
+		// Keep local input validation ahead of target lookup. Human capability
+		// was already checked before opening this transaction.
+		if _, err := key.Normalize(); err != nil {
+			return err
+		}
+		organizationID, err := authority.serviceTarget(ctx, tx, serviceID, key.Type)
+		if err != nil {
+			return err
 		}
 		key, err = m.IntKeyStore.Create(ctx, tx, key, organizationID)
 		return err
@@ -252,11 +265,30 @@ func (key *IntegrationKey) Type(ctx context.Context, raw *integrationkey.Integra
 	return graphql2.IntegrationKeyType(raw.Type), nil
 }
 
+func (key *IntegrationKey) ID(ctx context.Context, raw *integrationkey.IntegrationKey) (string, error) {
+	authority, err := integrationKeyManagementAuthority(ctx)
+	if err != nil {
+		return "", err
+	}
+	if _, _, err := authority.keyTarget(ctx, key.DB, raw.ID); err != nil {
+		return "", err
+	}
+	return raw.ID, nil
+}
+
 func (key *IntegrationKey) Href(ctx context.Context, raw *integrationkey.IntegrationKey) (string, error) {
+	authority, err := integrationKeyManagementAuthority(ctx)
+	if err != nil {
+		return "", err
+	}
+	_, kind, err := authority.keyTarget(ctx, key.DB, raw.ID)
+	if err != nil {
+		return "", err
+	}
 	cfg := config.FromContext(ctx)
 	q := make(url.Values)
 	q.Set("token", raw.ID)
-	switch raw.Type {
+	switch kind {
 	case integrationkey.TypeGeneric:
 		return cfg.CallbackURL("/api/v2/generic/incoming", q), nil
 	case integrationkey.TypeGrafana:
@@ -278,6 +310,10 @@ func (key *IntegrationKey) Href(ctx context.Context, raw *integrationkey.Integra
 }
 
 func (q *Query) IntegrationKeys(ctx context.Context, input *graphql2.IntegrationKeySearchOptions) (conn *graphql2.IntegrationKeyConnection, err error) {
+	authority, err := integrationKeyManagementAuthority(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if input == nil {
 		input = &graphql2.IntegrationKeySearchOptions{}
 	}
@@ -300,13 +336,14 @@ func (q *Query) IntegrationKeys(ctx context.Context, input *graphql2.Integration
 		opts.Limit = 15
 	}
 
-	organizationID, err := rootStoreOrganizationID(ctx)
-	if err != nil {
-		return nil, err
-	}
 	opts.Limit++
 	// Cursor state contains search criteria only; authority is a separate argument.
-	intKeys, err := q.IntKeyStore.Search(ctx, &opts, organizationID)
+	var intKeys []integrationkey.IntegrationKey
+	if authority.platformAdmin {
+		intKeys, err = q.IntKeyStore.SearchForPlatformAdmin(ctx, &opts, *authority.home)
+	} else {
+		intKeys, err = q.IntKeyStore.Search(ctx, &opts, authority.home)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +356,7 @@ func (q *Query) IntegrationKeys(ctx context.Context, input *graphql2.Integration
 	if len(intKeys) > 0 {
 		lastKey := intKeys[len(intKeys)-1]
 		opts.After = lastKey.Name
+		opts.AfterID = lastKey.ID
 
 		cur, err := search.Cursor(opts)
 		if err != nil {
