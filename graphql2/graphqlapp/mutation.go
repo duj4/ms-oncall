@@ -289,8 +289,11 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 }
 
 func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
-	var hasRootTarget, hasIntegrationKey bool
+	var hasRootTarget, hasIntegrationKey, hasService bool
 	for _, tgt := range input {
+		if tgt.TargetType() == assignment.TargetTypeService {
+			hasService = true
+		}
 		if tgt.TargetType() == assignment.TargetTypeIntegrationKey {
 			hasIntegrationKey = true
 		}
@@ -313,7 +316,15 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 	}
 
 	var organizationID *uuid.UUID
-	if hasRootTarget {
+	if hasService {
+		// Role-ineligible Service deletion must precede every target-group write.
+		// Complete-set validation remains in the existing scoped Store operation.
+		var err error
+		organizationID, err = serviceManagementAuthority(ctx, serviceManagementDelete)
+		if err != nil {
+			return false, err
+		}
+	} else if hasRootTarget {
 		var err error
 		organizationID, err = rootStoreOrganizationID(ctx)
 		if err != nil {

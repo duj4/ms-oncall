@@ -290,13 +290,18 @@ func TestGraphQLIntegrationKeyDeleteCompatibility(t *testing.T) {
 	require.Zero(t, remaining)
 }
 
-// This known separate Service capability is deliberately not repaired by IK-D1.
-// Keeping a permanent control prevents claiming universal deletion protection.
+// SVC-B1 closes the Member parent-Service bypass independently of explicit IK-D1.
+// Eligible Home management still has the existing database cascade consequences.
 func TestGraphQLIntegrationKeyDeleteParentCascadeDependency(t *testing.T) {
 	h := integrationKeyOrganizationHarness(t)
+	before := ikDeleteSnapshot(t, h)
 	response := stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{deleteAll(input:[{type:service,id:%q}])}`, h.UUID("service-a")))
+	require.NotEmpty(t, response.Errors)
+	require.Equal(t, before, ikDeleteSnapshot(t, h))
+	ikSetAuthority(t, h, "ORG_ADMIN", false)
+	response = stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{deleteAll(input:[{type:service,id:%q}])}`, h.UUID("service-a")))
 	require.Empty(t, response.Errors)
 	var remaining int
 	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM integration_keys WHERE service_id=$1`, h.UUID("service-a")).Scan(&remaining))
-	require.Zero(t, remaining, "OrgMember Service deletion still cascades; separate Service RBAC dependency")
+	require.Zero(t, remaining, "authorized Home Service deletion retains database cascades")
 }

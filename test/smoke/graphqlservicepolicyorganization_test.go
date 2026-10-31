@@ -32,8 +32,10 @@ func TestGraphQLServicePolicySameOrganization(t *testing.T) {
 	t.Parallel()
 	h := harness.NewHarness(t, servicePolicyOrganizationSQL, "")
 	defer h.Close()
+	// Relationship and validation controls require an eligible Service manager.
+	ikSetAuthority(t, h, "ORG_ADMIN", false)
 
-	// The harness assigns this ordinary user to its real Normal Organization A.
+	// The harness assigns this user to its real Normal Organization A.
 	query := func(t *testing.T, input string) *harness.QLResponse {
 		t.Helper()
 		return h.GraphQLQueryUserT(t, h.UUID("user-a"), input)
