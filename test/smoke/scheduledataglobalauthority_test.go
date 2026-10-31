@@ -220,7 +220,7 @@ func TestScheduleDataNotificationValidationCombinations(t *testing.T) {
 }
 
 // Safe global validation must precede authority denial without Schedule access.
-// Every notification case also exercises rollback of an existing channel update.
+// Notification validation must leave existing channels unchanged without mapping.
 func TestScheduleDataGlobalValidationPrecedence(t *testing.T) {
 	h := scheduleDataHarness(t)
 	app, provider := scheduleDataProviderApp(t, h)
@@ -311,7 +311,7 @@ func TestScheduleDataGlobalValidationPrecedence(t *testing.T) {
 				require.NoError(t, h.App().DB().QueryRow(`SELECT name FROM notification_channels WHERE id=$1`, seedID).Scan(&name))
 				require.Equal(t, "original name", name, "destination update must roll back")
 				require.EqualError(t, err, wantRuleError[kind])
-				require.EqualValues(t, len(rules), writes.Load()-before)
+				require.Zero(t, writes.Load()-before)
 				scheduleDataGlobalRecord(t, map[string]any{"error": err.Error(), "schedule_queries": queries.Load(), "channel_write_attempts": writes.Load() - before, "durable_channels": n})
 			})
 		}

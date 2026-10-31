@@ -257,6 +257,7 @@ func scheduleDataGraphQL(ctx context.Context, app *graphqlapp.App, id string, te
 
 func TestScheduleDataOrganizationGraphQL(t *testing.T) {
 	h := scheduleDataHarness(t)
+	epB1Exec(t, h, "UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1", h.UUID("user-a"))
 	for _, role := range []permission.Role{permission.RoleUser, permission.RoleAdmin} {
 		ctx := scheduleDataHuman(t, h, role)
 		for _, op := range scheduleDataOperations {
@@ -280,7 +281,7 @@ func TestScheduleDataOrganizationGraphQL(t *testing.T) {
 		t.Run("API-key/"+op, func(t *testing.T) {
 			err := scheduleDataGraphQL(api, scheduleDataApp(h), h.UUID("foreign"), scheduleDataTemp(h), op)
 			scheduleDataRecord(t, scheduleDataOutcome(err))
-			require.NoError(t, err)
+			require.True(t, permission.IsPermissionError(err))
 		})
 	}
 }
@@ -387,8 +388,10 @@ func scheduleDataProviderApp(t *testing.T, h *harness.Harness) (*graphqlapp.App,
 
 func TestScheduleDataOrganizationDestinationRollback(t *testing.T) {
 	h := scheduleDataHarness(t)
+	epB1Exec(t, h, "UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1", h.UUID("user-a"))
 	ctx := scheduleDataHuman(t, h, permission.RoleUser)
 	app, provider := scheduleDataProviderApp(t, h)
+	_, writes := scheduleDataValidationTrace(t, h, app)
 	for _, parent := range []string{"own", "foreign", "missing"} {
 		for _, mode := range []string{"insert", "update"} {
 			t.Run(parent+"/"+mode, func(t *testing.T) {
@@ -398,9 +401,10 @@ func TestScheduleDataOrganizationDestinationRollback(t *testing.T) {
 					require.NoError(t, err)
 				}
 				calls := provider.calls
+				beforeWrites := writes.Load()
 				_, err := app.Mutation().SetScheduleOnCallNotificationRules(ctx, graphql2.SetScheduleOnCallNotificationRulesInput{ScheduleID: h.UUID(parent), Rules: []graphql2.OnCallNotificationRuleInput{{Dest: dest}}})
 				scheduleDataRecord(t, scheduleDataOutcome(err))
-				require.Greater(t, provider.calls, calls, "destination mapping still precedes parent authorization")
+				require.Greater(t, provider.calls, calls, "safe destination validation precedes parent authorization")
 				var name string
 				lookup := app.DB.QueryRow(`SELECT name FROM notification_channels WHERE dest=$1`, gadb.NullDestV1{Valid: true, DestV1: dest}).Scan(&name)
 				if parent == "own" {
@@ -408,6 +412,7 @@ func TestScheduleDataOrganizationDestinationRollback(t *testing.T) {
 					require.NoError(t, lookup)
 					require.Equal(t, provider.label, name)
 				} else {
+					require.Equal(t, beforeWrites, writes.Load(), "foreign/missing parents must not map destinations")
 					scheduleDataUnavailable(t, err)
 					if mode == "insert" {
 						require.ErrorIs(t, lookup, sql.ErrNoRows)

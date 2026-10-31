@@ -37,7 +37,7 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 	if input.Target.Type == assignment.TargetTypeUser && input.Target.ID == "__current_user" {
 		input.Target.ID = permission.UserID(ctx)
 	}
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		return false, err
 	}

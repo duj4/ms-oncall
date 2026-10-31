@@ -293,13 +293,16 @@ func TestScheduleDataInvalidAuthorityAdmission(t *testing.T) {
 	h := scheduleDataHarness(t)
 	app, provider := scheduleDataProviderApp(t, h)
 	scheduleQueries, channelWrites := scheduleDataValidationTrace(t, h, app)
-	for _, authority := range []string{"missing", "zero"} {
+	for _, authority := range []string{"missing", "zero", "member"} {
 		for _, parent := range []string{"own", "foreign", "missing"} {
 			for _, op := range []string{"set", "set-clear", "clear", "rules", "rules-update"} {
 				t.Run(authority+"/"+parent+"/"+op, func(t *testing.T) {
 					ctx := scheduleDataMissingAuthority(t, h)
 					if authority == "zero" {
 						ctx = executioncontext.WithExecutionContext(ctx, executioncontext.ExecutionContext{})
+					}
+					if authority == "member" {
+						ctx = scheduleDataHuman(t, h, permission.RoleUser)
 					}
 					raw := ""
 					if parent != "missing" {
@@ -318,7 +321,7 @@ func TestScheduleDataInvalidAuthorityAdmission(t *testing.T) {
 						_, err = app.Mutation().SetScheduleOnCallNotificationRules(ctx, graphql2.SetScheduleOnCallNotificationRulesInput{
 							ScheduleID: h.UUID(parent), Rules: []graphql2.OnCallNotificationRuleInput{{Dest: dest}},
 						})
-						require.Equal(t, beforeWrites+1, channelWrites.Load(), "observe the transaction-local destination write")
+						require.Equal(t, beforeWrites, channelWrites.Load(), "unauthorized requests must not map destinations")
 						var name string
 						lookup := h.App().DB().QueryRow(`SELECT name FROM notification_channels WHERE dest=$1`, gadb.NullDestV1{Valid: true, DestV1: dest}).Scan(&name)
 						if op == "rules" {
@@ -330,7 +333,11 @@ func TestScheduleDataInvalidAuthorityAdmission(t *testing.T) {
 					} else {
 						err = scheduleDataGraphQL(ctx, app, h.UUID(parent), scheduleDataTemp(h), op)
 					}
-					require.EqualError(t, err, "access denied: normal Organization scoped authority is required")
+					want := "access denied: normal Organization scoped authority is required"
+					if authority == "member" {
+						want = "access denied: Schedule/Rotation management authority is required"
+					}
+					require.EqualError(t, err, want)
 					require.True(t, permission.IsPermissionError(err))
 					require.Zero(t, scheduleQueries.Load(), "authority denial must precede every Schedule query")
 					require.Equal(t, raw, scheduleDataRaw(t, h, parent))
