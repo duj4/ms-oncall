@@ -13,11 +13,11 @@ import (
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/escalation"
-	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
 	"github.com/target/goalert/notice"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rotation"
@@ -90,6 +90,8 @@ func (m *Mutation) validateEscalationPolicyActionTargetTx(ctx context.Context, t
 	}
 	var targetID string
 	switch action.Type {
+	case user.DestTypeUser:
+		targetID = action.Arg(user.FieldUserID)
 	case schedule.DestTypeSchedule:
 		targetID = action.Arg(schedule.FieldScheduleID)
 	case rotation.DestTypeRotation:
@@ -102,10 +104,20 @@ func (m *Mutation) validateEscalationPolicyActionTargetTx(ctx context.Context, t
 	if err != nil {
 		return err
 	}
-	// Relationship authorization needs no target mutation lock. Existing FKs
-	// protect target existence/deletion, and ordinary CRUD cannot change its
-	// Organization ownership.
+	// Target reads stay non-locking. FKs protect existence/deletion;
+	// Schedule/Rotation ownership cannot change through ordinary CRUD.
+	// User assignment is observed by the statement below; this does not
+	// introduce an in-flight Organization-transfer fence.
 	switch action.Type {
+	case user.DestTypeUser:
+		// Reuse the admission projection against this business transaction.
+		// An ordinary same-Org Member is a valid destination; target admin
+		// privilege never substitutes for its Normal Organization relationship.
+		var target *organization.CurrentUserOrganization
+		target, err = organization.NewStore(m.DB).FindCurrentUserOrganizationTx(ctx, tx, id)
+		if errors.Is(err, organization.ErrNotFound) || (err == nil && target.OrganizationID != *organizationID) {
+			err = sql.ErrNoRows
+		}
 	case schedule.DestTypeSchedule:
 		var schedules []schedule.Schedule
 		schedules, err = m.ScheduleStore.FindManyTx(ctx, tx, []string{id.String()}, organizationID)
@@ -122,7 +134,7 @@ func (m *Mutation) validateEscalationPolicyActionTargetTx(ctx context.Context, t
 }
 
 func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql2.CreateEscalationPolicyStepInput) (step *escalation.Step, err error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := epManagementAuthority(ctx, epManagementCreateStep)
 	if err != nil {
 		return nil, err
 	}
@@ -239,18 +251,14 @@ func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.Cr
 		return nil, label.ErrDisabled
 	}
 
-	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
-	if requestExecutionContext == nil {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
-	}
-	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
-	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	organizationID, err := epManagementAuthority(ctx, epManagementCreate)
+	if err != nil {
+		return nil, err
 	}
 
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		p := &escalation.Policy{
-			OrganizationID: organizationID,
+			OrganizationID: *organizationID,
 			Name:           input.Name,
 		}
 		if input.Repeat != nil {
@@ -294,7 +302,7 @@ func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.Cr
 }
 
 func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.UpdateEscalationPolicyInput) (bool, error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := epManagementAuthority(ctx, epManagementUpdate)
 	if err != nil {
 		return false, err
 	}
@@ -370,7 +378,7 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 }
 
 func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql2.UpdateEscalationPolicyStepInput) (bool, error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := epManagementAuthority(ctx, epManagementUpdate)
 	if err != nil {
 		return false, err
 	}

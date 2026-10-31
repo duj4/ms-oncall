@@ -270,6 +270,8 @@ func TestGraphQLIntegrationKeyDeleteConcurrentTypeChange(t *testing.T) {
 
 func TestGraphQLIntegrationKeyDeleteCompatibility(t *testing.T) {
 	h := integrationKeyOrganizationHarness(t)
+	// Positive Schedule/Rotation deletion uses EP-B1 Home management authority.
+	ikSetAuthority(t, h, "ORG_ADMIN", false)
 	roots := ikDeleteRoots(t, h)
 	response := stepOrganizationQuery(t, h, `mutation{deleteAll(input:[`+roots+`])}`)
 	require.Empty(t, response.Errors, "authorized non-Key DeleteAll remains unchanged")

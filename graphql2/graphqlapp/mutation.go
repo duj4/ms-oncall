@@ -289,7 +289,7 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 }
 
 func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
-	var hasRootTarget, hasIntegrationKey, hasService bool
+	var hasRootTarget, hasIntegrationKey, hasService, hasEPManagement bool
 	for _, tgt := range input {
 		if tgt.TargetType() == assignment.TargetTypeService {
 			hasService = true
@@ -297,6 +297,11 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 		if tgt.TargetType() == assignment.TargetTypeIntegrationKey {
 			hasIntegrationKey = true
 		}
+		switch tgt.TargetType() {
+		case assignment.TargetTypeEscalationPolicy, assignment.TargetTypeSchedule, assignment.TargetTypeRotation:
+			hasEPManagement = true
+		}
+
 		switch tgt.TargetType() {
 		case assignment.TargetTypeService,
 			assignment.TargetTypeSchedule,
@@ -311,6 +316,15 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 		// Deny incapable callers before any unrelated target-group writes.
 		// Actual targets are still authorized inside each retry's transaction.
 		if _, err := integrationKeyManagementAuthority(ctx); err != nil {
+			return false, err
+		}
+	}
+
+	if hasEPManagement {
+		// EP and indirect Schedule/Rotation deletion require management eligibility
+		// before the shared transaction can write any target group. Scope and
+		// complete-set matching still apply independently inside each Store.
+		if _, err := epManagementAuthority(ctx, epManagementDelete); err != nil {
 			return false, err
 		}
 	}

@@ -30,6 +30,14 @@ VALUES
     ({{uuid "user-a"}}, 'Step Parent Organization A User', '', 'user'),
     ({{uuid "user-other"}}, 'Step Parent Other User', '', 'user');
 
+-- EP management positive cases use a current ordinary OrgAdmin.
+INSERT INTO user_organization_assignments (
+ user_id, effective_organization_id, effective_organization_classification,
+ effective_normal_organization_id, organization_role, mapping_outcome,
+ authoritative_evaluated_at, source_config_version, matched_count
+) VALUES ({{uuid "user-a"}}, {{smokeOrganizationID}}, 'NORMAL', {{smokeOrganizationID}},
+ 'ORG_ADMIN', 'EXACTLY_ONE', now(), 'ep-management-positive-v1', 1);
+
 INSERT INTO escalation_policies (id, organization_id, name, description, repeat)
 VALUES
     ({{uuid "policy-a"}}, {{smokeOrganizationID}}, 'Step Parent Policy A', 'original A', 1),
@@ -372,10 +380,9 @@ func TestGraphQLEscalationPolicyStepParentOrganizationUpdate(t *testing.T) {
 
 	t.Run("own action failure rolls back delay and action deletion", func(t *testing.T) {
 		before := stepOrganizationSnapshot(t, h)
-		wait := h.ExpectBackendError(`violates foreign key constraint "escalation_policy_actions_user_id_fkey"`)
+		// F03 now rejects unavailable User relationships before the FK write.
 		response := update(t, h.UUID("step-a1"), fmt.Sprintf(`delayMinutes: 13, actions: [{type: "builtin-user", args: {user_id: %q}}]`, h.UUID("missing-user")))
-		wait()
-		require.NotEmpty(t, response.Errors)
+		stepOrganizationUnavailable(t, response, "updateEscalationPolicyStep", "ID")
 		require.Equal(t, before, stepOrganizationSnapshot(t, h))
 	})
 

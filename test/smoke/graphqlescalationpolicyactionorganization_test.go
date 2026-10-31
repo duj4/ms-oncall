@@ -89,7 +89,7 @@ func TestGraphQLEscalationPolicyActionOrganizationCreate(t *testing.T) {
 
 			// Include valid User and operational actions ahead of the rejected
 			// target to detect partial Step/action persistence in a mixed list.
-			for _, prefix := range []string{"", stepActionOrganizationTarget("user", h.UUID("user-other")) + ", " + own + ", "} {
+			for _, prefix := range []string{"", stepActionOrganizationTarget("user", h.UUID("user-a")) + ", " + own + ", "} {
 				before := stepOrganizationSnapshot(t, h)
 				var foreign *stepOrganizationResponse
 				for _, target := range []string{kind + "-b", kind + "-missing"} {
@@ -146,11 +146,11 @@ func TestGraphQLEscalationPolicyActionOrganizationUpdate(t *testing.T) {
 
 	for _, kind := range []string{"schedule", "rotation"} {
 		t.Run(kind, func(t *testing.T) {
-			user := stepActionOrganizationTarget("user", h.UUID("user-other"))
+			user := stepActionOrganizationTarget("user", h.UUID("user-a"))
 			own := stepActionOrganizationTarget(kind, h.UUID(kind+"-a"))
 			final := "[" + user + ", " + own + "]"
 			require.Empty(t, stepActionOrganizationUpdate(t, h, final, 7).Errors)
-			require.ElementsMatch(t, []string{"user:" + h.UUID("user-other"), kind + ":" + h.UUID(kind+"-a")}, stepActionOrganizationRows(t, h, h.UUID("step-a1")))
+			require.ElementsMatch(t, []string{"user:" + h.UUID("user-a"), kind + ":" + h.UUID(kind+"-a")}, stepActionOrganizationRows(t, h, h.UUID("step-a1")))
 			before := stepOrganizationSnapshot(t, h)
 			require.Empty(t, stepActionOrganizationUpdate(t, h, final, 7).Errors)
 			require.Equal(t, before, stepOrganizationSnapshot(t, h), "retained own actions must keep their durable rows")
@@ -201,7 +201,7 @@ func TestGraphQLEscalationPolicyActionOrganizationHistoricalRemoval(t *testing.T
 				require.NoError(t, err)
 				_, err = h.App().DB().Exec(`INSERT INTO escalation_policy_actions (escalation_policy_step_id, `+kind+`_id) VALUES ($1, $2)`, h.UUID("step-a1"), h.UUID(kind+"-b"))
 				require.NoError(t, err)
-				_, err = h.App().DB().Exec(`INSERT INTO escalation_policy_actions (escalation_policy_step_id, user_id) VALUES ($1, $2)`, h.UUID("step-a1"), h.UUID("user-other"))
+				_, err = h.App().DB().Exec(`INSERT INTO escalation_policy_actions (escalation_policy_step_id, user_id) VALUES ($1, $2)`, h.UUID("step-a1"), h.UUID("user-a"))
 				require.NoError(t, err)
 				before := stepOrganizationSnapshot(t, h)
 				require.Empty(t, stepActionOrganizationUpdate(t, h, "", 9).Errors, "Actions == nil must retain base-compatible delay-only behavior")
@@ -216,7 +216,7 @@ func TestGraphQLEscalationPolicyActionOrganizationHistoricalRemoval(t *testing.T
 				require.Equal(t, 9, delay)
 
 				foreign := stepActionOrganizationTarget(kind, h.UUID(kind+"-b"))
-				user := stepActionOrganizationTarget("user", h.UUID("user-other"))
+				user := stepActionOrganizationTarget("user", h.UUID("user-a"))
 				response := stepActionOrganizationUpdate(t, h, "["+user+", "+foreign+"]", 19)
 				stepOrganizationUnavailable(t, response, "updateEscalationPolicyStep", "ID")
 				require.Equal(t, afterDelay, stepOrganizationSnapshot(t, h), "retaining an existing foreign target must reject")
@@ -225,7 +225,7 @@ func TestGraphQLEscalationPolicyActionOrganizationHistoricalRemoval(t *testing.T
 				var want []string
 				if retained != "empty" {
 					final = "[" + user + "]"
-					want = []string{"user:" + h.UUID("user-other")}
+					want = []string{"user:" + h.UUID("user-a")}
 				}
 				if retained == "user and own target" {
 					final = "[" + user + ", " + stepActionOrganizationTarget(kind, h.UUID(kind+"-a")) + "]"
@@ -289,7 +289,7 @@ func TestGraphQLEscalationPolicyActionOrganizationValidationPrecedence(t *testin
 				t.Run(kind+"/later "+malformedKind+"/"+tc.name, func(t *testing.T) {
 					// Reset through valid application requests so each case also
 					// exercises rollback of the original actions and Step delay.
-					initial := "[" + stepActionOrganizationTarget("user", h.UUID("user-other")) + "]"
+					initial := "[" + stepActionOrganizationTarget("user", h.UUID("user-a")) + "]"
 					if tc.retained {
 						initial = "[" + own + ", " + own + "]"
 						require.Empty(t, stepActionOrganizationUpdate(t, h, "["+own+"]", 7).Errors)
@@ -345,8 +345,13 @@ func TestGraphQLEscalationPolicyActionOrganizationCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("global User current user and channel actions", func(t *testing.T) {
-		user := stepActionOrganizationTarget("user", h.UUID("user-other"))
+	t.Run("same-Org User current user and channel actions", func(t *testing.T) {
+		// Keep the explicit User distinct from __current_user, within Home.
+		_, err := h.App().DB().Exec(`INSERT INTO users(id,name,email,role) VALUES($1,'Same-Org synthetic target','','user')`, h.UUID("user-same"))
+		require.NoError(t, err)
+		_, err = h.App().DB().Exec(`INSERT INTO user_organization_assignments(user_id,effective_organization_id,effective_organization_classification,effective_normal_organization_id,organization_role,mapping_outcome,authoritative_evaluated_at,source_config_version,matched_count) VALUES($1,$2,'NORMAL',$2,'ORG_MEMBER','EXACTLY_ONE',now(),'ep-compatibility-test',1)`, h.UUID("user-same"), harness.SmokeOrganizationID)
+		require.NoError(t, err)
+		user := stepActionOrganizationTarget("user", h.UUID("user-same"))
 		channel := `{type: "builtin-webhook", args: {webhook_url: "https://example.invalid/action-organization-smoke"}}`
 		id := stepOrganizationCreateID(t, stepActionOrganizationCreate(t, h, strings.Join([]string{
 			user, stepActionOrganizationTarget("user", "__current_user"), channel,
@@ -354,14 +359,14 @@ func TestGraphQLEscalationPolicyActionOrganizationCompatibility(t *testing.T) {
 		var channelID string
 		require.NoError(t, h.App().DB().QueryRow(`SELECT a.channel_id FROM escalation_policy_actions a
 			JOIN notification_channels c ON c.id = a.channel_id WHERE a.escalation_policy_step_id = $1`, id).Scan(&channelID))
-		require.ElementsMatch(t, []string{"user:" + h.UUID("user-other"), "user:" + h.UUID("user-a"), "channel:" + channelID}, stepActionOrganizationRows(t, h, id))
+		require.ElementsMatch(t, []string{"user:" + h.UUID("user-same"), "user:" + h.UUID("user-a"), "channel:" + channelID}, stepActionOrganizationRows(t, h, id))
 		require.Empty(t, stepActionOrganizationUpdate(t, h, "["+user+", "+channel+"]", 8).Errors)
-		require.ElementsMatch(t, []string{"user:" + h.UUID("user-other"), "channel:" + channelID}, stepActionOrganizationRows(t, h, h.UUID("step-a1")))
+		require.ElementsMatch(t, []string{"user:" + h.UUID("user-same"), "channel:" + channelID}, stepActionOrganizationRows(t, h, h.UUID("step-a1")))
 		before := stepOrganizationSnapshot(t, h)
 		require.Empty(t, stepActionOrganizationUpdate(t, h, "["+user+", "+channel+"]", 8).Errors)
 		require.Equal(t, before, stepOrganizationSnapshot(t, h))
 		require.Empty(t, stepActionOrganizationUpdate(t, h, "["+user+"]", 8).Errors)
-		require.Equal(t, []string{"user:" + h.UUID("user-other")}, stepActionOrganizationRows(t, h, h.UUID("step-a1")))
+		require.Equal(t, []string{"user:" + h.UUID("user-same")}, stepActionOrganizationRows(t, h, h.UUID("step-a1")))
 	})
 
 	t.Run("duplicate actions and action limit retain existing behavior", func(t *testing.T) {
@@ -382,7 +387,7 @@ func TestGraphQLEscalationPolicyActionOrganizationCompatibility(t *testing.T) {
 			require.NoError(t, err)
 		}()
 		actions := strings.Join([]string{
-			stepActionOrganizationTarget("user", h.UUID("user-other")),
+			stepActionOrganizationTarget("user", h.UUID("user-a")),
 			stepActionOrganizationTarget("schedule", h.UUID("schedule-a")),
 			stepActionOrganizationTarget("rotation", h.UUID("rotation-a")),
 		}, ", ")
@@ -409,7 +414,7 @@ func TestGraphQLEscalationPolicyActionOrganizationCompatibility(t *testing.T) {
 				{delayMinutes: 3, newRotation: {name: "Nested Action Rotation", timeZone: "Etc/UTC", start: %q, type: daily, userIDs: [%q]}},
 				{delayMinutes: 4, actions: [%s, %s]}
 			]}) {id}
-		}`, h.Now().Format(time.RFC3339), h.UUID("user-other"), stepActionOrganizationTarget("schedule", h.UUID("schedule-a")), stepActionOrganizationTarget("rotation", h.UUID("rotation-a"))))
+		}`, h.Now().Format(time.RFC3339), h.UUID("user-a"), stepActionOrganizationTarget("schedule", h.UUID("schedule-a")), stepActionOrganizationTarget("rotation", h.UUID("rotation-a"))))
 		require.Empty(t, response.Errors)
 		var result struct{ CreateEscalationPolicy struct{ ID string } }
 		require.NoError(t, json.Unmarshal(response.Data, &result))
