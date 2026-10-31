@@ -289,8 +289,11 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 }
 
 func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
-	var hasRootTarget bool
+	var hasRootTarget, hasIntegrationKey bool
 	for _, tgt := range input {
+		if tgt.TargetType() == assignment.TargetTypeIntegrationKey {
+			hasIntegrationKey = true
+		}
 		switch tgt.TargetType() {
 		case assignment.TargetTypeService,
 			assignment.TargetTypeSchedule,
@@ -300,8 +303,12 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 			assignment.TargetTypeUserOverride:
 			hasRootTarget = true
 		}
-		if hasRootTarget {
-			break
+	}
+	if hasIntegrationKey {
+		// Deny incapable callers before any unrelated target-group writes.
+		// Actual targets are still authorized inside each retry's transaction.
+		if _, err := integrationKeyManagementAuthority(ctx); err != nil {
+			return false, err
 		}
 	}
 
@@ -369,7 +376,7 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeEscalationPolicy:
 			err = errors.Wrap(a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, organizationID), "delete escalation policies")
 		case assignment.TargetTypeIntegrationKey:
-			err = errors.Wrap(a.IntKeyStore.DeleteMany(ctx, tx, ids, organizationID), "delete integration keys")
+			err = errors.Wrap(a.deleteIntegrationKeys(ctx, tx, ids), "delete integration keys")
 		case assignment.TargetTypeSchedule:
 			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete schedules")
 		case assignment.TargetTypeCalendarSubscription:
