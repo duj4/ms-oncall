@@ -344,7 +344,7 @@ func (s *Store) UpdatePolicyTx(ctx context.Context, tx *sql.Tx, p *Policy, organ
 		}
 	}
 
-	s.logChange(ctx, nil, p.ID)
+	s.logChange(ctx, tx, p.ID)
 
 	return nil
 }

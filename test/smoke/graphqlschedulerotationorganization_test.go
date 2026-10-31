@@ -252,6 +252,10 @@ func TestGraphQLScheduleRotationMixedDeleteLockOrder(t *testing.T) {
 	`, "")
 	defer h.Close()
 
+	// Root deletion now requires a current Home management role.
+	_, roleErr := h.App().DB().Exec(`UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1`, h.UUID("user-delete"))
+	require.NoError(t, roleErr)
+
 	scheduleID, rotationID, otherRotationID := h.UUID("schedule-a"), h.UUID("rotation-a"), h.UUID("rotation-other")
 	require.NotEqual(t, rotationID, otherRotationID)
 	// Use distinct admitted humans in Organization A: HTTP requests from the

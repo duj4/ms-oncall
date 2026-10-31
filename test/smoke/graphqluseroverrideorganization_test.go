@@ -220,21 +220,32 @@ func TestGraphQLUserOverrideOrganizationUpdateAndDelete(t *testing.T) {
 	}
 	target := func(typ, name string) string { return fmt.Sprintf(`{type:%s,id:%q}`, typ, h.UUID(name)) }
 	for _, prefix := range []string{"", target("userOverride", "override-a1") + ",", target("rotation", "rotation-a") + ","} {
+		// Rotation batches require configuration management; Override-only
+		// batches continue exercising legitimate Member self-service.
+		if strings.Contains(prefix, "type:rotation") {
+			ikSetAuthority(t, h, "ORG_ADMIN", false)
+		}
 		foreign := deleteTargets(prefix+target("userOverride", "override-b"), true)
 		missing := deleteTargets(prefix+target("userOverride", "missing"), true)
 		require.NotEmpty(t, foreign.Errors)
 		require.Equal(t, missing, foreign)
 		require.Equal(t, before, userOverrideOrganizationSnapshot(t, h))
 	}
+	ikSetAuthority(t, h, "ORG_MEMBER", false)
+	require.NotEmpty(t, deleteTargets(target("userOverride", "override-a1")+","+target("schedule", "schedule-a"), false).Errors)
+	require.Equal(t, before, userOverrideOrganizationSnapshot(t, h))
+	ikSetAuthority(t, h, "ORG_ADMIN", false)
 	// The override is deleted first; a later foreign Schedule must roll it back.
 	require.NotEmpty(t, deleteTargets(target("userOverride", "override-a1")+","+target("schedule", "schedule-b"), true).Errors)
 	require.Equal(t, before, userOverrideOrganizationSnapshot(t, h))
+	ikSetAuthority(t, h, "ORG_MEMBER", false)
 	// Duplicates, including UUID spelling variants, denote one requested object.
 	duplicate := target("userOverride", "override-a1") + "," + fmt.Sprintf(`{type:userOverride,id:%q}`, strings.ToUpper(h.UUID("override-a1")))
 	require.Empty(t, deleteTargets(duplicate, false).Errors)
 	var count int
 	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM user_overrides WHERE id=$1`, h.UUID("override-a1")).Scan(&count))
 	require.Zero(t, count)
+	ikSetAuthority(t, h, "ORG_ADMIN", false)
 	require.Empty(t, deleteTargets(target("userOverride", "override-a2")+","+target("schedule", "schedule-a"), false).Errors)
 }
 

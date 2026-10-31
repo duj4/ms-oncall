@@ -65,13 +65,24 @@ const findCurrentUserOrganizationQuery = `
 // non-operational or contradictory combination is indistinguishable from not
 // found so callers cannot repair it into authority.
 func (s *Store) FindCurrentUserOrganization(ctx context.Context, userID uuid.UUID) (*CurrentUserOrganization, error) {
+	return s.FindCurrentUserOrganizationTx(ctx, nil, userID)
+}
+
+// FindCurrentUserOrganizationTx uses the same trusted projection within an
+// existing application transaction, without locking or changing authority.
+func (s *Store) FindCurrentUserOrganizationTx(ctx context.Context, tx *sql.Tx, userID uuid.UUID) (*CurrentUserOrganization, error) {
+	var db rowQueryer = s.db
+	if tx != nil {
+		db = tx
+	}
+
 	if userID == uuid.Nil {
 		return nil, fmt.Errorf("%w: User ID is required", ErrInvalidInput)
 	}
 
 	var value CurrentUserOrganization
 	var userRole, organizationRole string
-	err := s.db.QueryRowContext(ctx, findCurrentUserOrganizationQuery, userID, DefaultOrganizationID).Scan(
+	err := db.QueryRowContext(ctx, findCurrentUserOrganizationQuery, userID, DefaultOrganizationID).Scan(
 		&value.UserID,
 		&userRole,
 		&value.OrganizationID,

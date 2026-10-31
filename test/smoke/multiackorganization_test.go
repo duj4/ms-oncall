@@ -101,12 +101,14 @@ func TestMultiAckOrganizationGraphQLRoundTripAndDenial(t *testing.T) {
 			}
 		})
 	}
-	// Current accepted EP administration includes same-Organization legacy
-	// 'user' + ORG_MEMBER; MultiAck must not invent an ORG_ADMIN-only gate.
+	// EP-B1 denies Member configuration changes, including MultiAck.
 	_, err = db.Exec(`UPDATE user_organization_assignments SET organization_role = 'ORG_MEMBER' WHERE user_id = $1`, h.UUID("user-a"))
 	require.NoError(t, err)
-	require.Empty(t, query(t, "user-a", fmt.Sprintf(`mutation{updateEscalationPolicyStep(input:{id:%q,multiAck:true})}`, h.UUID("step-a1"))).Errors)
-	read(t, "user-a", "policy-a", h.UUID("step-a1"), true)
+	beforeMember := multiAckOrganizationSnapshot(t, h)
+	require.NotEmpty(t, query(t, "user-a", fmt.Sprintf(`mutation{updateEscalationPolicyStep(input:{id:%q,multiAck:true})}`, h.UUID("step-a1"))).Errors)
+	require.Equal(t, beforeMember, multiAckOrganizationSnapshot(t, h))
+	_, err = db.Exec(`UPDATE user_organization_assignments SET organization_role = 'ORG_ADMIN' WHERE user_id = $1`, h.UUID("user-a"))
+	require.NoError(t, err)
 
 	for _, side := range []string{"a", "b"} {
 		org := harness.SmokeOrganizationID
