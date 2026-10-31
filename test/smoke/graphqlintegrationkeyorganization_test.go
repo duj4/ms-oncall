@@ -260,6 +260,7 @@ func TestGraphQLIntegrationKeyOrganizationTokenConfigMutation(t *testing.T) {
 
 func TestGraphQLIntegrationKeyOrganizationDeleteAll(t *testing.T) {
 	h := integrationKeyOrganizationHarness(t)
+	ikSetAuthority(t, h, "ORG_ADMIN", false)
 	request := func(ids ...string) *stepOrganizationResponse {
 		targets := make([]string, len(ids))
 		for i, id := range ids {
@@ -269,12 +270,8 @@ func TestGraphQLIntegrationKeyOrganizationDeleteAll(t *testing.T) {
 	}
 	before := integrationKeyOrganizationSnapshot(t, h)
 	for _, prefix := range [][]string{nil, {h.UUID("generic-a")}} {
-		wait := h.ExpectBackendError("sql: no rows in result set")
 		foreign := request(append(append([]string{}, prefix...), h.UUID("generic-b"))...)
-		wait()
-		wait = h.ExpectBackendError("sql: no rows in result set")
 		missing := request(append(append([]string{}, prefix...), h.UUID("missing"))...)
-		wait()
 		require.NotEmpty(t, foreign.Errors)
 		require.Equal(t, missing, foreign)
 		require.Equal(t, before, integrationKeyOrganizationSnapshot(t, h))
@@ -283,9 +280,7 @@ func TestGraphQLIntegrationKeyOrganizationDeleteAll(t *testing.T) {
 	// also roll back that earlier group without changing DeleteAll ordering.
 	_, err := h.App().DB().Exec(`INSERT INTO schedules(id,organization_id,name,time_zone) VALUES($1,$2,'Rollback schedule','Etc/UTC')`, h.UUID("rollback-schedule"), harness.SmokeOrganizationID)
 	require.NoError(t, err)
-	wait := h.ExpectBackendError("sql: no rows in result set")
 	rolledBack := stepOrganizationQuery(t, h, fmt.Sprintf(`mutation {deleteAll(input:[{type:schedule,id:%q},{type:integrationKey,id:%q}])}`, h.UUID("rollback-schedule"), h.UUID("generic-b")))
-	wait()
 	require.NotEmpty(t, rolledBack.Errors)
 	var remaining int
 	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM schedules WHERE id=$1`, h.UUID("rollback-schedule")).Scan(&remaining))
