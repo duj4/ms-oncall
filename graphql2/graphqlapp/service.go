@@ -12,7 +12,6 @@ import (
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/escalation"
-	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/heartbeat"
@@ -255,14 +254,11 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 		return nil, label.ErrDisabled
 	}
 
-	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
-	if requestExecutionContext == nil {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	home, err := serviceManagementAuthority(ctx, serviceManagementCreate)
+	if err != nil {
+		return nil, err
 	}
-	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
-	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
-	}
+	organizationID := *home
 
 	if input.NewEscalationPolicy != nil && input.EscalationPolicyID != nil && *input.EscalationPolicyID != "" {
 		return nil, validation.NewFieldError("newEscalationPolicy", "cannot be used with `escalationPolicyID`.")
@@ -359,7 +355,7 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 }
 
 func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServiceInput) (bool, error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := serviceManagementAuthority(ctx, serviceManagementUpdate)
 	if err != nil {
 		return false, err
 	}
