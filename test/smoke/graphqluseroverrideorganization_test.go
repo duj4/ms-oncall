@@ -375,6 +375,9 @@ func TestUserOverrideOrganizationNonLockingParent(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, row)
 				if operation == "update" {
+					require.Equal(t, h.UUID("user-b"), row.RemoveUserID, "legacy fixture retains a foreign User")
+					// A scoped update can clear the legacy foreign User reference.
+					row.RemoveUserID = ""
 					require.NoError(t, s.UpdateUserOverrideTxScoped(ctx, child, row, &org))
 				}
 			case "delete":
