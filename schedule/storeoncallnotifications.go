@@ -32,7 +32,7 @@ func (store *Store) SetOnCallNotificationRulesScoped(ctx context.Context, tx *sq
 		return err
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(_ *sql.Tx, data *Data) error {
 		data.V1.OnCallNotificationRules = rules
 
 		return nil

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
@@ -11,11 +12,11 @@ func TestTempSchedules(t *testing.T) {
 	t.Parallel()
 
 	sql := `
-	insert into users (id, name, email) 
+	insert into users (id, name, email, role)
 	values 
-		({{uuid "temp-user"}}, 'foo', ''),
-		({{uuid "alt-user"}}, 'foo', ''),
-		({{uuid "rule-user"}}, 'bar', '');
+		({{uuid "temp-user"}}, 'foo', '', 'user'),
+		({{uuid "alt-user"}}, 'foo', '', 'user'),
+		({{uuid "rule-user"}}, 'bar', '', 'user');
 
 	insert into user_contact_methods (id, user_id, name, type, value) 
 	values
@@ -66,23 +67,25 @@ func TestTempSchedules(t *testing.T) {
 
 	h.Twilio(t).Device(h.Phone("temp")).ExpectSMS("testing")
 
-	h.GraphQLQueryT(t, fmt.Sprintf(`mutation{setTemporarySchedule(input:{
+	response := h.GraphQLQueryT(t, fmt.Sprintf(`mutation{setTemporarySchedule(input:{
 		scheduleID: "%s",
 		start: "0000-08-24T21:03:54Z",
 		end: "9999-08-24T21:03:54Z",
 		shifts: [{start: "0001-08-24T21:03:54Z", end: "9998-08-24T21:03:54Z", userID: "%s"}]
 	})}`, h.UUID("sched"), h.UUID("alt-user")))
+	require.Empty(t, response.Errors, "valid Home temporary shifts must be set before checking Engine effects")
 	h.Trigger()
 
 	h.Escalate(1, 0)
 
 	h.Twilio(t).Device(h.Phone("alt")).ExpectSMS("testing")
 
-	h.GraphQLQueryT(t, fmt.Sprintf(`mutation{clearTemporarySchedules(input:{
+	response = h.GraphQLQueryT(t, fmt.Sprintf(`mutation{clearTemporarySchedules(input:{
 		scheduleID: "%s",
 		start: "0000-08-24T21:03:54Z",
 		end: "9999-08-24T21:03:54Z"
 	})}`, h.UUID("sched")))
+	require.Empty(t, response.Errors)
 	h.Trigger()
 
 	h.Escalate(1, 0)

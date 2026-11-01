@@ -43,13 +43,17 @@ func TestGraphQLUserOverrideCreateValidationPrecedence(t *testing.T) {
 				t.Run(parent.name, func(t *testing.T) {
 					response := stepOrganizationQuery(t, h, fmt.Sprintf(`mutation {createUserOverride(input:{scheduleID:%q,start:%q,end:%q,addUserID:%q,removeUserID:%q}) {id}}`, parent.id, tc.start, tc.end, tc.add, tc.remove))
 					require.Len(t, response.Errors, 1)
-					require.Equal(t, tc.message, response.Errors[0].Message)
+					field, message := tc.field, tc.message
+					if tc.message == "user does not exist" && parent.name != "own-schedule" {
+						field, message = "TargetID", "schedule does not exist"
+					}
+					require.Equal(t, message, response.Errors[0].Message)
 					require.Equal(t, harness.QLPath("createUserOverride"), response.Errors[0].Path)
-					require.Equal(t, map[string]any{"fieldName": tc.field, "isFieldError": true}, response.Errors[0].Extensions)
+					require.Equal(t, map[string]any{"fieldName": field, "isFieldError": true}, response.Errors[0].Extensions)
 					require.JSONEq(t, `{"createUserOverride":null}`, string(response.Data))
 					if own == nil {
 						own = response
-					} else {
+					} else if tc.message != "user does not exist" {
 						require.Equal(t, own, response, "safe User validation must precede parent authorization")
 					}
 					require.Equal(t, before, userOverrideOrganizationSnapshot(t, h), "validation failure must preserve durable state")

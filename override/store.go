@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/util/sqlutil"
@@ -29,7 +30,6 @@ type Store struct {
 
 	findUOUpdate             *sql.Stmt
 	findScheduleOrganization *sql.Stmt
-	findCreateUsers          *sql.Stmt
 }
 
 // NewStore initializes a new DB using an existing sql connection.
@@ -42,10 +42,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		lock: p.P(`LOCK user_overrides IN EXCLUSIVE MODE`),
 		// Authorization must not lock the Schedule: Schedule deletion takes its
 		// row lock before cascading to user_overrides.
-		findScheduleOrganization: p.P(`select 1 from schedules where id = $1 and organization_id = $2`),
-		findCreateUsers: p.P(`select
-			exists (select 1 from users where id = $1),
-			exists (select 1 from users where id = $2)`),
+		findScheduleOrganization: p.P(`select organization_id from schedules where id = $1 and organization_id = $2`),
 
 		findUOUpdate: p.P(`
 		select
@@ -229,6 +226,24 @@ func (s *Store) UpdateUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, o *U
 		schedTgt.String = n.Target.TargetID()
 	}
 	return s.withTx(ctx, tx, func(tx *sql.Tx) error {
+		if scope.Valid {
+			// Bind to the persisted override and Schedule before resolving any
+			// referenced User; a submitted Target cannot reparent the override.
+			var parentOrganizationID uuid.UUID
+			err := tx.QueryRowContext(ctx, `
+				SELECT s.organization_id FROM user_overrides o
+				JOIN schedules s ON s.id=o.tgt_schedule_id
+				WHERE o.id=$1 AND o.tgt_schedule_id=$2 AND s.organization_id=$3`, n.ID, schedTgt, scope).Scan(&parentOrganizationID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return validation.NewFieldError("ID", "user override not found")
+			}
+			if err != nil {
+				return err
+			}
+			if err := s.validateUserReferences(ctx, tx, n, parentOrganizationID); err != nil {
+				return err
+			}
+		}
 		result, err := tx.StmtContext(ctx, s.updateUO).ExecContext(ctx, n.ID, add, rem, n.Start, n.End, schedTgt, scope)
 		if err != nil || organizationID == nil {
 			return err
@@ -289,30 +304,21 @@ func (s *Store) CreateUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, o *U
 	}
 	err = s.withTx(ctx, tx, func(tx *sql.Tx) error {
 		if scope.Valid {
-			// Preserve the existing CHECK, then Add/Remove User FK validation
-			// precedence. These checks expose no Schedule or override state.
+			// Preserve local duplicate validation before resolving the parent.
 			if add.Valid && rem.Valid && uuid.MustParse(add.String) == uuid.MustParse(rem.String) {
 				return validation.NewFieldError("AddUserID", "cannot be the same as the user being replaced")
 			}
-			var addExists, removeExists bool
-			err := tx.StmtContext(ctx, s.findCreateUsers).QueryRowContext(ctx, add, rem).Scan(&addExists, &removeExists)
-			if err != nil {
-				return err
-			}
-			if add.Valid && !addExists {
-				return validation.NewFieldError("AddUserID", "user does not exist")
-			}
-			if rem.Valid && !removeExists {
-				return validation.NewFieldError("RemoveUserID", "user does not exist")
-			}
 			// Both identity and parent lookups are non-locking. Insertion still
 			// enforces FKs and checks conflicts only after parent authorization.
-			var found int
-			err = tx.StmtContext(ctx, s.findScheduleOrganization).QueryRowContext(ctx, schedTgt, scope).Scan(&found)
+			var parentOrganizationID uuid.UUID
+			err := tx.StmtContext(ctx, s.findScheduleOrganization).QueryRowContext(ctx, schedTgt, scope).Scan(&parentOrganizationID)
 			if errors.Is(err, sql.ErrNoRows) {
 				return validation.NewFieldError("TargetID", "schedule does not exist")
 			}
 			if err != nil {
+				return err
+			}
+			if err := s.validateUserReferences(ctx, tx, n, parentOrganizationID); err != nil {
 				return err
 			}
 		}
@@ -324,6 +330,24 @@ func (s *Store) CreateUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, o *U
 	}
 
 	return n, nil
+}
+
+func (s *Store) validateUserReferences(ctx context.Context, tx *sql.Tx, o *UserOverride, parentOrganizationID uuid.UUID) error {
+	for _, ref := range []struct{ field, id string }{{"AddUserID", o.AddUserID}, {"RemoveUserID", o.RemoveUserID}} {
+		if ref.id == "" {
+			continue
+		}
+		// Normalize already validated UUIDs. Validate resulting references even
+		// on time-only updates; deletion deliberately does not call this helper.
+		err := organization.NewStore(s.db).ValidateUserOrganizationTx(ctx, tx, uuid.MustParse(ref.id), parentOrganizationID)
+		if errors.Is(err, organization.ErrNotFound) {
+			return validation.NewFieldError(ref.field, "user does not exist")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DeleteUserOverride removes a UserOverride from the DB matching the given ID.

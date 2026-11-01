@@ -6,10 +6,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule/rotation"
 	"github.com/target/goalert/search"
@@ -71,6 +73,9 @@ func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRota
 		}
 
 		if input.UserIDs != nil {
+			if err := m.validateRotationUsers(ctx, tx, result.OrganizationID, input.UserIDs); err != nil {
+				return err
+			}
 			err := m.RotationStore.AddRotationUsersTx(ctx, tx, result.ID, input.UserIDs)
 			if err != nil {
 				return err
@@ -270,6 +275,25 @@ func (q *Query) Rotations(ctx context.Context, opts *graphql2.RotationSearchOpti
 	return conn, err
 }
 
+func (m *Mutation) validateRotationUsers(ctx context.Context, tx *sql.Tx, organizationID uuid.UUID, userIDs []string) error {
+	// Validate the complete submitted list, including unchanged positions and
+	// reorder-only requests. Do not deduplicate or change participant order.
+	for i, value := range userIDs {
+		id, err := validate.ParseUUID("UserIDs["+strconv.Itoa(i)+"]", value)
+		if err != nil {
+			return err
+		}
+		err = organization.NewStore(m.DB).ValidateUserOrganizationTx(ctx, tx, id, organizationID)
+		if errors.Is(err, organization.ErrNotFound) {
+			return validation.NewFieldError("UserIDs["+strconv.Itoa(i)+"]", "user does not exist")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, rotationID string, userIDs []string, updateActive bool) (err error) {
 	// Get current participants
 	currentParticipants, err := m.RotationStore.FindAllParticipantsTx(ctx, tx, rotationID)
@@ -394,6 +418,11 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 		}
 
 		if input.UserIDs != nil {
+			if organizationID != nil {
+				if err := m.validateRotationUsers(ctx, tx, result.OrganizationID, input.UserIDs); err != nil {
+					return err
+				}
+			}
 			err = m.updateRotationParticipants(ctx, tx, input.ID, input.UserIDs, input.ActiveUserIndex == nil)
 			if err != nil {
 				return err

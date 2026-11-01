@@ -14,10 +14,10 @@ func TestGraphQLUpdateRotation(t *testing.T) {
 	t.Parallel()
 
 	const sql = `
-	insert into users (id, name, email)
+	insert into users (id, name, email, role)
 	values
-		({{uuid "u1"}}, 'bob', 'joe'),
-		({{uuid "u2"}}, 'ben', 'josh');
+		({{uuid "u1"}}, 'bob', 'joe', 'user'),
+		({{uuid "u2"}}, 'ben', 'josh', 'user');
 `
 
 	h := harness.NewHarness(t, sql, "ids-to-uuids")
@@ -25,6 +25,14 @@ func TestGraphQLUpdateRotation(t *testing.T) {
 
 	u1UUID := h.UUID("u1")
 	u2UUID := h.UUID("u2")
+	// This fixture starts at a pre-Organization migration. Give its legitimate
+	// participants explicit current Home affiliations after the backend upgrade.
+	epB1Exec(t, h, `INSERT INTO user_organization_assignments (
+		user_id,effective_organization_id,effective_organization_classification,
+		effective_normal_organization_id,organization_role,mapping_outcome,
+		authoritative_evaluated_at,source_config_version,matched_count)
+		SELECT id,$3,'NORMAL',$3,'ORG_MEMBER','EXACTLY_ONE',now(),'rotation-test',1
+		FROM users WHERE id IN ($1,$2) ON CONFLICT (user_id) DO NOTHING`, u1UUID, u2UUID, harness.SmokeOrganizationID)
 
 	doQL := func(query string, res interface{}) {
 		g := h.GraphQLQuery2(query)

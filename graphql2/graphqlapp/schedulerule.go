@@ -4,8 +4,10 @@ import (
 	context "context"
 	"database/sql"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/graphql2"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule/rule"
 	"github.com/target/goalert/validation"
@@ -53,6 +55,17 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 		rules, err := m.RuleStore.FindByTargetTx(ctx, tx, schedID, input.Target)
 		if err != nil {
 			return errors.Wrap(err, "fetch existing rules")
+		}
+		if organizationID != nil && input.Target.Type == assignment.TargetTypeUser && len(input.Rules) > 0 {
+			// Target syntax was checked above. Empty rules only remove a
+			// relationship, including an unavailable historical affiliation.
+			err := organization.NewStore(m.DB).ValidateUserOrganizationTx(ctx, tx, uuid.MustParse(input.Target.ID), sched.OrganizationID)
+			if errors.Is(err, organization.ErrNotFound) {
+				return validation.NewFieldError("TargetID", "does not exist")
+			}
+			if err != nil {
+				return err
+			}
 		}
 		if organizationID != nil && input.Target.Type == assignment.TargetTypeRotation && len(input.Rules) > 0 {
 			// FindByTargetTx validates the target before resolving the reference.

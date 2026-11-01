@@ -176,15 +176,19 @@ func TestGraphQLUserOverrideOrganizationCreateAndNested(t *testing.T) {
 			require.Equal(t, own, create(h.UUID(name), values[0], values[1], values[2]), "local validation still precedes Schedule authorization")
 		}
 	}
-	// User affiliation is deliberately not constrained by Schedule ownership.
-	require.Empty(t, create(h.UUID("schedule-a"), "2090-02-01T00:00:00Z", "2090-02-02T00:00:00Z", h.UUID("user-b")).Errors)
+	// SR-B2 denies new foreign relationships without changing historical rows.
+	before = userOverrideOrganizationSnapshot(t, h)
+	foreignUser := create(h.UUID("schedule-a"), "2090-02-01T00:00:00Z", "2090-02-02T00:00:00Z", h.UUID("user-b"))
+	require.NotEmpty(t, foreignUser.Errors)
+	require.Equal(t, "user does not exist", foreignUser.Errors[0].Message)
+	require.Equal(t, before, userOverrideOrganizationSnapshot(t, h))
 	conflict := create(h.UUID("schedule-a"), "2090-01-01T00:00:00Z", "2090-01-02T00:00:00Z", h.UUID("user-a"))
 	require.NotEmpty(t, conflict.Errors)
 	require.Contains(t, conflict.Errors[0].Message, "cannot override the same user twice")
 	// Schedule creation requires a manager; standalone Member overrides above remain legal.
 	epB1Exec(t, h, "UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1", h.UUID("user-a"))
 	nested := func(name, end string) *stepOrganizationResponse {
-		return stepOrganizationQuery(t, h, fmt.Sprintf(`mutation {createSchedule(input:{name:%q,timeZone:"Etc/UTC",newUserOverrides:[{scheduleID:%q,start:"2090-03-01T00:00:00Z",end:%q,addUserID:%q}]}) {id}}`, name, h.UUID("schedule-b"), end, h.UUID("user-b")))
+		return stepOrganizationQuery(t, h, fmt.Sprintf(`mutation {createSchedule(input:{name:%q,timeZone:"Etc/UTC",newUserOverrides:[{scheduleID:%q,start:"2090-03-01T00:00:00Z",end:%q,addUserID:%q}]}) {id}}`, name, h.UUID("schedule-b"), end, h.UUID("user-a")))
 	}
 	response := nested("Nested override", "2090-03-02T00:00:00Z")
 	require.Empty(t, response.Errors)
@@ -211,7 +215,9 @@ func TestGraphQLUserOverrideOrganizationUpdateAndDelete(t *testing.T) {
 		require.Equal(t, missing, foreign)
 		require.Equal(t, before, userOverrideOrganizationSnapshot(t, h))
 	}
-	require.Empty(t, update(h.UUID("override-a2"), `end:"2090-01-05T00:00:00Z"`).Errors)
+	require.NotEmpty(t, update(h.UUID("override-a2"), `end:"2090-01-05T00:00:00Z"`).Errors)
+	require.Equal(t, before, userOverrideOrganizationSnapshot(t, h), "time-only update must validate retained foreign User")
+	require.Empty(t, update(h.UUID("override-a2"), `removeUserID:"",end:"2090-01-05T00:00:00Z"`).Errors)
 	before = userOverrideOrganizationSnapshot(t, h)
 	deleteTargets := func(targets string, wantError bool) *stepOrganizationResponse {
 		if wantError {
@@ -369,6 +375,9 @@ func TestUserOverrideOrganizationNonLockingParent(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, row)
 				if operation == "update" {
+					require.Equal(t, h.UUID("user-b"), row.RemoveUserID, "legacy fixture retains a foreign User")
+					// A scoped update can clear the legacy foreign User reference.
+					row.RemoveUserID = ""
 					require.NoError(t, s.UpdateUserOverrideTxScoped(ctx, child, row, &org))
 				}
 			case "delete":

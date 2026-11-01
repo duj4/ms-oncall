@@ -54,7 +54,11 @@ func TestScheduleDataTemporaryValidationPrecedence(t *testing.T) {
 					require.Error(t, want)
 					err := scheduleDataMutate(ctx, h.App().ScheduleStore, nil, id, temp, op, &org)
 					scheduleDataRecord(t, scheduleDataOutcome(err))
-					require.EqualError(t, err, want.Error())
+					if tc.name == "missing-user" && parent != "own" {
+						scheduleDataUnavailable(t, err) // Parent precedes affiliation lookup.
+					} else {
+						require.EqualError(t, err, want.Error())
+					}
 					require.Empty(t, scheduleDataRaw(t, h, parent))
 				})
 			}

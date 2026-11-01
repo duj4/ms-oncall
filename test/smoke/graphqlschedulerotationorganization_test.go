@@ -184,17 +184,24 @@ func TestGraphQLScheduleRotationSameOrganization(t *testing.T) {
 		require.Equal(t, before, snapshot(t))
 	})
 
-	t.Run("user targets retain global and current user compatibility", func(t *testing.T) {
-		for _, targetID := range []string{h.UUID("user-b"), "__current_user"} {
-			success(t, update(t, h.UUID("schedule-a"), "user", targetID, `[{}]`))
-		}
+	t.Run("user targets require affiliation and retain current user compatibility", func(t *testing.T) {
+		before := snapshot(t)
+		foreign := update(t, h.UUID("schedule-a"), "user", h.UUID("user-b"), `[{}]`)
+		require.Len(t, foreign.Errors, 1)
+		require.Equal(t, "does not exist", foreign.Errors[0].Message)
+		require.Equal(t, before, snapshot(t))
+		success(t, update(t, h.UUID("schedule-a"), "user", "__current_user", `[{}]`))
 		for _, user := range []string{"user-a", "user-b"} {
 			var count int
 			err := h.App().DB().QueryRow(`
 				SELECT count(*) FROM schedule_rules WHERE schedule_id = $1 AND tgt_user_id = $2
 			`, h.UUID("schedule-a"), h.UUID(user)).Scan(&count)
 			require.NoError(t, err)
-			require.Equal(t, 1, count)
+			if user == "user-a" {
+				require.Equal(t, 1, count)
+			} else {
+				require.Zero(t, count)
+			}
 		}
 	})
 

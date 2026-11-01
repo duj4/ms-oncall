@@ -36,7 +36,7 @@ func (store *Store) scheduleData(ctx context.Context, tx *sql.Tx, scheduleID uui
 	return &data, nil
 }
 
-func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, organizationID *uuid.UUID, apply func(data *Data) error) error {
+func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, organizationID *uuid.UUID, apply func(*sql.Tx, *Data) error) error {
 	var err error
 	externalTx := tx != nil
 	if !externalTx {
@@ -88,7 +88,7 @@ func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, schedule
 		}
 	}
 
-	err = apply(&data)
+	err = apply(tx, &data)
 	if err != nil {
 		return err
 	}
