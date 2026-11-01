@@ -3,10 +3,14 @@ package schedule
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
+	"github.com/target/goalert/user"
 	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
@@ -78,9 +82,12 @@ func (store *Store) SetTemporaryScheduleScoped(ctx context.Context, tx *sql.Tx, 
 		return err
 	}
 
-	check, err := store.usr.UserExists(ctx)
-	if err != nil {
-		return err
+	var check user.ExistanceChecker
+	if organizationID == nil {
+		check, err = store.usr.UserExists(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	newTemp, err := temp.Normalize(check)
@@ -88,7 +95,10 @@ func (store *Store) SetTemporaryScheduleScoped(ctx context.Context, tx *sql.Tx, 
 		return err
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(tx *sql.Tx, data *Data) error {
+		if err := store.validateTemporaryScheduleUsers(ctx, tx, scheduleID, organizationID, newTemp); err != nil {
+			return err
+		}
 		data.V1.TemporarySchedules = setFixedShifts(data.V1.TemporarySchedules, *newTemp)
 		return nil
 	})
@@ -107,9 +117,12 @@ func (store *Store) SetClearTemporaryScheduleScoped(ctx context.Context, tx *sql
 		return err
 	}
 
-	check, err := store.usr.UserExists(ctx)
-	if err != nil {
-		return err
+	var check user.ExistanceChecker
+	if organizationID == nil {
+		check, err = store.usr.UserExists(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	newTemp, err := temp.Normalize(check)
@@ -127,7 +140,10 @@ func (store *Store) SetClearTemporaryScheduleScoped(ctx context.Context, tx *sql
 		clearStart = now
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(tx *sql.Tx, data *Data) error {
+		if err := store.validateTemporaryScheduleUsers(ctx, tx, scheduleID, organizationID, newTemp); err != nil {
+			return err
+		}
 		data.V1.TemporarySchedules = deleteFixedShifts(data.V1.TemporarySchedules, clearStart, clearEnd)
 		data.V1.TemporarySchedules = setFixedShifts(data.V1.TemporarySchedules, *newTemp)
 		return nil
@@ -158,8 +174,36 @@ func (store *Store) ClearTemporarySchedulesScoped(ctx context.Context, tx *sql.T
 		start = time.Now()
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(data *Data) error {
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(_ *sql.Tx, data *Data) error {
 		data.V1.TemporarySchedules = deleteFixedShifts(data.V1.TemporarySchedules, start, end)
 		return nil
 	})
+}
+
+func (store *Store) validateTemporaryScheduleUsers(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, scope *uuid.UUID, temp *TemporarySchedule) error {
+	if scope == nil {
+		return nil // Trusted internal compatibility; not Human authority.
+	}
+	// updateScheduleData has already authorized this parent, before touching
+	// schedule_data. Read its actual Organization in the same transaction.
+	var parentOrganizationID uuid.UUID
+	err := tx.QueryRowContext(ctx, `SELECT organization_id FROM schedules WHERE id=$1 AND organization_id=$2`, scheduleID, *scope).Scan(&parentOrganizationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return validation.NewFieldError("ScheduleID", "schedule does not exist")
+	}
+	if err != nil {
+		return err
+	}
+	for i, shift := range temp.Shifts {
+		// Normalize has checked syntax and trimmed elapsed shifts. Only the
+		// resulting newly persisted relationships need an affiliation.
+		err := organization.NewStore(store.db).ValidateUserOrganizationTx(ctx, tx, uuid.MustParse(shift.UserID), parentOrganizationID)
+		if errors.Is(err, organization.ErrNotFound) {
+			return validation.NewFieldError(fmt.Sprintf("Shifts[%d].UserID", i), "user does not exist")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

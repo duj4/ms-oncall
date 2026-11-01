@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/test/smoke/harness"
 	"github.com/target/goalert/util/timeutil"
 )
@@ -18,11 +19,11 @@ func TestScheduleOverrideAdd(t *testing.T) {
 	t.Parallel()
 
 	sql := `
-	insert into users (id, name, email) 
+	insert into users (id, name, email, role)
 	values 
-		({{uuid "u1"}}, 'bob', 'joe'),
-		({{uuid "u2"}}, 'ben', 'josh'),
-		({{uuid "u3"}}, 'tim', 'tim');
+		({{uuid "u1"}}, 'bob', 'joe', 'user'),
+		({{uuid "u2"}}, 'ben', 'josh', 'user'),
+		({{uuid "u3"}}, 'tim', 'tim', 'user');
 
 	insert into escalation_policies (id, name, organization_id)
 	values
@@ -63,7 +64,7 @@ func TestScheduleOverrideAdd(t *testing.T) {
 	start := now.AddDate(0, 0, 2)
 	end := now.AddDate(0, 0, 6)
 
-	h.GraphQLQuery2(fmt.Sprintf(`
+	response := h.GraphQLQuery2(fmt.Sprintf(`
 	mutation{
 	createUserOverride(input:{
 		addUserID: "%s",
@@ -72,6 +73,7 @@ func TestScheduleOverrideAdd(t *testing.T) {
 		end:"%s"}) { id }
 	}`,
 		u3, h.UUID("sched"), start.Format(time.RFC3339), end.Format(time.RFC3339)))
+	require.Empty(t, response.Errors, "valid Home Override must be created before checking Engine effects")
 
 	h.FastForwardToTime(timeutil.NewClock(0, 0), "America/Chicago")
 	h.WaitAndAssertOnCallUsers(svcID, u1)

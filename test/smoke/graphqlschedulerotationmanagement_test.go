@@ -200,8 +200,8 @@ func TestSRB1MemberCompatibility(t *testing.T) {
 	ikSetAuthority(t, h, "ORG_ADMIN", false)
 	srB1Call(t, h, "foreign_rotation_nonempty", fmt.Sprintf(`mutation{updateScheduleTarget(input:{scheduleID:%q,target:{type:rotation,id:%q},rules:[{}]})}`, h.UUID("schedule-a"), h.UUID("rotation-b")), "", true)
 	srB1Call(t, h, "foreign_rotation_historical_removal", fmt.Sprintf(`mutation{updateScheduleTarget(input:{scheduleID:%q,target:{type:rotation,id:%q},rules:[]})}`, h.UUID("schedule-a"), h.UUID("rotation-b")), "", false)
-	// SR-A0-F02 remains open: this task changes management eligibility only.
-	srB1Call(t, h, "f02_admin_foreign_user_unchanged", fmt.Sprintf(`mutation{updateScheduleTarget(input:{scheduleID:%q,target:{type:user,id:%q},rules:[{}]})}`, h.UUID("schedule-a"), h.UUID("user-other")), "", false)
+	// SR-B2 additionally rejects foreign staffing while preserving B1 authority.
+	srB1Call(t, h, "f02_admin_foreign_user_denied", fmt.Sprintf(`mutation{updateScheduleTarget(input:{scheduleID:%q,target:{type:user,id:%q},rules:[{}]})}`, h.UUID("schedule-a"), h.UUID("user-other")), "", true)
 	ctx, cancel := context.WithTimeout(permission.SystemContext(context.Background(), "Smoketest"), 20*time.Second)
 	defer cancel()
 	manager, err := schedulemanager.NewDB(ctx, h.App().DB())

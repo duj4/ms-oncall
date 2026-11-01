@@ -206,12 +206,15 @@ func TestScheduleDataOrganizationStore(t *testing.T) {
 		}
 	}
 	for _, op := range []string{"set", "set-clear"} {
-		t.Run(op+"/global-user-existence", func(t *testing.T) {
+		t.Run(op+"/foreign-user-affiliation", func(t *testing.T) {
 			temp := scheduleDataTemp(h)
 			temp.Shifts[0].UserID = h.UUID("user-b")
+			before := scheduleDataRaw(t, h, "own")
 			err := scheduleDataMutate(scheduleDataContext(t), h.App().ScheduleStore, nil, uuid.MustParse(h.UUID("own")), temp, op, &org)
 			scheduleDataRecord(t, scheduleDataOutcome(err))
-			require.NoError(t, err, "this slice does not add User Organization affiliation")
+			require.ErrorContains(t, err, "Shifts[0].UserID")
+			require.ErrorContains(t, err, "user does not exist")
+			require.Equal(t, before, scheduleDataRaw(t, h, "own"))
 		})
 	}
 }
