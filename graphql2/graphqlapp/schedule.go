@@ -13,7 +13,6 @@ import (
 
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
-	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
@@ -207,7 +206,7 @@ func (s *Schedule) AssignedTo(ctx context.Context, raw *schedule.Schedule) ([]as
 }
 
 func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateScheduleInput) (ok bool, err error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		return false, err
 	}
@@ -248,13 +247,9 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 		return nil, label.ErrDisabled
 	}
 
-	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
-	if requestExecutionContext == nil {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
-	}
-	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
-	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementCreate)
+	if err != nil {
+		return nil, err
 	}
 
 	usedTargets := make(map[assignment.RawTarget]int, len(input.Targets))
@@ -296,7 +291,7 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		s := &schedule.Schedule{
-			OrganizationID: organizationID,
+			OrganizationID: *organizationID,
 			Name:           input.Name,
 			TimeZone:       loc,
 		}

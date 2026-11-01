@@ -114,44 +114,65 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 	if err != nil {
 		return false, err
 	}
-	organizationID, authorityErr := rootStoreOrganizationID(ctx)
+	organizationID, authorityErr := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if authorityErr != nil && a.DestReg == nil {
 		// Without a registry, safe destination validation is unavailable.
 		return false, authorityErr
 	}
 
+	rules := make([]schedule.OnCallNotificationRule, 0, len(input.Rules))
+	validationChannels := make(map[gadb.DestHashV1]uuid.UUID)
+	for _, r := range input.Rules {
+		info, err := a.DestReg.TypeInfo(ctx, r.Dest.Type)
+		if err != nil {
+			return false, err
+		}
+		if !info.IsSchedOnCallNotify() {
+			return false, validation.NewFieldError("Rules[%d].Dest.Type", "unsupported destination type")
+		}
+		if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+			return false, err
+		}
+		if err := a.DestReg.ValidateDest(ctx, r.Dest); err != nil {
+			return false, err
+		}
+		if _, err := a.DestReg.DisplayInfo(ctx, r.Dest); err != nil {
+			return false, err
+		}
+		// Preserve duplicate-rule validation without mapping or writing channels.
+		hash := r.Dest.DestHash()
+		if _, ok := validationChannels[hash]; !ok {
+			validationChannels[hash] = uuid.New()
+		}
+		r.ChannelID = validationChannels[hash]
+		rules = append(rules, r.OnCallNotificationRule)
+	}
+	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+		return false, err
+	}
+	if err := schedule.PrepareOnCallNotificationRules(schedID, rules); err != nil {
+		return false, err
+	}
+	if authorityErr != nil {
+		return false, authorityErr
+	}
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-		rules := make([]schedule.OnCallNotificationRule, 0, len(input.Rules))
-		for _, r := range input.Rules {
-			info, err := a.DestReg.TypeInfo(ctx, r.Dest.Type)
+		if organizationID != nil {
+			// Use the existing nonlocking parent check before channel mapping.
+			_, err := gadb.New(tx).SchedCheckOrganization(ctx, gadb.SchedCheckOrganizationParams{ScheduleID: schedID, OrganizationID: *organizationID})
+			if errors.Is(err, sql.ErrNoRows) {
+				return validation.NewFieldError("ScheduleID", "schedule does not exist")
+			}
 			if err != nil {
 				return err
 			}
-			if !info.IsSchedOnCallNotify() {
-				return validation.NewFieldError("Rules[%d].Dest.Type", "unsupported destination type")
-			}
-
-			// MapDestToID handles the appropriate validation checks, outside of the IsSchedOnCallNotify check done above.
+		}
+		for i, r := range input.Rules {
 			chID, err := a.NCStore.MapDestToID(ctx, tx, r.Dest)
 			if err != nil {
 				return err
 			}
-
-			r.ChannelID = chID
-			rules = append(rules, r.OnCallNotificationRule)
-		}
-
-		// Complete the same safe validation as the Store before returning an
-		// authority error. The transaction rolls back destination writes, and
-		// no Schedule parent or child state has been accessed.
-		if authorityErr != nil {
-			if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
-				return err
-			}
-			if err := schedule.PrepareOnCallNotificationRules(schedID, rules); err != nil {
-				return err
-			}
-			return authorityErr
+			rules[i].ChannelID = chID
 		}
 		return a.ScheduleStore.SetOnCallNotificationRulesScoped(ctx, tx, schedID, rules, organizationID)
 	})
@@ -181,7 +202,7 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 		}
 		clearSet = true
 	}
-	organizationID, authorityErr := rootStoreOrganizationID(ctx)
+	organizationID, authorityErr := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if authorityErr != nil {
 		if a.UserStore == nil {
 			// Missing validation dependencies must not permit unscoped access.
@@ -221,7 +242,7 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 	if err != nil {
 		return false, err
 	}
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		// Match the Store's safe range checks without accessing Schedule data.
 		var futureErr, rangeErr error

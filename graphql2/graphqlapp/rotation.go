@@ -8,7 +8,6 @@ import (
 
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
-	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
 	"github.com/target/goalert/permission"
@@ -36,13 +35,9 @@ func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRota
 		return nil, label.ErrDisabled
 	}
 
-	requestExecutionContext := executioncontext.ExecutionContextFromContext(ctx)
-	if requestExecutionContext == nil {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
-	}
-	organizationID, present := requestExecutionContext.EffectiveOrganizationID()
-	if !present || !executioncontext.EligibleForOrganizationBusinessScope(requestExecutionContext, organizationID) {
-		return nil, permission.NewAccessDenied("normal Organization scoped authority is required")
+	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementCreate)
+	if err != nil {
+		return nil, err
 	}
 
 	loc, err := util.LoadLocation(input.TimeZone)
@@ -51,7 +46,7 @@ func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRota
 	}
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
 		rot := &rotation.Rotation{
-			OrganizationID: organizationID,
+			OrganizationID: *organizationID,
 			Name:           input.Name,
 			Type:           input.Type,
 			Start:          input.Start.In(loc),
@@ -348,7 +343,7 @@ func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, r
 }
 
 func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRotationInput) (res bool, err error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		return false, err
 	}

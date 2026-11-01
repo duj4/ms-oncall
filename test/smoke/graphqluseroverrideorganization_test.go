@@ -181,6 +181,8 @@ func TestGraphQLUserOverrideOrganizationCreateAndNested(t *testing.T) {
 	conflict := create(h.UUID("schedule-a"), "2090-01-01T00:00:00Z", "2090-01-02T00:00:00Z", h.UUID("user-a"))
 	require.NotEmpty(t, conflict.Errors)
 	require.Contains(t, conflict.Errors[0].Message, "cannot override the same user twice")
+	// Schedule creation requires a manager; standalone Member overrides above remain legal.
+	epB1Exec(t, h, "UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1", h.UUID("user-a"))
 	nested := func(name, end string) *stepOrganizationResponse {
 		return stepOrganizationQuery(t, h, fmt.Sprintf(`mutation {createSchedule(input:{name:%q,timeZone:"Etc/UTC",newUserOverrides:[{scheduleID:%q,start:"2090-03-01T00:00:00Z",end:%q,addUserID:%q}]}) {id}}`, name, h.UUID("schedule-b"), end, h.UUID("user-b")))
 	}

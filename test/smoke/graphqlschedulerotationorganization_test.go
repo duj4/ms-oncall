@@ -51,6 +51,7 @@ func TestGraphQLScheduleRotationSameOrganization(t *testing.T) {
 	t.Parallel()
 	h := harness.NewHarness(t, scheduleRotationOrganizationSQL, "")
 	defer h.Close()
+	epB1Exec(t, h, "UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1", h.UUID("user-a"))
 
 	type response struct {
 		Data   json.RawMessage
@@ -255,6 +256,7 @@ func TestGraphQLScheduleRotationMixedDeleteLockOrder(t *testing.T) {
 	// Root deletion now requires a current Home management role.
 	_, roleErr := h.App().DB().Exec(`UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1`, h.UUID("user-delete"))
 	require.NoError(t, roleErr)
+	epB1Exec(t, h, "UPDATE user_organization_assignments SET organization_role='ORG_ADMIN' WHERE user_id=$1", h.UUID("user-a"))
 
 	scheduleID, rotationID, otherRotationID := h.UUID("schedule-a"), h.UUID("rotation-a"), h.UUID("rotation-other")
 	require.NotEqual(t, rotationID, otherRotationID)
