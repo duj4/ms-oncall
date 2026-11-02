@@ -77,7 +77,8 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			s.organization_id,
 			s.name,
 			s.description,
-			s.escalation_policy_id
+			s.escalation_policy_id,
+			s.maintenance_expires_at
 		FROM services s
 		WHERE s.id = $1
 		FOR UPDATE
@@ -88,7 +89,8 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			s.organization_id,
 			s.name,
 			s.description,
-			s.escalation_policy_id
+			s.escalation_policy_id,
+			s.maintenance_expires_at
 		FROM services s
 		WHERE s.id = $1 AND s.organization_id = $2
 		FOR UPDATE
@@ -212,16 +214,19 @@ func (s *Store) FindOneForUpdate(ctx context.Context, tx *sql.Tx, id string, org
 	}
 
 	var svc Service
+	var maintenanceExpiresAt sql.NullTime
 	err = stmt.QueryRowContext(ctx, args...).Scan(
 		&svc.ID,
 		&svc.OrganizationID,
 		&svc.Name,
 		&svc.Description,
 		&svc.EscalationPolicyID,
+		&maintenanceExpiresAt,
 	)
 	if err != nil {
 		return nil, err
 	}
+	svc.MaintenanceExpiresAt = maintenanceExpiresAt.Time
 	return &svc, nil
 }
 

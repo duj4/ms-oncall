@@ -32,6 +32,15 @@ func TestServiceManagementAuthorityRoles(t *testing.T) {
 						require.True(t, permission.IsPermissionError(err))
 					}
 				}
+				if !pa {
+					target, err := serviceUpdateTargetOrganization(ctx, nil, uuid.NewString())
+					if role == organization.OrganizationRoleAdmin {
+						require.NoError(t, err)
+						require.Equal(t, &f.home, target, "ordinary OrgAdmin cannot resolve a foreign target")
+					} else {
+						require.True(t, permission.IsPermissionError(err))
+					}
+				}
 				require.Equal(t, 1, f.queries, "no additional authority queries after admission")
 				require.Zero(t, f.begins)
 			})
@@ -98,6 +107,9 @@ func TestServiceManagementIdentityAndSystemBoundary(t *testing.T) {
 				require.Nil(t, home)
 				require.True(t, permission.IsPermissionError(err))
 			}
+			target, err := serviceUpdateTargetOrganization(c, nil, uuid.NewString())
+			require.Nil(t, target)
+			require.True(t, permission.IsPermissionError(err), "invalid identity must fail before privileged SQL")
 		})
 	}
 	sys := permission.SystemContext(context.Background(), "Engine")
@@ -110,4 +122,11 @@ func TestServiceManagementIdentityAndSystemBoundary(t *testing.T) {
 	require.True(t, permission.IsPermissionError(err))
 	_, err = serviceManagementAuthority(ctx, serviceManagementOperation(255))
 	require.True(t, permission.IsPermissionError(err))
+	target, err := serviceUpdateTargetOrganization(sys, nil, uuid.NewString())
+	require.NoError(t, err)
+	require.Nil(t, target, "System keeps its explicit internal compatibility path")
+	for _, id := range []string{"invalid", ""} {
+		_, err = serviceUpdateTargetOrganization(ctx, nil, id)
+		require.Error(t, err, "PA must validate UUID before target SQL")
+	}
 }
