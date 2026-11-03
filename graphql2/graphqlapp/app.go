@@ -228,9 +228,13 @@ func (a *App) Handler() http.Handler {
 				Observe(time.Since(start).Seconds())
 		}
 		if err == nil && fieldCtx.Object == "Mutation" {
+			ctx = serviceUpdateDiagnosticContext(ctx)
 			ctx = log.WithFields(ctx, log.Fields{
 				"MutationName": fieldCtx.Field.Name,
 			})
+			if fieldCtx.Field.Name == "updateService" {
+				ctx = log.WithField(ctx, "MutationResult", "success")
+			}
 			log.Logf(ctx, "Mutation.")
 		}
 
@@ -300,7 +304,7 @@ func (a *App) Handler() http.Handler {
 		if isUnsafe && !isGQLValidation(gqlErr) {
 			// context.Canceled is caused by normal things like closing a browser tab.
 			if !errors.Is(err, context.Canceled) {
-				log.Log(ctx, err)
+				log.Log(serviceUpdateDiagnosticContext(ctx), err)
 			}
 			gqlErr.Message = safeErr.Error()
 		}

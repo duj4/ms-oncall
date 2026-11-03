@@ -357,20 +357,28 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServiceInput) (result bool, resultErr error) {
 	event := serviceUpdateAuditEvent(ctx, input)
 	event.Outcome, event.Reason = "denied", "authority_denied"
+	var conn *sql.Conn
 	var tx *sql.Tx
 	var commitAttempted bool
+	var commitFinalized bool
 	defer func() {
-		if tx != nil {
-			defer tx.Rollback()
+		resultErr = finishServiceUpdateAudit(ctx, a.DB, conn, tx, commitAttempted, commitFinalized, event, resultErr)
+		if resultErr != nil {
+			result = false
 		}
-		resultErr = finishServiceUpdateAudit(ctx, a.DB, tx, commitAttempted, event, resultErr)
 	}()
 	_, err := serviceManagementAuthority(ctx, serviceManagementUpdate)
 	if err != nil {
 		return false, err
 	}
 	event.Outcome, event.Reason = "tx_failed", "begin_failed"
-	tx, err = a.DB.BeginTx(ctx, nil)
+	conn, err = a.DB.Conn(ctx)
+	if err != nil {
+		return false, err
+	}
+	// Own the connection as well as the transaction. The request context still
+	// controls automatic rollback and Commit's cancellation check.
+	tx, err = conn.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
@@ -436,7 +444,7 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 	}
 
 	commitAttempted = true
-	err = tx.Commit()
+	err, commitFinalized = commitServiceUpdate(ctx, tx)
 	if err != nil {
 		return false, err
 	}

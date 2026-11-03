@@ -131,7 +131,7 @@ func Append(ctx context.Context, tx *sql.Tx, e Event) error {
 // RecordFailure uses a fresh bounded transaction after business locks have been
 // released. It detaches request cancellation and context fields deliberately.
 // A failed Commit is not retried and is never reported as durable success.
-func RecordFailure(db *sql.DB, e Event) error {
+func RecordFailure(db *sql.DB, e Event) (resultErr error) {
 	if db == nil || e.Outcome == "committed" {
 		return ErrUnavailable
 	}
@@ -141,11 +141,33 @@ func RecordFailure(db *sql.DB, e Event) error {
 	if err != nil {
 		return ErrUnavailable
 	}
-	defer tx.Rollback()
+	defer func() {
+		// ErrTxDone is expected after Commit or context-driven cleanup. It is
+		// not used as proof that another transaction's resources are released.
+		done := make(chan error, 1)
+		go func() { done <- tx.Rollback() }()
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, sql.ErrTxDone) {
+				resultErr = ErrUnavailable
+			}
+		case <-timer.C:
+			resultErr = ErrUnavailable
+		}
+	}()
 	if err := Append(ctx, tx, e); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
+	done := make(chan error, 1)
+	go func() { done <- tx.Commit() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return ErrUnavailable
+		}
+	case <-ctx.Done():
 		return ErrUnavailable
 	}
 	return nil

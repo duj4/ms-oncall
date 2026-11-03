@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/target/goalert/auth"
@@ -18,6 +19,22 @@ import (
 	"github.com/target/goalert/util/log"
 	"github.com/target/goalert/validation"
 )
+
+// Project only this resolver's diagnostic context. Field.Name is the schema
+// operation; Field.Alias is client text and must not select this policy. The
+// real resolver/authentication context is never replaced by this log context.
+func serviceUpdateDiagnosticContext(ctx context.Context) context.Context {
+	field := graphql.GetFieldContext(ctx)
+	if field == nil || field.Object != "Mutation" || field.Field.Name != "updateService" {
+		return ctx
+	}
+	clean := log.FromContext(ctx).BackgroundContext()
+	clean = log.WithField(clean, "MutationName", "updateService")
+	if id, err := uuid.Parse(log.RequestID(ctx)); err == nil && id != uuid.Nil {
+		clean = log.WithField(clean, "RequestID", id.String())
+	}
+	return clean
+}
 
 func serviceUpdateAuditEvent(ctx context.Context, input graphql2.UpdateServiceInput) updateaudit.Event {
 	e := updateaudit.Event{EventID: uuid.New(), AttemptID: uuid.New(), RequestID: uuid.New(), ActorKind: "unknown", AuthoritySource: "unknown", AuthorityRole: "unknown", OrganizationRole: "unknown", OccurredAt: time.Now()}
@@ -102,8 +119,88 @@ func serviceUpdateSafeError(err error) error {
 	return errors.New("service.update transaction failed")
 }
 
-func finishServiceUpdateAudit(ctx context.Context, db *sql.DB, tx *sql.Tx, commitAttempted bool, event updateaudit.Event, operationErr error) error {
+const serviceUpdateFinishTimeout = 2 * time.Second
+
+// Commit retains database/sql's original request cancellation semantics. A
+// driver that ignores cancellation must not hold this resolver indefinitely.
+// A timeout is an unknown observation, never permission to replay the write.
+func commitServiceUpdate(ctx context.Context, tx *sql.Tx) (err error, finalized bool) {
+	done := make(chan error, 1)
+	go func() { done <- tx.Commit() }()
+	timer := time.NewTimer(serviceUpdateFinishTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		// database/sql can return these three errors before driver finalization.
+		// All other Commit returns follow tx.close (including ErrBadConn's
+		// synchronous connection discard). This is completion evidence, not
+		// merely evidence that a Commit call was scheduled or attempted.
+		return err, !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, sql.ErrTxDone)
+	case <-ctx.Done():
+		return ctx.Err(), false
+	case <-timer.C:
+		return context.DeadlineExceeded, false
+	}
+}
+
+// A successful Conn.Close is the release barrier: it waits for the transaction
+// to release its use of the owned connection before returning it to the pool.
+// Neither Commit being attempted nor ErrTxDone provides this guarantee. In
+// particular, automatic rollback may already own finalization and still be in
+// the driver. ErrConnDone can race an automatic bad-connection close, so it is
+// not accepted as a release barrier without separate evidence that a native
+// Commit/Rollback call completed its synchronous finalization.
+//
+// Only this goroutine owns explicit cleanup. If a driver stalls forever, it may
+// retain the connection and cleanup goroutine; the caller reports that gap in
+// bounded time and does not start an independent append ahead of the barrier.
+func releaseServiceUpdate(conn *sql.Conn, tx *sql.Tx, commitFinalized bool) (rollbackErr error, released bool) {
+	if conn == nil {
+		return nil, true
+	}
+	type terminal struct{ rollback, close error }
+	done := make(chan terminal, 1)
+	go func() {
+		var rb error
+		if tx != nil {
+			rb = tx.Rollback()
+		}
+		done <- terminal{rb, conn.Close()}
+	}()
+	timer := time.NewTimer(serviceUpdateFinishTimeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		// Rollback's only early return is ErrTxDone. Any other return follows
+		// synchronous tx.close, even when the driver reports rollback failure.
+		// Resource release does not upgrade that failure to confirmed rollback.
+		finalized := commitFinalized || tx == nil || !errors.Is(r.rollback, sql.ErrTxDone)
+		return r.rollback, r.close == nil || errors.Is(r.close, sql.ErrConnDone) && finalized
+	case <-timer.C:
+		return context.DeadlineExceeded, false
+	}
+}
+
+func serviceUpdateAuditFault(ctx context.Context, event updateaudit.Event, fault string) {
+	clean := context.Background()
+	if ctx != nil {
+		clean = log.FromContext(ctx).BackgroundContext()
+	}
+	clean = log.WithFields(clean, log.Fields{
+		"AuditOperation": "service.update", "AuditFault": fault,
+		"AuditEventID": event.EventID.String(), "AuditAttemptID": event.AttemptID.String(),
+		"AuditRequestID": event.RequestID.String(),
+	})
+	log.Log(clean, updateaudit.ErrUnavailable)
+}
+
+func finishServiceUpdateAudit(ctx context.Context, db *sql.DB, conn *sql.Conn, tx *sql.Tx, commitAttempted, commitFinalized bool, event updateaudit.Event, operationErr error) error {
+	rollbackErr, released := releaseServiceUpdate(conn, tx, commitFinalized)
 	if operationErr == nil {
+		if !released {
+			serviceUpdateAuditFault(ctx, event, "resource_release_unconfirmed")
+			return updateaudit.ErrUnavailable
+		}
 		return nil
 	}
 	if commitAttempted {
@@ -115,7 +212,7 @@ func finishServiceUpdateAudit(ctx context.Context, db *sql.DB, tx *sql.Tx, commi
 		if tx != nil {
 			// ErrTxDone alone does not prove rollback; in particular cancellation
 			// can race database/sql's automatic finalization.
-			if err := tx.Rollback(); err != nil {
+			if rollbackErr != nil {
 				event.Outcome, event.Reason = "rollback_unconfirmed", "rollback_unconfirmed"
 			}
 		}
@@ -123,18 +220,12 @@ func finishServiceUpdateAudit(ctx context.Context, db *sql.DB, tx *sql.Tx, commi
 	event.EventID = uuid.New() // failure/uncertainty is separate from staged success
 	event.OccurredAt = time.Now()
 	safe := serviceUpdateSafeError(operationErr)
+	if !released {
+		serviceUpdateAuditFault(ctx, event, "resource_release_unconfirmed")
+		return fmt.Errorf("%w; service.update audit persistence unavailable", safe)
+	}
 	if err := updateaudit.RecordFailure(db, event); err != nil {
-		// Do not inherit requester, Source, input, error or arbitrary log fields.
-		clean := context.Background()
-		if ctx != nil {
-			clean = log.FromContext(ctx).BackgroundContext()
-		}
-		clean = log.WithFields(clean, log.Fields{
-			"AuditOperation": "service.update", "AuditFault": "persistence_unavailable",
-			"AuditEventID": event.EventID.String(), "AuditAttemptID": event.AttemptID.String(),
-			"AuditRequestID": event.RequestID.String(),
-		})
-		log.Log(clean, updateaudit.ErrUnavailable)
+		serviceUpdateAuditFault(ctx, event, "persistence_unavailable")
 		return fmt.Errorf("%w; service.update audit persistence unavailable", safe)
 	}
 	return safe

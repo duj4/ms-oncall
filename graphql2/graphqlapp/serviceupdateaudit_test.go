@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,43 @@ import (
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util/log"
+	"github.com/vektah/gqlparser/v2/ast"
 )
+
+func TestServiceUpdateDiagnosticProjection(t *testing.T) {
+	ctx, _, f := ikAuthorityContext(t, organization.OrganizationRoleAdmin, true)
+	ctx = log.WithLogger(ctx, log.NewLogger())
+	ctx = log.SetRequestID(log.WithField(ctx, "Cookie", "SYNTHETIC_COOKIE"))
+	for _, tc := range []struct {
+		object, name, alias string
+		selected            bool
+	}{
+		{"Mutation", "updateService", "updateService", true},
+		{"Mutation", "updateService", "untrustedAlias", true},
+		{"Mutation", "createService", "updateService", false},
+		{"Query", "service", "updateService", false},
+	} {
+		field := &graphql.FieldContext{Object: tc.object, Field: graphql.CollectedField{Field: &ast.Field{Name: tc.name, Alias: tc.alias}}}
+		original := graphql.WithFieldContext(ctx, field)
+		projected := serviceUpdateDiagnosticContext(original)
+		if !tc.selected {
+			require.Equal(t, original, projected)
+			continue
+		}
+		var out bytes.Buffer
+		logger := log.FromContext(ctx)
+		logger.SetOutput(&out)
+		log.Logf(projected, "Mutation.")
+		require.Contains(t, out.String(), "MutationName=updateService")
+		require.Contains(t, out.String(), log.RequestID(ctx))
+		for _, secret := range []string{"SYNTHETIC_COOKIE", "AuthSource", f.session.String(), tc.alias + "="} {
+			require.NotContains(t, out.String(), secret)
+		}
+		require.Equal(t, f.session.String(), permission.Source(original).ID)
+		require.Equal(t, f.user.String(), permission.UserID(original))
+		require.True(t, permission.Admin(original))
+	}
+}
 
 func TestServiceUpdateAuditIdentityProjection(t *testing.T) {
 	for _, role := range []organization.OrganizationRole{organization.OrganizationRoleAdmin, organization.OrganizationRoleMember} {

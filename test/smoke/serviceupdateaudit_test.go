@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -326,7 +327,11 @@ func TestServiceUpdateAuditDedupeAndAppendOnly(t *testing.T) {
 	e := updateaudit.Event{EventID: uuid.New(), AttemptID: uuid.New(), RequestID: uuid.New(), ActorKind: "human", ActorID: uuid.MustParse(h.UUID("user-a")), HomeOrganizationID: uuid.MustParse(harness.SmokeOrganizationID), AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "platform_admin", OrganizationRole: "ORG_MEMBER", ServiceID: uuid.MustParse(h.UUID("service-b")), TargetOrganizationID: uuid.MustParse(h.UUID("org-b")), RequestedFields: updateaudit.Description, Outcome: "committed", Reason: "updated", OccurredAt: time.Now()}
 	tx, err := h.App().DB().Begin()
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error("audit transaction cleanup failed")
+		}
+	}()
 	require.NoError(t, updateaudit.Append(context.Background(), tx, e))
 	require.NoError(t, updateaudit.Append(context.Background(), tx, e))
 	changed := e
@@ -336,7 +341,11 @@ func TestServiceUpdateAuditDedupeAndAppendOnly(t *testing.T) {
 	require.Equal(t, 1, serviceAuditCount(t, h))
 	independent, err := h.App().DB().Begin()
 	require.NoError(t, err)
-	defer independent.Rollback()
+	defer func() {
+		if err := independent.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error("independent audit transaction cleanup failed")
+		}
+	}()
 	require.NoError(t, updateaudit.Append(context.Background(), independent, e))
 	require.ErrorIs(t, updateaudit.Append(context.Background(), independent, changed), updateaudit.ErrConflict)
 	require.NoError(t, independent.Commit())
