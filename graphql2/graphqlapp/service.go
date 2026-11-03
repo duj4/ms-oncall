@@ -355,7 +355,7 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 }
 
 func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServiceInput) (bool, error) {
-	organizationID, err := serviceManagementAuthority(ctx, serviceManagementUpdate)
+	_, err := serviceManagementAuthority(ctx, serviceManagementUpdate)
 	if err != nil {
 		return false, err
 	}
@@ -364,6 +364,11 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 		return false, err
 	}
 	defer sqlutil.Rollback(ctx, "graphql: update service", tx)
+
+	organizationID, err := serviceUpdateTargetOrganization(ctx, tx, input.ID)
+	if err != nil {
+		return false, err
+	}
 
 	svc, err := a.ServiceStore.FindOneForUpdate(ctx, tx, input.ID, organizationID)
 	if err != nil {
@@ -390,6 +395,11 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 			return false, err
 		}
 		_, err := a.PolicyStore.FindOnePolicyTx(ctx, tx, svc.EscalationPolicyID, &svc.OrganizationID)
+		if err == nil {
+			// Hold the validated relationship through the write and commit. SHARE
+			// avoids upgrading the current EP lock when the reference is retained.
+			err = lockServiceUpdatePolicy(ctx, tx, svc.EscalationPolicyID, svc.OrganizationID)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, validation.NewFieldError("EscalationPolicyID", "does not exist")
 		}

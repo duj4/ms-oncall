@@ -3,6 +3,7 @@ package smoke
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -75,6 +76,8 @@ func serviceManagementRejected(t *testing.T, h *harness.Harness, query string, n
 	require.NotEmpty(t, r.Errors)
 	after := serviceManagementSnapshot(t, h)
 	require.Equal(t, before, after, "all selected persisted business rows must match")
+	key := sha256.Sum256([]byte(t.Name() + "\n" + query))
+	serviceManagementEvidence(t, fmt.Sprintf("denied-%x", key[:8]), map[string]any{"test": t.Name(), "before": before, "after": after, "response": r})
 	return r
 }
 
@@ -116,7 +119,24 @@ func TestGraphQLServiceManagementRoles(t *testing.T) {
 			}
 			// Create has no Organization input: foreign creation is tested via EP reference.
 			results["foreign_create_reference"] = serviceManagementRejected(t, h, fmt.Sprintf(`mutation{createService(input:{name:"Foreign reference",escalationPolicyID:%q}){id}}`, h.UUID("policy-b")), false)
-			results["foreign_update"] = serviceManagementRejected(t, h, fmt.Sprintf(`mutation{updateService(input:{id:%q,description:"foreign"})}`, h.UUID("service-b")), actor.allow)
+			foreignUpdate := fmt.Sprintf(`mutation{updateService(input:{id:%q,description:"foreign"})}`, h.UUID("service-b"))
+			if actor.pa {
+				before := serviceManagementSnapshot(t, h)
+				r := stepOrganizationQuery(t, h, foreignUpdate)
+				require.Empty(t, r.Errors)
+				var description, org string
+				require.NoError(t, h.App().DB().QueryRow(`SELECT description,organization_id FROM services WHERE id=$1`, h.UUID("service-b")).Scan(&description, &org))
+				require.Equal(t, "foreign", description)
+				require.Equal(t, h.UUID("org-b"), org)
+				after := serviceManagementSnapshot(t, h)
+				require.NotEqual(t, before["services"], after["services"])
+				delete(before, "services")
+				delete(after, "services")
+				require.Equal(t, before, after)
+				results["foreign_update"] = r
+			} else {
+				results["foreign_update"] = serviceManagementRejected(t, h, foreignUpdate, actor.allow)
+			}
 			results["foreign_delete"] = serviceManagementRejected(t, h, serviceManagementDelete(h, "service-b"), actor.allow)
 			if actor.allow {
 				r := stepOrganizationQuery(t, h, serviceManagementDelete(h, "service-a"))
