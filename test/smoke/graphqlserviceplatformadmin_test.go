@@ -75,7 +75,7 @@ func servicePlatformAdminContext(t *testing.T, h *harness.Harness) context.Conte
 func servicePlatformAdminOnlyTarget(t *testing.T, before, after map[string]string, serviceID string, stateChanged bool) {
 	t.Helper()
 	for table, old := range before {
-		if table != "services" && !(table == "escalation_policy_state" && stateChanged) {
+		if table != "services" && (table != "escalation_policy_state" || !stateChanged) {
 			require.JSONEq(t, old, after[table], table)
 			continue
 		}
@@ -325,7 +325,7 @@ func TestServicePlatformAdminTargetLocks(t *testing.T) {
 	done := make(chan struct{})
 	var response *stepOrganizationResponse
 	defer func() {
-		tx.Rollback()
+		_ = tx.Rollback()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
