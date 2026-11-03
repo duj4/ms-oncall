@@ -8,6 +8,20 @@ import (
 	"github.com/target/goalert/util/sqlutil"
 )
 
+// Only this package's helper installs this key. Client fields, headers and
+// ordinary string context keys cannot claim ownership of an inherited Tx.
+type contextTxKey int
+
+const txKey = contextTxKey(0)
+
+func hasInheritedContextTx(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	_, ok := ctx.Value(txKey).(*sql.Tx)
+	return ok
+}
+
 // withContextTx is a helper function that handles starting and using a single transaction for a request.
 //
 // If there is not already a nested transaction in the current context, one is started and a new
@@ -17,11 +31,6 @@ import (
 // Commit and Rollback are handled automatically.
 // Any nested calls to `withContextTx` will inherit the original transaction from the new context.
 func withContextTx(ctx context.Context, db *sql.DB, fn func(context.Context, *sql.Tx) error) error {
-	// Defining a static key to store the transaction within Context. The `0` value is arbitrary,
-	// it just needs to be a unique type/value pair, vs. other context values.
-	type ctxTx int
-	const txKey = ctxTx(0)
-
 	run := func() error {
 		if tx, ok := ctx.Value(txKey).(*sql.Tx); ok {
 			// Transaction already exists, run fn with
