@@ -194,12 +194,29 @@ func serviceUpdateAuditFault(ctx context.Context, event updateaudit.Event, fault
 	log.Log(clean, updateaudit.ErrUnavailable)
 }
 
+// A confirmed Commit already persisted both business and audit rows. Report
+// cleanup uncertainty separately without claiming an audit-persistence gap.
+func serviceUpdateCommittedCleanupFault(ctx context.Context, event updateaudit.Event) {
+	clean := context.Background()
+	if ctx != nil {
+		clean = log.FromContext(ctx).BackgroundContext()
+	}
+	clean = log.WithFields(clean, log.Fields{
+		"AuditOperation": "service.update", "AuditFault": "resource_release_unconfirmed",
+		"AuditOutcome": "committed",
+		"AuditEventID": event.EventID.String(), "AuditAttemptID": event.AttemptID.String(),
+		"AuditRequestID": event.RequestID.String(),
+	})
+	log.Log(clean, errors.New("service.update committed; resource release unconfirmed"))
+}
+
 func finishServiceUpdateAudit(ctx context.Context, db *sql.DB, conn *sql.Conn, tx *sql.Tx, commitAttempted, commitFinalized bool, event updateaudit.Event, operationErr error) error {
 	rollbackErr, released := releaseServiceUpdate(conn, tx, commitFinalized)
 	if operationErr == nil {
+		// UpdateService returns nil only after observing Commit return nil.
+		// Cleanup must not replace that confirmed, atomic success with failure.
 		if !released {
-			serviceUpdateAuditFault(ctx, event, "resource_release_unconfirmed")
-			return updateaudit.ErrUnavailable
+			serviceUpdateCommittedCleanupFault(ctx, event)
 		}
 		return nil
 	}
