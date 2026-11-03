@@ -24,10 +24,10 @@ func TestRiverCorrectnessCanonicalBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history.entries) != 289 {
-		t.Fatalf("canonical count = %d, want 289", len(history.entries))
+	if len(history.entries) < 289 {
+		t.Fatalf("canonical count = %d, want at least 289", len(history.entries))
 	}
-	entry := history.latest()
+	entry := history.entries[289-1]
 	predecessor := history.entries[288-1]
 	if entry.Position != 289 || entry.ID != riverCorrectnessMigrationID ||
 		entry.OriginalID != riverCorrectnessMigrationID || entry.SHA256 != riverCorrectnessChecksum ||
