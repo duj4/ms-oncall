@@ -228,11 +228,11 @@ func (a *App) Handler() http.Handler {
 				Observe(time.Since(start).Seconds())
 		}
 		if err == nil && fieldCtx.Object == "Mutation" {
-			ctx = scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))
+			ctx = rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)))
 			ctx = log.WithFields(ctx, log.Fields{
 				"MutationName": fieldCtx.Field.Name,
 			})
-			if fieldCtx.Field.Name == "updateService" || fieldCtx.Field.Name == "updateSchedule" {
+			if fieldCtx.Field.Name == "updateService" || fieldCtx.Field.Name == "updateSchedule" || fieldCtx.Field.Name == "updateRotation" {
 				ctx = log.WithField(ctx, "MutationResult", "success")
 			}
 			log.Logf(ctx, "Mutation.")
@@ -304,7 +304,7 @@ func (a *App) Handler() http.Handler {
 		if isUnsafe && !isGQLValidation(gqlErr) {
 			// context.Canceled is caused by normal things like closing a browser tab.
 			if !errors.Is(err, context.Canceled) {
-				log.Log(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)), err)
+				log.Log(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))), err)
 			}
 			gqlErr.Message = safeErr.Error()
 		}

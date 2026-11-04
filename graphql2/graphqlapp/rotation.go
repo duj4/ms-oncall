@@ -14,6 +14,7 @@ import (
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule/rotation"
+	"github.com/target/goalert/schedule/updateaudit"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/user"
 	"github.com/target/goalert/util"
@@ -367,11 +368,33 @@ func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, r
 }
 
 func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRotationInput) (res bool, err error) {
+	inherited := hasInheritedContextTx(ctx)
+	var event updateaudit.Event
+	var conn *sql.Conn
+	var tx *sql.Tx
+	var commitAttempted, commitFinalized bool
+	if inherited {
+		rotationUpdateLegacyDiagnostic(ctx)
+	} else {
+		event = rotationUpdateAuditEvent(ctx, input)
+		event.Outcome, event.Reason = "denied", "authority_denied"
+		defer func() {
+			if !commitAttempted && err == nil {
+				event.Outcome, event.Reason = "tx_failed", "write_failed"
+				err = errors.New("rotation.update transaction interrupted")
+			}
+			err = finishRotationUpdateAudit(ctx, m.DB, conn, tx, commitAttempted, commitFinalized, event, err)
+			if err != nil {
+				res = false
+			}
+		}()
+	}
 	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		return false, err
 	}
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	update := func(ctx context.Context, tx *sql.Tx) error {
+		event.Outcome, event.Reason = "validation_failed", "target_unavailable"
 		result, err := m.RotationStore.FindRotationForUpdateTx(ctx, tx, input.ID, organizationID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("id", "Rotation not found")
@@ -379,6 +402,17 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 		if err != nil {
 			return err
 		}
+		if !inherited {
+			// FindRotationForUpdateTx already holds EXCLUSIVE participant/state table
+			// locks, then the actual scoped Rotation root FOR UPDATE, through Commit.
+			event.TargetID, event.TargetOrganizationID = uuid.MustParse(result.ID), result.OrganizationID
+			event.Before, err = updateaudit.CaptureRotation(ctx, tx, event.TargetID)
+			if err != nil {
+				event.Outcome, event.Reason = "tx_failed", "write_failed"
+				return err
+			}
+		}
+		event.Outcome, event.Reason = "validation_failed", "invalid_fields"
 		var update bool
 		if input.Name != nil {
 			update = true
@@ -438,12 +472,40 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 			}
 		}
 
+		if !inherited {
+			event.After, err = updateaudit.CaptureRotation(ctx, tx, event.TargetID)
+			if err != nil {
+				event.Outcome, event.Reason = "tx_failed", "write_failed"
+				return err
+			}
+			event.RotationRowWritten = update
+			event.Outcome, event.Reason = "committed", "updated"
+			if err := updateaudit.Append(ctx, tx, event); err != nil {
+				event.Outcome, event.Reason = "tx_failed", "audit_write_failed"
+				return err
+			}
+		}
 		return nil
-	})
+	}
+	if inherited {
+		err = withContextTx(ctx, m.DB, update)
+		return err == nil, err
+	}
+	event.Outcome, event.Reason = "tx_failed", "begin_failed"
+	conn, err = m.DB.Conn(ctx)
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	tx, err = conn.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	if err = update(ctx, tx); err != nil {
+		return false, err
+	}
+	commitAttempted = true
+	err, commitFinalized = commitServiceUpdate(ctx, tx)
+	return err == nil, err
 }
 
 func (a *Query) CalcRotationHandoffTimes(ctx context.Context, input *graphql2.CalcRotationHandoffTimesInput) ([]time.Time, error) {
