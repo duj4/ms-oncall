@@ -392,6 +392,10 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		m[tgt.TargetType()] = append(m[tgt.TargetType()], tgt.TargetID())
 	}
 
+	if err := validateScheduleRotationDeleteTx(ctx, tx, m, organizationID); err != nil {
+		return err
+	}
+
 	order := []assignment.TargetType{
 		assignment.TargetTypeRotation,
 		assignment.TargetTypeUserOverride,
