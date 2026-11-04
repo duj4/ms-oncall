@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/gadb"
@@ -20,6 +21,7 @@ import (
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rule"
+	"github.com/target/goalert/schedule/updateaudit"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/validation"
@@ -206,10 +208,35 @@ func (s *Schedule) AssignedTo(ctx context.Context, raw *schedule.Schedule) ([]as
 }
 
 func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateScheduleInput) (ok bool, err error) {
+	inherited := hasInheritedContextTx(ctx)
+	var event updateaudit.Event
+	var conn *sql.Conn
+	var tx *sql.Tx
+	var commitAttempted, commitFinalized bool
+	if inherited {
+		// Owner-approved NOT COVERED: a staged inner success says nothing about
+		// the legacy owner's eventual Commit/Rollback or connection release.
+		scheduleUpdateLegacyDiagnostic(ctx)
+	} else {
+		event = scheduleUpdateAuditEvent(ctx, input)
+		event.Outcome, event.Reason = "denied", "authority_denied"
+		defer func() {
+			// A panic before Commit still rolls back; never describe it as committed.
+			if !commitAttempted && err == nil {
+				event.Outcome, event.Reason = "tx_failed", "write_failed"
+				err = errors.New("schedule.update transaction interrupted")
+			}
+			err = finishScheduleUpdateAudit(ctx, m.DB, conn, tx, commitAttempted, commitFinalized, event, err)
+			if err != nil {
+				ok = false
+			}
+		}()
+	}
 	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		return false, err
 	}
+	event.Outcome, event.Reason = "validation_failed", "invalid_fields"
 	var loc *time.Location
 	if input.TimeZone != nil {
 		loc, err = util.LoadLocation(*input.TimeZone)
@@ -217,7 +244,8 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 			return false, validation.NewFieldError("timeZone", err.Error())
 		}
 	}
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	update := func(ctx context.Context, tx *sql.Tx) error {
+		event.Outcome, event.Reason = "validation_failed", "target_unavailable"
 		sched, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, input.ID, organizationID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("id", "not found")
@@ -225,6 +253,11 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 		if err != nil {
 			return err
 		}
+		if !inherited {
+			// Trust only the actual row locked by the existing scoped Store.
+			event.TargetID, event.TargetOrganizationID = uuid.MustParse(sched.ID), sched.OrganizationID
+		}
+		event.Outcome, event.Reason = "validation_failed", "invalid_fields"
 		if input.Name != nil {
 			sched.Name = *input.Name
 		}
@@ -236,8 +269,36 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 			sched.TimeZone = loc
 		}
 
-		return m.ScheduleStore.UpdateTx(ctx, tx, sched, organizationID)
-	})
+		err = m.ScheduleStore.UpdateTx(ctx, tx, sched, organizationID)
+		if inherited || err != nil {
+			return err
+		}
+		event.Outcome, event.Reason = "committed", "updated"
+		event.ScheduleRowWritten = true
+		if err := updateaudit.Append(ctx, tx, event); err != nil {
+			event.Outcome, event.Reason = "tx_failed", "audit_write_failed"
+			return err
+		}
+		return nil
+	}
+	if inherited {
+		err = withContextTx(ctx, m.DB, update)
+		return err == nil, err
+	}
+	event.Outcome, event.Reason = "tx_failed", "begin_failed"
+	conn, err = m.DB.Conn(ctx)
+	if err != nil {
+		return false, err
+	}
+	tx, err = conn.BeginTx(ctx, nil) // Request cancellation still owns the business Tx.
+	if err != nil {
+		return false, err
+	}
+	if err = update(ctx, tx); err != nil {
+		return false, err
+	}
+	commitAttempted = true
+	err, commitFinalized = commitServiceUpdate(ctx, tx)
 
 	return err == nil, err
 }

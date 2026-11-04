@@ -164,9 +164,12 @@ func TestGraphQLServicePlatformAdminPolicyAndRollback(t *testing.T) {
 	_, err := h.App().DB().Exec(`CREATE FUNCTION service_pa_fail_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'service-pa synthetic commit rejection'; END $$;
 	 CREATE CONSTRAINT TRIGGER service_pa_fail_commit AFTER UPDATE ON services DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION service_pa_fail_commit()`)
 	require.NoError(t, err)
-	wait := h.ExpectBackendError("service-pa synthetic commit rejection")
+	wait := h.ExpectBackendError("service.update transaction failed")
 	serviceManagementRejected(t, h, q, false)
 	wait()
+	var rejected int
+	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM service_update_audit_events WHERE outcome='tx_failed' AND reason_code='commit_rejected'`).Scan(&rejected))
+	require.Equal(t, 1, rejected, "server RAISE rejection is a confirmed failure, never a raw SQL diagnostic")
 	_, err = h.App().DB().Exec(`DROP TRIGGER service_pa_fail_commit ON services; DROP FUNCTION service_pa_fail_commit()`)
 	require.NoError(t, err)
 	before := serviceManagementSnapshot(t, h)

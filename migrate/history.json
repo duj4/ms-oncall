@@ -1672,6 +1672,64 @@
           "sha256": "54113cfb892166b9881942fac80122384b46da1ed71053e03d88d03149ed89b9"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-service-update-audit-d09-a1",
+      "first_position": 290,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-A1 direct owner implementation task; frozen Project baseline is context, not prior migration acceptance",
+        "base_commit": "8c9e67032c6c03f973db7d2e11136966da1b7e05",
+        "base_tree": "7e4d04257d27a309f7ddb2f58603062a542073cb",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "ed31bb51e6c1f6f79a835fdc4aab597ebc72e699",
+        "authorization_tree": "da39f26d608271d5a35ebae55de0379133cd9d8c"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-goalert-v035-river-correctness-v1",
+        "migration_id": "20260923133000-fix-river-job-guard.sql",
+        "sha256": "54113cfb892166b9881942fac80122384b46da1ed71053e03d88d03149ed89b9",
+        "evidence": "DIRECT_OWNER_D09_A1_TASK_APPEND_AFTER_EXACT_ACCEPTED_POSITION_289"
+      },
+      "adaptation_evidence": "NEW_MS_ONCALL_SERVICE_UPDATE_ONLY_AUDIT_DIRECT_OWNER_TASK_NO_UPSTREAM_SQL_COPY",
+      "entries": [
+        {
+          "id": "20261103125657-service-update-audit.sql",
+          "original_id": "20261103125657-service-update-audit.sql",
+          "sha256": "11d7032837f206adb04888835782ac14c1aa4be582f0f92a8fa69d0e633aa165"
+        }
+      ]
+    },
+    {
+      "id": "ms-oncall-schedule-rotation-update-audit-d09-c4",
+      "first_position": 291,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-C4 S2 direct owner bounded storage implementation; Project baseline is context, not prior C4 acceptance",
+        "base_commit": "5d06c43fe194baea872a76a3a8f0d1d317ada9ee",
+        "base_tree": "105de9799900cf5f20028808ad6bb926b9049621",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "ed31bb51e6c1f6f79a835fdc4aab597ebc72e699",
+        "authorization_tree": "da39f26d608271d5a35ebae55de0379133cd9d8c"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-service-update-audit-d09-a1",
+        "migration_id": "20261103125657-service-update-audit.sql",
+        "sha256": "11d7032837f206adb04888835782ac14c1aa4be582f0f92a8fa69d0e633aa165",
+        "evidence": "DIRECT_OWNER_D09_C4_S2_APPEND_AFTER_EXACT_FROZEN_A1_POSITION_290"
+      },
+      "adaptation_evidence": "NEW_MS_ONCALL_SCHEDULE_ROTATION_UPDATE_ONLY_STORAGE_NO_A1_SCHEMA_OR_WRITER_CHANGE_NO_UPSTREAM_SQL_COPY",
+      "entries": [
+        {
+          "id": "20261103175233-schedule-rotation-update-audit.sql",
+          "original_id": "20261103175233-schedule-rotation-update-audit.sql",
+          "sha256": "db589600fb5a0a43b4c4a140143b06b29492461821326012a9e9687246e82af5"
+        }
+      ]
     }
   ]
 }

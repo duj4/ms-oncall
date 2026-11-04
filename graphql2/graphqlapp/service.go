@@ -22,7 +22,7 @@ import (
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/service"
-	"github.com/target/goalert/util/sqlutil"
+	"github.com/target/goalert/service/updateaudit"
 	"github.com/target/goalert/util/timeutil"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
@@ -354,16 +354,35 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 	return result, err
 }
 
-func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServiceInput) (bool, error) {
+func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServiceInput) (result bool, resultErr error) {
+	event := serviceUpdateAuditEvent(ctx, input)
+	event.Outcome, event.Reason = "denied", "authority_denied"
+	var conn *sql.Conn
+	var tx *sql.Tx
+	var commitAttempted bool
+	var commitFinalized bool
+	defer func() {
+		resultErr = finishServiceUpdateAudit(ctx, a.DB, conn, tx, commitAttempted, commitFinalized, event, resultErr)
+		if resultErr != nil {
+			result = false
+		}
+	}()
 	_, err := serviceManagementAuthority(ctx, serviceManagementUpdate)
 	if err != nil {
 		return false, err
 	}
-	tx, err := a.DB.BeginTx(ctx, nil)
+	event.Outcome, event.Reason = "tx_failed", "begin_failed"
+	conn, err = a.DB.Conn(ctx)
 	if err != nil {
 		return false, err
 	}
-	defer sqlutil.Rollback(ctx, "graphql: update service", tx)
+	// Own the connection as well as the transaction. The request context still
+	// controls automatic rollback and Commit's cancellation check.
+	tx, err = conn.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	event.Outcome, event.Reason = "validation_failed", "target_unavailable"
 
 	organizationID, err := serviceUpdateTargetOrganization(ctx, tx, input.ID)
 	if err != nil {
@@ -374,6 +393,9 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 	if err != nil {
 		return false, err
 	}
+	// The target is an actual locked database row, never the Home or client input.
+	event.ServiceID, event.TargetOrganizationID = uuid.MustParse(svc.ID), svc.OrganizationID
+	event.Outcome, event.Reason = "validation_failed", "invalid_fields"
 
 	if input.Name != nil {
 		svc.Name = *input.Name
@@ -410,10 +432,19 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 
 	err = a.ServiceStore.UpdateTx(ctx, tx, svc, organizationID)
 	if err != nil {
+		if !validation.IsValidationError(serviceUpdateSafeError(err)) {
+			event.Outcome, event.Reason = "tx_failed", "write_failed"
+		}
+		return false, err
+	}
+	event.Outcome, event.Reason = "committed", "updated"
+	if err := updateaudit.Append(ctx, tx, event); err != nil {
+		event.Outcome, event.Reason = "tx_failed", "audit_write_failed"
 		return false, err
 	}
 
-	err = tx.Commit()
+	commitAttempted = true
+	err, commitFinalized = commitServiceUpdate(ctx, tx)
 	if err != nil {
 		return false, err
 	}
