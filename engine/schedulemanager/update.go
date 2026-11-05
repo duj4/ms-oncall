@@ -187,6 +187,9 @@ func (db *DB) update(ctx context.Context) error {
 	for _, row := range onCallRows {
 		getInfo(row.ScheduleID).CurrentOnCall.Add(row.UserID)
 	}
+	if err := loadStaffingEligibility(ctx, tx, updateData, now); err != nil {
+		return errors.Wrap(err, "load current schedule staffing authority")
+	}
 
 updateLoop:
 	for scheduleID, info := range updateData {

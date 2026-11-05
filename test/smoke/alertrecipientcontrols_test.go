@@ -208,6 +208,11 @@ func TestOutboundRecipientBundleSources(t *testing.T) {
 func TestOutboundRecipientDatabaseTimeoutRetry(t *testing.T) {
 	h, db := t1New(t, false, true)
 	recipientExec(t, db, `DELETE FROM user_notification_rules`)
+	// R2 also reads affiliation upstream. Disable only those modules in this
+	// isolated fixture so the table lock still tests the final send guard's
+	// temporary-error/retry contract. Separate staffing tests exercise each
+	// upstream transaction's authority-read timeout and rollback.
+	recipientExec(t, db, `UPDATE engine_processing_versions SET version=version+1 WHERE type_id IN ('schedule','escalation','np_cycle')`)
 	// Block only the assignment read in the actual guard. PostgreSQL and the
 	// durable outbox remain available so the real message manager records retry.
 	tx, err := db.BeginTx(t.Context(), nil)
@@ -232,6 +237,7 @@ func TestOutboundRecipientDatabaseTimeoutRetry(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT to_jsonb(m)::text FROM outgoing_messages m WHERE id=$1`, msg).Scan(&failed))
 	t1Write(t, "temporary-failure", json.RawMessage(failed))
 	require.NoError(t, tx.Commit())
+	recipientExec(t, db, `UPDATE engine_processing_versions SET version=version-1 WHERE type_id IN ('schedule','escalation','np_cycle')`)
 	h.FastForward(time.Minute)
 	h.Trigger()
 	recipientWait(t, db, msg, "sent", "")
@@ -285,7 +291,11 @@ func TestOutboundRecipientAutomaticBundle(t *testing.T) {
 	_, err = conn.ExecContext(t.Context(), `SELECT pg_advisory_lock($1)`, lock.GlobalMessageSending)
 	require.NoError(t, err)
 	for range 3 {
-		recipientAlert(t, h, db, "svc-a")
+		id := recipientAlert(t, h, db, "svc-a")
+		// Seed historical pending intents explicitly: R2 correctly no longer
+		// creates foreign cycles, while R1 must still guard actual bundles of
+		// old outbox rows. Do not preserve unsafe upstream cycle creation.
+		recipientQueue(t, h, db, id, "svc-a")
 	}
 	h.Trigger()
 	_, err = conn.ExecContext(t.Context(), `SELECT pg_advisory_unlock($1)`, lock.GlobalMessageSending)

@@ -109,6 +109,12 @@ func (db *DB) processEscalations(ctx context.Context, stmt *sql.Stmt, scan func(
 		}
 		batch[*esc] = append(batch[*esc], id)
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
 
 	for meta, ids := range batch {
 		err = db.log.LogManyTx(ctx, tx, ids, alertlog.TypeEscalated, meta)

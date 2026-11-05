@@ -23,6 +23,10 @@ type updateInfo struct {
 
 	// MissingUsers contains user IDs referenced by temporary schedule shifts that no longer exist
 	MissingUsers mapset.Set[uuid.UUID]
+
+	// EligibleUsers is loaded from current trusted affiliation in the manager's
+	// transaction. Apply it after replacement overrides and temporary precedence.
+	EligibleUsers mapset.Set[uuid.UUID]
 }
 
 type updateResult struct {
@@ -86,6 +90,9 @@ func (info updateInfo) calcUpdates(now time.Time) (*updateResult, error) {
 	now = now.In(info.TimeZone)
 
 	newOnCall := info.calcLatestOnCall(now)
+	if info.EligibleUsers != nil {
+		newOnCall = newOnCall.Intersect(info.EligibleUsers)
+	}
 	onCallChanged := !newOnCall.Equal(info.CurrentOnCall)
 	if onCallChanged {
 		result.UsersToStop = info.CurrentOnCall.Difference(newOnCall)  // currently on-call, but not anymore

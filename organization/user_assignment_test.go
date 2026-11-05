@@ -25,7 +25,7 @@ func TestCurrentUserOrganizationQueryIsOneBoundedRelationalStatement(t *testing.
 		"mapping_outcome = 'exactly_one'",
 		"matched_count = 1",
 		"effective_organization_classification = 'normal'",
-		"effective_organization_id <> $2",
+		"effective_organization_id <> '" + DefaultOrganizationID + "'",
 		"organization_role in ('org_member', 'org_admin')",
 	} {
 		if !strings.Contains(query, required) {

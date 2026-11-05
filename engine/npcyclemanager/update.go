@@ -50,19 +50,38 @@ func (db *DB) update(ctx context.Context, all bool, alertID *int) error {
 	type record struct {
 		alertID int
 		userID  string
+		denied  bool
 	}
 
 	var data []record
 	for rows.Next() {
 		var rec record
-		err = rows.Scan(&rec.userID, &rec.alertID)
+		err = rows.Scan(&rec.userID, &rec.alertID, &rec.denied)
 		if err != nil {
 			return errors.Wrap(err, "scan userID and alertID")
 		}
 		data = append(data, rec)
 	}
+	if err := rows.Err(); err != nil {
+		return errors.Wrap(err, "read notification cycle results")
+	}
+	if err := rows.Close(); err != nil {
+		return errors.Wrap(err, "close notification cycle results")
+	}
 
 	for _, rec := range data {
+		if rec.denied {
+			// Use the real System actor and a fixed reason. The ordinary CM
+			// context labels NoNotificationSent as "no immediate rule", which
+			// would misdescribe a current-affiliation rejection.
+			err = db.log.LogTx(ctx, tx, rec.alertID, alertlog.TypeNoNotificationSent, map[string]string{
+				"Reason": "notification_cycle_recipient_org_denied", "UserID": rec.userID,
+			})
+			if err != nil {
+				return errors.Wrap(err, "log rejected notification cycle")
+			}
+			continue
+		}
 		logCtx := permission.UserSourceContext(ctx, rec.userID, permission.RoleUser, &permission.SourceInfo{
 			Type: permission.SourceTypeContactMethod,
 			// no ID available, since notification couldn't be sent
@@ -73,5 +92,16 @@ func (db *DB) update(ctx context.Context, all bool, alertID *int) error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, rec := range data {
+		if rec.denied {
+			log.Logf(log.WithFields(ctx, log.Fields{
+				"AlertID": rec.alertID, "UserID": rec.userID,
+				"Reason": "notification_cycle_recipient_org_denied",
+			}), "notification cycle recipient rejected")
+		}
+	}
+	return nil
 }
