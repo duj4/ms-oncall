@@ -17,6 +17,9 @@ import (
 
 func (p *Engine) sendMessage(ctx context.Context, msg *message.Message) (*notification.SendResult, error) {
 	ctx = log.WithField(ctx, "CallbackID", msg.ID)
+	if result, err := p.guardAlertRecipient(ctx, msg); result != nil || err != nil {
+		return result, err
+	}
 
 	if msg.DestID.IsUserCM() {
 		ctx = permission.UserSourceContext(ctx, msg.UserID, permission.RoleUser, &permission.SourceInfo{

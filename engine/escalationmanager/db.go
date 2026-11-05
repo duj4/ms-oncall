@@ -6,6 +6,7 @@ import (
 
 	"github.com/target/goalert/alert/alertlog"
 	"github.com/target/goalert/engine/processinglock"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/util"
 )
 
@@ -53,10 +54,14 @@ func NewDB(ctx context.Context, db *sql.DB, log *alertlog.Store) (*DB, error) {
 					step.id step_id,
 					coalesce(act.user_id, part.user_id, sched.user_id) user_id
 				from escalation_policy_steps step
+				join escalation_policies ep on ep.id = step.escalation_policy_id
 				join escalation_policy_actions act on act.escalation_policy_step_id = step.id
 				left join rotation_state rState on rState.rotation_id = act.rotation_id
 				left join rotation_participants part on part.id = rState.rotation_participant_id
 				left join schedule_on_call_users sched on sched.schedule_id = act.schedule_id and sched.end_time isnull
+				join (` + organization.CurrentUserOrganizationsQuery + `) affiliation on
+					affiliation.id = coalesce(act.user_id, part.user_id, sched.user_id) and
+					affiliation.effective_organization_id = ep.organization_id
 				where coalesce(act.user_id, part.user_id, sched.user_id) notnull
 			), ended as (
 				select
@@ -116,6 +121,12 @@ func NewDB(ctx context.Context, db *sql.DB, log *alertlog.Store) (*DB, error) {
 				join ep_step_on_call_users on_call on
 					on_call.end_time isnull and
 					on_call.ep_step_id = esc.ep_step_id
+				-- Revalidate each creation branch in this statement's snapshot;
+				-- a prior on-call transaction is not current authority.
+				join escalation_policies ep on ep.id = esc.escalation_policy_id
+				join services svc on svc.id = esc.service_id and svc.organization_id = ep.organization_id
+				join (` + organization.CurrentUserOrganizationsQuery + `) affiliation on
+					affiliation.id = on_call.user_id and affiliation.effective_organization_id = ep.organization_id
 			), _cycles as (
 				insert into notification_policy_cycles (alert_id, user_id, multi_ack)
 				select alert_id, user_id, multi_ack from _step_cycles
@@ -190,6 +201,12 @@ func NewDB(ctx context.Context, db *sql.DB, log *alertlog.Store) (*DB, error) {
 				join ep_step_on_call_users on_call on
 					on_call.end_time isnull and
 					on_call.ep_step_id = esc.ep_step_id
+				-- Revalidate each creation branch in this statement's snapshot;
+				-- a prior on-call transaction is not current authority.
+				join escalation_policies ep on ep.id = esc.escalation_policy_id
+				join services svc on svc.id = esc.service_id and svc.organization_id = ep.organization_id
+				join (` + organization.CurrentUserOrganizationsQuery + `) affiliation on
+					affiliation.id = on_call.user_id and affiliation.effective_organization_id = ep.organization_id
 			), _cycles as (
 				insert into notification_policy_cycles (alert_id, user_id, multi_ack)
 				select alert_id, user_id, multi_ack
@@ -273,6 +290,12 @@ func NewDB(ctx context.Context, db *sql.DB, log *alertlog.Store) (*DB, error) {
 				join ep_step_on_call_users on_call on
 					on_call.end_time isnull and
 					on_call.ep_step_id = esc.ep_step_id
+				-- Revalidate each creation branch in this statement's snapshot;
+				-- a prior on-call transaction is not current authority.
+				join escalation_policies ep on ep.id = esc.escalation_policy_id
+				join services svc on svc.id = esc.service_id and svc.organization_id = ep.organization_id
+				join (` + organization.CurrentUserOrganizationsQuery + `) affiliation on
+					affiliation.id = on_call.user_id and affiliation.effective_organization_id = ep.organization_id
 			), _cycles as (
 				insert into notification_policy_cycles (alert_id, user_id, multi_ack)
 				select alert_id, user_id, multi_ack

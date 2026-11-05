@@ -28,6 +28,14 @@ func TestC9DiagnosticText(t *testing.T) {
 	}
 }
 
+func TestRecipientDiagnosticCodes(t *testing.T) {
+	for _, reason := range []string{"notification_recipient_invalid", "notification_recipient_org_denied", "notification_authority_unavailable"} {
+		require.Equal(t, reason, DiagnosticText(reason))
+		require.Equal(t, "provider details withheld", DiagnosticText(reason+": synthetic@example.invalid"))
+		require.Equal(t, "provider details withheld", DiagnosticText(reason+"\nprivate SQL"))
+	}
+}
+
 func TestC9ProviderErrorClassificationsAndUnwrap(t *testing.T) {
 	raw := errors.New("failed delivery to c9-private-leak@example.invalid +15551234567 https://example.invalid/c9-super-secret-token")
 	for _, tc := range []struct {

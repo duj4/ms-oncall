@@ -28,6 +28,7 @@ func DiagnosticText(text string) string {
 		"unsupported operation", "destination type is not enabled", "unknown destination type",
 		"gateway signing failed: gateway signing unavailable", "gateway signing failed: gateway signing configuration is invalid",
 		"gateway message type is not supported", "webhook delivery identity is required", "webhook request could not be created", "webhook alert state is invalid",
+		"notification_recipient_invalid", "notification_recipient_org_denied", "notification_authority_unavailable",
 		"webhook request failed", "webhook request failed: context canceled", "webhook request failed: context deadline exceeded":
 		return text
 	}

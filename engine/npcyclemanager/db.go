@@ -6,6 +6,7 @@ import (
 
 	"github.com/target/goalert/alert/alertlog"
 	"github.com/target/goalert/engine/processinglock"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/util"
 )
 
@@ -37,6 +38,11 @@ func NewDB(ctx context.Context, db *sql.DB, log *alertlog.Store) (*DB, error) {
 		log:  log,
 		lock: lock,
 
+		// Invalid recipients remain recorded: advancing the processed tick suppresses
+		// only their due intents. Never delete them for affiliation changes, since
+		// the existing FK would cascade into pending outbox. ACK/Close retain their
+		// existing cleanup, and every queued message still uses the final guard.
+		//
 		// add messages for notification rules who's delay is between the last tick and now.
 		//
 		// Example:
@@ -47,26 +53,33 @@ func NewDB(ctx context.Context, db *sql.DB, log *alertlog.Store) (*DB, error) {
 		queueMessages: p.P(`
 			with lock_cycles as (
 				select
-					id,
-					alert_id,
-					user_id,
-					started_at,
-					last_tick
-				from notification_policy_cycles
+					cycle.id,
+					cycle.alert_id,
+					cycle.user_id,
+					cycle.started_at,
+					cycle.last_tick,
+					coalesce(affiliation.id notnull and ep.organization_id = svc.organization_id, false) recipient_valid
+				from notification_policy_cycles cycle
+				left join alerts a on a.id = cycle.alert_id
+				left join services svc on svc.id = a.service_id
+				left join escalation_policies ep on ep.id = svc.escalation_policy_id
+				left join (` + organization.CurrentUserOrganizationsQuery + `) affiliation on
+					affiliation.id = cycle.user_id and affiliation.effective_organization_id = svc.organization_id
 				where
 					last_tick isnull or
 					last_tick < now() - '1 minute'::interval
 				order by
 					last_tick nulls first,
 					started_at
-				for update skip locked
+				for update of cycle skip locked
 				limit 1250
 			), deleted as (
 				delete from notification_policy_cycles cycle
 				using alerts a, lock_cycles lock
 				where
-					a.status != 'triggered' and a.id = cycle.alert_id and
+					a.id = cycle.alert_id and
 					cycle.id = lock.id and
+					a.status != 'triggered' and
 					(
 						-- closing always cancels pending notifications
 						a.status = 'closed'
@@ -123,17 +136,20 @@ func NewDB(ctx context.Context, db *sql.DB, log *alertlog.Store) (*DB, error) {
 						concat(rule.delay_minutes,' minutes')::interval > (cycle.last_tick - cycle.started_at)
 					) and
 					concat(rule.delay_minutes,' minutes')::interval <= (now() - cycle.started_at)
+				where cycle.recipient_valid
 				returning cycle_id
 			), no_first_notif_sent as (
 				select user_id, alert_id
 				from process_cycles
-				where last_tick isnull and id not in (select cycle_id from inserted)
+				where recipient_valid and last_tick isnull and id not in (select cycle_id from inserted)
 			), update as (
 				update notification_policy_cycles
 				set last_tick = greatest(last_tick, now())
 				where id in (select id from process_cycles)
 			)
-			select user_id, alert_id from no_first_notif_sent
+			select user_id, alert_id, false recipient_denied from no_first_notif_sent
+			union all
+			select user_id, alert_id, true from process_cycles where not recipient_valid
 		`),
 	}, p.Err
 }

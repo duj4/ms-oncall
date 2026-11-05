@@ -32,7 +32,11 @@ type CurrentUserOrganization struct {
 	Role           OrganizationRole
 }
 
-const findCurrentUserOrganizationQuery = `
+// CurrentUserOrganizationsQuery is the trusted operational affiliation relation.
+// Engine consumers must join its effective_organization_id to the persisted
+// business parent in their own transaction/statement snapshot. It grants no
+// platform-role exception and must not be cached across Engine updates.
+const CurrentUserOrganizationsQuery = `
 	SELECT
 		u.id,
 		u.role,
@@ -48,17 +52,18 @@ const findCurrentUserOrganizationQuery = `
 		ON n.organization_id = o.id
 		AND n.organization_classification = o.classification
 		AND n.organization_id = a.effective_normal_organization_id
-	WHERE u.id = $1
-		AND u.role IN ('user', 'admin')
+	WHERE u.role IN ('user', 'admin')
 		AND a.mapping_outcome = 'EXACTLY_ONE'
 		AND a.matched_count = 1
 		AND a.effective_organization_classification = 'NORMAL'
-		AND a.effective_organization_id <> $2
+		AND a.effective_organization_id <> '` + DefaultOrganizationID + `'
 		AND a.effective_normal_organization_id = a.effective_organization_id
 		AND a.organization_role IN ('ORG_MEMBER', 'ORG_ADMIN')
 		AND o.classification = 'NORMAL'
 		AND n.organization_classification = 'NORMAL'
 `
+
+const findCurrentUserOrganizationQuery = CurrentUserOrganizationsQuery + ` AND u.id = $1`
 
 // FindCurrentUserOrganization observes the current User, assignment, base
 // Organization, and NormalOrganization relationship in one SQL statement. A
@@ -82,7 +87,7 @@ func (s *Store) FindCurrentUserOrganizationTx(ctx context.Context, tx *sql.Tx, u
 
 	var value CurrentUserOrganization
 	var userRole, organizationRole string
-	err := db.QueryRowContext(ctx, findCurrentUserOrganizationQuery, userID, DefaultOrganizationID).Scan(
+	err := db.QueryRowContext(ctx, findCurrentUserOrganizationQuery, userID).Scan(
 		&value.UserID,
 		&userRole,
 		&value.OrganizationID,
