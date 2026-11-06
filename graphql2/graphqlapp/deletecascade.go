@@ -11,8 +11,8 @@ import (
 	"github.com/target/goalert/validation/validate"
 )
 
-// validateScheduleRotationDeleteTx protects EP configuration affected by root
-// deletion. The existing management authority supplies a concrete Home scope
+// validateScheduleRotationDeleteTx protects dependent configuration affected by
+// root deletion. The existing management authority supplies a concrete Home scope
 // for every Human, including PlatformAdmin; trusted nil-scope callers retain
 // their existing behavior. All locks belong to DeleteAll's business transaction.
 func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets map[assignment.TargetType][]string, organizationID *uuid.UUID) error {
@@ -68,6 +68,10 @@ func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets m
 	// Lock each relation separately, then follow its current parent in the next
 	// statement. A single locking join can miss a concurrently reparented row
 	// when PostgreSQL rechecks a stale joined tuple after waiting for its lock.
+	if err := validateRotationRuleDeleteTx(ctx, tx, rotationIDs, *organizationID); err != nil {
+		return err
+	}
+
 	actions, err := lockDeleteCascadeIDs(ctx, tx, `SELECT id FROM escalation_policy_actions
 		WHERE rotation_id=ANY($1::uuid[]) OR schedule_id=ANY($2::uuid[])
 		ORDER BY id FOR UPDATE`, sqlutil.UUIDArray(rotationIDs), sqlutil.UUIDArray(scheduleIDs))
@@ -95,6 +99,39 @@ func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets m
 	}
 	if foreign {
 		// Match unavailable-root behavior without exposing foreign identities.
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func validateRotationRuleDeleteTx(ctx context.Context, tx *sql.Tx, rotationIDs []string, organizationID uuid.UUID) error {
+	if len(rotationIDs) == 0 {
+		return nil
+	}
+	// The already-held Rotation FOR UPDATE locks fence new references via the
+	// FK's KEY SHARE lock. Lock existing Rules before reading their parents:
+	// READ COMMITTED must observe any reparenting committed while we waited.
+	rules, err := lockDeleteCascadeIDs(ctx, tx, `SELECT id FROM schedule_rules
+		WHERE tgt_rotation_id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`, sqlutil.UUIDArray(rotationIDs))
+	if err != nil || len(rules) == 0 {
+		return err
+	}
+	// FOR SHARE also fences a non-key Organization update to the real Schedule.
+	// Rule locks keep schedule_id stable while we follow and check that parent.
+	schedules, err := lockDeleteCascadeIDs(ctx, tx, `SELECT id FROM schedules
+		WHERE id IN (SELECT schedule_id FROM schedule_rules WHERE id=ANY($1::uuid[]))
+		ORDER BY id FOR SHARE`, sqlutil.UUIDArray(rules))
+	if err != nil {
+		return err
+	}
+	var foreign bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM schedules WHERE id=ANY($1::uuid[]) AND organization_id<>$2
+	)`, sqlutil.UUIDArray(schedules), organizationID).Scan(&foreign)
+	if err != nil {
+		return err
+	}
+	if foreign {
 		return sql.ErrNoRows
 	}
 	return nil
