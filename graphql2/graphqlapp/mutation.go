@@ -422,7 +422,14 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeUser:
 			err = errors.Wrap(a.UserStore.DeleteManyTx(ctx, tx, ids), "delete users")
 		case assignment.TargetTypeService:
-			err = errors.Wrap(a.ServiceStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete services")
+			// Resolve only this group's scope. In particular, a Foreign Service
+			// must not grant its Organization to Schedule/Rotation/EP deletion.
+			var serviceOrg *uuid.UUID
+			serviceOrg, err = serviceDeleteTargetOrganization(ctx, tx, ids)
+			if err == nil {
+				err = a.ServiceStore.DeleteManyTx(ctx, tx, ids, serviceOrg)
+			}
+			err = errors.Wrap(err, "delete services")
 		case assignment.TargetTypeEscalationPolicy:
 			err = errors.Wrap(a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, organizationID), "delete escalation policies")
 		case assignment.TargetTypeIntegrationKey:

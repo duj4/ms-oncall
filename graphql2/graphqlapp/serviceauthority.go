@@ -22,7 +22,7 @@ const (
 
 // serviceManagementAuthority authorizes only Service mutations. Human role and
 // Home come from canonical current-PG request admission. This returns a Home
-// constraint; only Update may subsequently resolve a PlatformAdmin target.
+// constraint; Update and Delete subsequently resolve their PlatformAdmin targets.
 // It does not authorize credential issuance or refresh in-flight authority.
 func serviceManagementAuthority(ctx context.Context, operation serviceManagementOperation) (*uuid.UUID, error) {
 	deny := permission.NewAccessDenied("Service management authority is required")
