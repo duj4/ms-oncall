@@ -196,15 +196,16 @@ func TestGraphQLIntegrationKeyDeleteRollbackAfterKeyGroups(t *testing.T) {
 	ikSetAuthority(t, h, "ORG_MEMBER", true)
 	roots := ikDeleteRoots(t, h)
 	before := ikDeleteSnapshot(t, h)
-	// Service is a later DeleteAll group and retains its existing Home scope.
-	// Its failure must roll back both earlier root groups and both Key groups.
+	// Service is a later DeleteAll group. A missing member of its complete
+	// target set must roll back earlier roots and both authorized Key groups,
+	// even though PlatformAdmin may now delete the existing Foreign Service.
 	wait := h.ExpectBackendError("sql: no rows in result set")
-	response := stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{deleteAll(input:[%s,{type:integrationKey,id:%q},{type:integrationKey,id:%q},{type:service,id:%q}])}`, roots, h.UUID("generic-a"), h.UUID("generic-b"), h.UUID("service-b")))
+	response := stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{deleteAll(input:[%s,{type:integrationKey,id:%q},{type:integrationKey,id:%q},{type:service,id:%q},{type:service,id:%q}])}`, roots, h.UUID("generic-a"), h.UUID("generic-b"), h.UUID("service-b"), h.UUID("missing-service")))
 	wait()
 	require.NotEmpty(t, response.Errors)
 	require.Equal(t, before, ikDeleteSnapshot(t, h))
 	// The same earlier groups and multi-Org Keys succeed together when the
-	// unrelated later unauthorized Service is absent.
+	// incomplete later Service target set is absent.
 	response = stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{deleteAll(input:[%s,{type:integrationKey,id:%q},{type:integrationKey,id:%q}])}`, roots, h.UUID("generic-a"), h.UUID("generic-b")))
 	require.Empty(t, response.Errors)
 	var remaining int

@@ -137,7 +137,14 @@ func TestGraphQLServiceManagementRoles(t *testing.T) {
 			} else {
 				results["foreign_update"] = serviceManagementRejected(t, h, foreignUpdate, actor.allow)
 			}
-			results["foreign_delete"] = serviceManagementRejected(t, h, serviceManagementDelete(h, "service-b"), actor.allow)
+			if actor.pa {
+				r := stepOrganizationQuery(t, h, serviceManagementDelete(h, "service-b"))
+				require.Empty(t, r.Errors)
+				require.Zero(t, serviceManagementCount(t, h, "services", h.UUID("service-b")))
+				results["foreign_delete"] = r
+			} else {
+				results["foreign_delete"] = serviceManagementRejected(t, h, serviceManagementDelete(h, "service-b"), actor.allow)
+			}
 			if actor.allow {
 				r := stepOrganizationQuery(t, h, serviceManagementDelete(h, "service-a"))
 				require.Empty(t, r.Errors)
