@@ -70,7 +70,7 @@ func TestRotationUpdateAuditSignedHTTPRoles(t *testing.T) {
 		pa, foreign, allowed bool
 	}{
 		{"ORG_MEMBER", true, false, true}, {"ORG_ADMIN", true, false, true}, {"ORG_ADMIN", false, false, true},
-		{"ORG_MEMBER", true, true, false}, {"ORG_ADMIN", true, true, false}, {"ORG_ADMIN", false, true, false},
+		{"ORG_MEMBER", true, true, true}, {"ORG_ADMIN", true, true, true}, {"ORG_ADMIN", false, true, false},
 		{"ORG_MEMBER", false, false, false}, {"ORG_MEMBER", false, true, false},
 	} {
 		ikSetAuthority(t, h, tc.role, tc.pa)
@@ -108,7 +108,11 @@ func TestRotationUpdateAuditSignedHTTPRoles(t *testing.T) {
 		if tc.allowed {
 			require.Equal(t, "committed", outcome)
 			require.Equal(t, id, target.String)
-			require.Equal(t, home, org.String)
+			wantOrg := home
+			if tc.foreign {
+				wantOrg = h.UUID("org-b")
+			}
+			require.Equal(t, wantOrg, org.String)
 			var actualOrg string
 			require.NoError(t, h.App().DB().QueryRow(`SELECT organization_id FROM rotations WHERE id=$1`, target.String).Scan(&actualOrg))
 			require.Equal(t, actualOrg, org.String)

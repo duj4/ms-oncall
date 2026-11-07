@@ -44,6 +44,10 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 		return false, err
 	}
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, schedID)
+		if err != nil {
+			return err
+		}
 		sched, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, schedID, organizationID) // lock schedule
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("scheduleID", "schedule not found")

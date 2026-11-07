@@ -401,20 +401,19 @@ func TestCMNRPlatformAdminGraphQLAdmission(t *testing.T) {
 	require.Equal(t, before, cmnrSnapshot(t, h.App().DB()))
 }
 
-func TestCMNRPlatformAdminDoesNotGrantOtherResourceGlobalDelete(t *testing.T) {
+func TestCMNRPlatformAdminMixedRootDeleteUsesIndependentScope(t *testing.T) {
 	h := cmnrPlatformHarness(t, "ORG_MEMBER")
 	f := cmnrSeed(t, h)
 	id := uuid.NewString()
 	_, err := h.App().DB().ExecContext(t.Context(), `INSERT INTO escalation_policies(id,name,organization_id) VALUES($1,'S0B foreign policy',$2)`, id, cmnrUser("org-b"))
 	require.NoError(t, err)
-	before := cmnrSnapshot(t, h.App().DB())
 	query := fmt.Sprintf(`mutation{deleteAll(input:[{type:escalationPolicy,id:%q},{type:notificationRule,id:%q}])}`, id, f.nr[0])
-	wait := h.ExpectBackendError("delete escalation policies: sql: no rows in result set")
 	result := h.GraphQLQueryUserT(t, harness.DefaultGraphQLAdminUserID, query)
-	wait()
-	require.NotEmpty(t, result.Errors)
-	require.Equal(t, before, cmnrSnapshot(t, h.App().DB()))
+	require.Empty(t, result.Errors)
 	var exists bool
 	require.NoError(t, h.App().DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM escalation_policies WHERE id=$1)`, id).Scan(&exists))
-	require.True(t, exists)
+	require.False(t, exists)
+	require.NoError(t, h.App().DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM user_notification_rules WHERE id=$1)`, f.nr[0]).Scan(&exists))
+	require.False(t, exists)
+
 }

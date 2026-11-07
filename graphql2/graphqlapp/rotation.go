@@ -395,6 +395,10 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 	}
 	update := func(ctx context.Context, tx *sql.Tx) error {
 		event.Outcome, event.Reason = "validation_failed", "target_unavailable"
+		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeRotation, input.ID)
+		if err != nil {
+			return err
+		}
 		result, err := m.RotationStore.FindRotationForUpdateTx(ctx, tx, input.ID, organizationID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("id", "Rotation not found")

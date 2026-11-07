@@ -12,24 +12,25 @@ import (
 )
 
 // validateScheduleRotationDeleteTx protects dependent configuration affected by
-// root deletion. The existing management authority supplies a concrete Home scope
-// for every Human, including PlatformAdmin; trusted nil-scope callers retain
-// their existing behavior. All locks belong to DeleteAll's business transaction.
-func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets map[assignment.TargetType][]string, organizationID *uuid.UUID) error {
-	if organizationID == nil {
+// root deletion. Each group has its own explicitly resolved target scope;
+// trusted nil-scope callers retain their existing behavior. All locks belong
+// to DeleteAll's business transaction.
+func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets map[assignment.TargetType][]string, rotationOrg, scheduleOrg *uuid.UUID) error {
+	if rotationOrg == nil && scheduleOrg == nil {
 		return nil
 	}
 	var rotationIDs, scheduleIDs []string
 	for _, root := range []struct {
-		typ          assignment.TargetType
-		field, table string
-		ids          *[]string
+		typ            assignment.TargetType
+		field, table   string
+		ids            *[]string
+		organizationID *uuid.UUID
 	}{
-		{assignment.TargetTypeRotation, "RotationID", "rotations", &rotationIDs},
-		{assignment.TargetTypeSchedule, "ScheduleID", "schedules", &scheduleIDs},
+		{assignment.TargetTypeRotation, "RotationID", "rotations", &rotationIDs, rotationOrg},
+		{assignment.TargetTypeSchedule, "ScheduleID", "schedules", &scheduleIDs, scheduleOrg},
 	} {
 		ids := targets[root.typ]
-		if len(ids) == 0 {
+		if len(ids) == 0 || root.organizationID == nil {
 			continue
 		}
 		parsed, err := validate.ParseManyUUID(root.field, ids, 50)
@@ -52,7 +53,7 @@ func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets m
 		// FOR UPDATE conflicts with the FK's KEY SHARE, preventing a new or
 		// retargeted dependent Action from entering after this root is checked.
 		locked, err := lockDeleteCascadeIDs(ctx, tx, `SELECT id FROM `+root.table+`
-			WHERE id=ANY($1::uuid[]) AND organization_id=$2 ORDER BY id FOR UPDATE`, sqlutil.UUIDArray(ids), *organizationID)
+			WHERE id=ANY($1::uuid[]) AND organization_id=$2 ORDER BY id FOR UPDATE`, sqlutil.UUIDArray(ids), *root.organizationID)
 		if err != nil {
 			return err
 		}
@@ -68,8 +69,10 @@ func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets m
 	// Lock each relation separately, then follow its current parent in the next
 	// statement. A single locking join can miss a concurrently reparented row
 	// when PostgreSQL rechecks a stale joined tuple after waiting for its lock.
-	if err := validateRotationRuleDeleteTx(ctx, tx, rotationIDs, *organizationID); err != nil {
-		return err
+	if len(rotationIDs) > 0 {
+		if err := validateRotationRuleDeleteTx(ctx, tx, rotationIDs, *rotationOrg); err != nil {
+			return err
+		}
 	}
 
 	actions, err := lockDeleteCascadeIDs(ctx, tx, `SELECT id FROM escalation_policy_actions
@@ -91,9 +94,17 @@ func validateScheduleRotationDeleteTx(ctx context.Context, tx *sql.Tx, targets m
 		return err
 	}
 	var foreign bool
+	// Compare each dependent Action to its own referenced Root's scope. Having
+	// authority over both groups cannot legitimize a cross-Org relationship.
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS (
-		SELECT 1 FROM escalation_policies WHERE id=ANY($1::uuid[]) AND organization_id<>$2
-	)`, sqlutil.UUIDArray(policies), *organizationID).Scan(&foreign)
+		SELECT 1 FROM escalation_policy_actions a
+		JOIN escalation_policy_steps s ON s.id=a.escalation_policy_step_id
+		JOIN escalation_policies p ON p.id=s.escalation_policy_id
+		WHERE p.id=ANY($1::uuid[]) AND a.id=ANY($2::uuid[]) AND (
+			(a.rotation_id=ANY($3::uuid[]) AND p.organization_id<>$4) OR
+			(a.schedule_id=ANY($5::uuid[]) AND p.organization_id<>$6))
+	)`, sqlutil.UUIDArray(policies), sqlutil.UUIDArray(actions),
+		sqlutil.UUIDArray(rotationIDs), rotationOrg, sqlutil.UUIDArray(scheduleIDs), scheduleOrg).Scan(&foreign)
 	if err != nil {
 		return err
 	}

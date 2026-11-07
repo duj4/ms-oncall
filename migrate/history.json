@@ -1730,6 +1730,35 @@
           "sha256": "db589600fb5a0a43b4c4a140143b06b29492461821326012a9e9687246e82af5"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-existing-root-global-update-audit-d02-s1-a1-f01",
+      "first_position": 292,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D02-S1-A1-F01 direct owner local implementation; live Project baseline is context, not prior migration acceptance",
+        "base_commit": "41a785f61b07d4ed52ca81ce608b115fab9ae9bf",
+        "base_tree": "b17ce0cfd59f414d24f56563bd9600663526d81f",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "bd0279748e63a90c24f963c45ca3ffe9751319a8",
+        "authorization_tree": "096934d21cb0a18a359667f0bdff2828a94d9e5b"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-schedule-rotation-update-audit-d09-c4",
+        "migration_id": "20261103175233-schedule-rotation-update-audit.sql",
+        "sha256": "db589600fb5a0a43b4c4a140143b06b29492461821326012a9e9687246e82af5",
+        "evidence": "DIRECT_OWNER_D02_S1_A1_F01_APPEND_AFTER_IMMUTABLE_ACCEPTED_D09_C4_POSITION_291"
+      },
+      "adaptation_evidence": "PRECISE_PLATFORM_ADMIN_FOREIGN_TARGET_AUDIT_CHECK_WITHOUT_MUTATING_PRIOR_MIGRATIONS_OR_AUDIT_HISTORY",
+      "entries": [
+        {
+          "id": "20261107115255-existing-root-global-update-audit.sql",
+          "original_id": "20261107115255-existing-root-global-update-audit.sql",
+          "sha256": "272f4c1297d93a94e70a1628913d8f7018dbf108099062d3e526b4fcc77dd10c"
+        }
+      ]
     }
   ]
 }

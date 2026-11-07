@@ -186,6 +186,16 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 			if _, err := s.Normalize(); err != nil {
 				return err
 			}
+			home := organizationID
+			organizationID, err = existingRootTargetOrganizationTx(ctx, tx, assignment.TargetTypeEscalationPolicy, s.PolicyID, false)
+			if err != nil {
+				return err
+			}
+			if (input.NewSchedule != nil || input.NewRotation != nil) && *organizationID != *home {
+				// Global Existing EP management does not decide G-D10. Nested
+				// Root creation still belongs to Home and cannot attach here.
+				return permission.NewAccessDenied("nested root creation requires the Home Organization")
+			}
 			_, err := m.PolicyStore.FindOnePolicyTx(ctx, tx, s.PolicyID, organizationID)
 			if errors.Is(err, sql.ErrNoRows) {
 				return validation.NewFieldError("EscalationPolicyID", "does not exist")
@@ -308,6 +318,10 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 	}
 
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeEscalationPolicy, input.ID)
+		if err != nil {
+			return err
+		}
 		ep, err := m.PolicyStore.FindOnePolicyForUpdateTx(ctx, tx, input.ID, organizationID)
 		if err != nil {
 			return err
@@ -384,6 +398,10 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 	}
 
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+		organizationID, err = existingStepTargetOrganization(ctx, tx, input.ID)
+		if err != nil {
+			return err
+		}
 		step, err := m.PolicyStore.FindOneStepForUpdateTx(ctx, tx, input.ID, organizationID)
 		if organizationID != nil && errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("EscalationPolicyStepID", "does not exist")

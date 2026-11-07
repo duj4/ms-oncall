@@ -150,14 +150,30 @@ func TestEPB1Roles(t *testing.T) {
 			require.Empty(t, r.Errors)
 			require.Equal(t, "0", epB1Count(t, h, "escalation_policy_steps", h.UUID("step-a3")))
 			require.Equal(t, "0", epB1Scalar(t, h, "SELECT step_number::text FROM escalation_policy_steps WHERE id=$1", h.UUID("step-a2")))
-			r = epB1Call(t, h, "foreign_ep_update", fmt.Sprintf(`mutation{updateEscalationPolicy(input:{id:%q,description:"Forbidden foreign"})}`, h.UUID("policy-b")), "", true)
-			require.NotEmpty(t, r.Errors)
+			r = epB1Call(t, h, "foreign_ep_update", fmt.Sprintf(`mutation{updateEscalationPolicy(input:{id:%q,description:"Global foreign"})}`, h.UUID("policy-b")), "", !a.pa)
+			if a.pa {
+				require.Empty(t, r.Errors)
+			} else {
+				require.NotEmpty(t, r.Errors)
+			}
 			r = epB1Call(t, h, "foreign_step_update", fmt.Sprintf(`mutation{updateEscalationPolicyStep(input:{id:%q,delayMinutes:18})}`, h.UUID("step-b1")), "", false)
-			require.NotEmpty(t, r.Errors)
+			if a.pa {
+				require.Empty(t, r.Errors)
+			} else {
+				require.NotEmpty(t, r.Errors)
+			}
 			r = epB1Call(t, h, "foreign_step_create", fmt.Sprintf(`mutation{createEscalationPolicyStep(input:{escalationPolicyID:%q,delayMinutes:18}){id}}`, h.UUID("policy-b")), "", false)
-			require.NotEmpty(t, r.Errors)
-			r = epB1Call(t, h, "foreign_ep_delete", epB1Delete(h, "policy-b"), "", true)
-			require.NotEmpty(t, r.Errors)
+			if a.pa {
+				require.Empty(t, r.Errors)
+			} else {
+				require.NotEmpty(t, r.Errors)
+			}
+			r = epB1Call(t, h, "foreign_ep_delete", epB1Delete(h, "policy-b"), "", !a.pa)
+			if a.pa {
+				require.Empty(t, r.Errors)
+			} else {
+				require.NotEmpty(t, r.Errors)
+			}
 			epB1Exec(t, h, "INSERT INTO escalation_policies(id,organization_id,name) VALUES($1,$2,'Synthetic Deletable EP')", h.UUID("delete-policy"), harness.SmokeOrganizationID)
 			epB1Exec(t, h, "INSERT INTO escalation_policy_steps(id,escalation_policy_id,delay,step_number) VALUES($1,$2,1,0)", h.UUID("delete-step"), h.UUID("delete-policy"))
 			epB1Exec(t, h, "INSERT INTO escalation_policy_actions(escalation_policy_step_id,user_id) VALUES($1,$2)", h.UUID("delete-step"), h.UUID("user-a"))
@@ -545,14 +561,25 @@ func TestEPB1IndirectDeletion(t *testing.T) {
 						epB1Exec(t, h, `INSERT INTO escalation_policy_actions(escalation_policy_step_id,`+kind+`_id) VALUES($1,$2)`, h.UUID("step-a1"), h.UUID(kind+"-a"))
 					}
 					epB1Exec(t, h, `INSERT INTO ep_step_on_call_users(ep_step_id,user_id) VALUES($1,$2)`, h.UUID("step-a1"), h.UUID("user-a"))
-					// Foreign/missing roots always deny; scope is also concrete for both PAs.
+					// Missing roots always deny. Each existing PA target has its own concrete scope.
 					for _, target := range []string{kind + "-b", kind + "-missing"} {
 						before := epB1Snapshot(t, h)
+						allowed := actor.pa && target == kind+"-b"
 						eligible := actor.pa || actor.role == "ORG_ADMIN"
-						response := epB1Call(t, h, target, fmt.Sprintf(`mutation{deleteAll(input:[{type:%s,id:%q}])}`, kind, h.UUID(target)), "", eligible)
-						require.NotEmpty(t, response.Errors)
-						require.Equal(t, before, epB1Snapshot(t, h))
+						response := epB1Call(t, h, target, fmt.Sprintf(`mutation{deleteAll(input:[{type:%s,id:%q}])}`, kind, h.UUID(target)), "", eligible && !allowed)
+						if allowed {
+							require.Empty(t, response.Errors)
+							table := "schedules"
+							if kind == "rotation" {
+								table = "rotations"
+							}
+							require.Equal(t, "0", epB1Count(t, h, table, h.UUID(target)))
+						} else {
+							require.NotEmpty(t, response.Errors)
+							require.Equal(t, before, epB1Snapshot(t, h))
+						}
 					}
+
 					before := epB1Snapshot(t, h)
 					response := epB1Call(t, h, "home_delete", fmt.Sprintf(`mutation{deleteAll(input:[{type:%s,id:%q}])}`, kind, h.UUID(kind+"-a")), "", false)
 					if !actor.pa && actor.role == "ORG_MEMBER" {

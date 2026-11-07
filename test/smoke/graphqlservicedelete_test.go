@@ -196,12 +196,12 @@ func TestGraphQLServiceDeleteF1MixedIsolation(t *testing.T) {
 		{"foreign_key", "integrationKey", "generic-b", true, false},
 		{"missing_key", "integrationKey", "missing", false, false},
 		{"home_unused_EP", "escalationPolicy", "unused-a", true, false},
-		{"foreign_EP", "escalationPolicy", "policy-b", false, true},
+		{"foreign_EP", "escalationPolicy", "policy-b", true, false},
 		{"home_EP_FK", "escalationPolicy", "policy-a", false, false},
 		{"home_schedule", "schedule", "delete-schedule", true, false},
-		{"foreign_schedule", "schedule", "foreign-schedule", false, true},
+		{"foreign_schedule", "schedule", "foreign-schedule", true, false},
 		{"home_rotation", "rotation", "delete-rotation", true, false},
-		{"foreign_rotation", "rotation", "foreign-rotation", false, true},
+		{"foreign_rotation", "rotation", "foreign-rotation", true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()

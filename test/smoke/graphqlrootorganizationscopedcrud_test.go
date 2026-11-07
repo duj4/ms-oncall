@@ -306,12 +306,19 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 				require.Empty(t, ownResponse.Errors)
 				crossQuery := fmt.Sprintf(`mutation { result: %s(input: {id: %q, name: %q}) }`, update.mutation, update.crossID, update.crossName+" Mutated")
 				var crossResponse *harness.QLResponse
-				if update.expectNoRowsLog {
+				if update.expectNoRowsLog && update.name == "service" {
 					crossResponse = scopedSmokeQueryExpectNoRows(t, h, crossQuery)
 				} else {
 					crossResponse = h.GraphQLQueryT(t, crossQuery)
 				}
-				require.NotEmpty(t, crossResponse.Errors)
+				// F01 updates only the three newly authorized Root families.
+				// The separately recorded historical Service assertions stay unchanged.
+				if update.name == "service" {
+					require.NotEmpty(t, crossResponse.Errors)
+				} else {
+					require.Empty(t, crossResponse.Errors)
+					update.crossName += " Mutated"
+				}
 
 				for _, check := range []struct {
 					id, name, organizationID string
@@ -341,9 +348,16 @@ func TestGraphQLRootOrganizationScopedHumanCRUD(t *testing.T) {
 		}
 		for _, deletion := range deletes {
 			t.Run(deletion.name, func(t *testing.T) {
-				crossResponse := scopedSmokeQueryExpectNoRows(t, h, fmt.Sprintf(`mutation { deleteAll(input: [{id: %q, type: %s}]) }`, deletion.crossID, deletion.targetType))
-				require.NotEmpty(t, crossResponse.Errors)
-				require.Equal(t, 1, scopedSmokeRowCount(t, h, deletion.table, deletion.crossID))
+				crossQuery := fmt.Sprintf(`mutation { deleteAll(input: [{id: %q, type: %s}]) }`, deletion.crossID, deletion.targetType)
+				if deletion.name == "service" {
+					crossResponse := scopedSmokeQueryExpectNoRows(t, h, crossQuery)
+					require.NotEmpty(t, crossResponse.Errors)
+					require.Equal(t, 1, scopedSmokeRowCount(t, h, deletion.table, deletion.crossID))
+				} else {
+					crossResponse := h.GraphQLQueryT(t, crossQuery)
+					require.Empty(t, crossResponse.Errors)
+					require.Zero(t, scopedSmokeRowCount(t, h, deletion.table, deletion.crossID))
+				}
 
 				mixedResponse := scopedSmokeQueryExpectNoRows(t, h, fmt.Sprintf(`mutation { deleteAll(input: [{id: %q, type: %s}, {id: %q, type: %s}]) }`, deletion.mixedOwnID, deletion.targetType, deletion.mixedCrossID, deletion.targetType))
 				require.NotEmpty(t, mixedResponse.Errors)
