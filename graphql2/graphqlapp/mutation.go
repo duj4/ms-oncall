@@ -350,18 +350,18 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 		}
 	}
 
-	var organizationID *uuid.UUID
+	var homeOrganizationID *uuid.UUID
 	if hasService {
 		// Role-ineligible Service deletion must precede every target-group write.
 		// Complete-set validation remains in the existing scoped Store operation.
 		var err error
-		organizationID, err = serviceManagementAuthority(ctx, serviceManagementDelete)
+		homeOrganizationID, err = serviceManagementAuthority(ctx, serviceManagementDelete)
 		if err != nil {
 			return false, err
 		}
 	} else if hasRootTarget {
 		var err error
-		organizationID, err = rootStoreOrganizationID(ctx)
+		homeOrganizationID, err = rootStoreOrganizationID(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -370,7 +370,7 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 	// Retry because deleting frequently can cause a deadlock
 	// under heavy load.
 	err := retry.DoTemporaryError(func(int) error {
-		return a.tryDeleteAll(ctx, input, organizationID)
+		return a.tryDeleteAll(ctx, input, homeOrganizationID)
 	},
 		retry.Log(ctx),
 		retry.Limit(5),
@@ -380,7 +380,7 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 	return err == nil, err
 }
 
-func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, organizationID *uuid.UUID) error {
+func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, homeOrganizationID *uuid.UUID) error {
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -392,7 +392,19 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		m[tgt.TargetType()] = append(m[tgt.TargetType()], tgt.TargetID())
 	}
 
-	if err := validateScheduleRotationDeleteTx(ctx, tx, m, organizationID); err != nil {
+	// Resolve Rotation before Schedule to retain the existing table/root lock
+	// order. These are independent group scopes, never a shared global scope.
+	rootScopes := make(map[assignment.TargetType]*uuid.UUID)
+	for _, typ := range []assignment.TargetType{assignment.TargetTypeRotation, assignment.TargetTypeSchedule} {
+		if len(m[typ]) == 0 {
+			continue
+		}
+		rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, m[typ])
+		if err != nil {
+			return err
+		}
+	}
+	if err := validateScheduleRotationDeleteTx(ctx, tx, m, rootScopes[assignment.TargetTypeRotation], rootScopes[assignment.TargetTypeSchedule]); err != nil {
 		return err
 	}
 
@@ -418,7 +430,7 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		}
 		switch typ {
 		case assignment.TargetTypeUserOverride:
-			err = errors.Wrap(a.OverrideStore.DeleteUserOverrideTxScoped(ctx, tx, ids, organizationID), "delete user overrides")
+			err = errors.Wrap(a.OverrideStore.DeleteUserOverrideTxScoped(ctx, tx, ids, homeOrganizationID), "delete user overrides")
 		case assignment.TargetTypeUser:
 			err = errors.Wrap(a.UserStore.DeleteManyTx(ctx, tx, ids), "delete users")
 		case assignment.TargetTypeService:
@@ -431,15 +443,20 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			}
 			err = errors.Wrap(err, "delete services")
 		case assignment.TargetTypeEscalationPolicy:
-			err = errors.Wrap(a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, organizationID), "delete escalation policies")
+			var policyOrg *uuid.UUID
+			policyOrg, err = existingRootDeleteTargetOrganization(ctx, tx, typ, ids)
+			if err == nil {
+				err = a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, policyOrg)
+			}
+			err = errors.Wrap(err, "delete escalation policies")
 		case assignment.TargetTypeIntegrationKey:
 			err = errors.Wrap(a.deleteIntegrationKeys(ctx, tx, ids), "delete integration keys")
 		case assignment.TargetTypeSchedule:
-			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete schedules")
+			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ]), "delete schedules")
 		case assignment.TargetTypeCalendarSubscription:
 			err = errors.Wrap(a.CalSubStore.DeleteTx(ctx, tx, permission.UserID(ctx), ids...), "delete calendar subscriptions")
 		case assignment.TargetTypeRotation:
-			err = errors.Wrap(a.RotationStore.DeleteManyTx(ctx, tx, ids, organizationID), "delete rotations")
+			err = errors.Wrap(a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ]), "delete rotations")
 		case assignment.TargetTypeContactMethod:
 			err = errors.Wrap(a.CMStore.Delete(ctx, tx, ids...), "delete contact methods")
 		case assignment.TargetTypeNotificationRule:

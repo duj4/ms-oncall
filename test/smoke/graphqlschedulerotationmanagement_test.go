@@ -102,12 +102,19 @@ func TestSRB1Roles(t *testing.T) {
 		t.Run(actor.name, func(t *testing.T) {
 			h := srB1Harness(t)
 			ikSetAuthority(t, h, actor.role, actor.pa)
+			epB1Exec(t, h, `INSERT INTO rotation_participants(id,rotation_id,user_id,position) VALUES($1,$2,$3,0)`, h.UUID("foreign-active-part"), h.UUID("rotation-b"), h.UUID("user-other"))
+			epB1Exec(t, h, `INSERT INTO rotation_state(rotation_id,position,rotation_participant_id,shift_start) VALUES($1,0,$2,now()) ON CONFLICT(rotation_id) DO UPDATE SET position=0,rotation_participant_id=$2`, h.UUID("rotation-b"), h.UUID("foreign-active-part"))
 			for name, q := range srB1ManagementQueries(h) {
 				t.Run(name, func(t *testing.T) {
 					srB1Call(t, h, "home", q, "", !actor.pa && actor.role == "ORG_MEMBER")
 					foreign := strings.ReplaceAll(strings.ReplaceAll(q, h.UUID("schedule-a"), h.UUID("schedule-b")), h.UUID("rotation-a"), h.UUID("rotation-b"))
 					if foreign != q {
-						srB1Call(t, h, "foreign", foreign, "", true)
+						// Root names remain globally unique. Give the valid Foreign
+						// configuration a distinct name instead of colliding with Home.
+						foreign = strings.ReplaceAll(foreign, "SR changed", "SR foreign changed")
+						foreign = strings.ReplaceAll(foreign, "SR rotation changed", "SR foreign rotation changed")
+						allowed := actor.pa && (name == "schedule_update" || name == "rotation_metadata" || name == "active_only" || name == "rule_remove" || name == "current_user_remove")
+						srB1Call(t, h, "foreign", foreign, "", !allowed)
 					}
 				})
 			}

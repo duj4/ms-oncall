@@ -112,7 +112,7 @@ func (e Event) valid() bool {
 	if e.Outcome != "committed" {
 		return !e.ScheduleRowWritten && !e.RotationRowWritten && e.Before == nil && e.After == nil
 	}
-	if e.TargetID == uuid.Nil || e.ActorKind == "unknown" || e.ActorKind == "human" && (e.AuthorityRole == "org_member" || e.HomeOrganizationID != e.TargetOrganizationID) {
+	if e.TargetID == uuid.Nil || e.ActorKind == "unknown" || e.ActorKind == "human" && (e.AuthorityRole == "org_member" || e.AuthorityRole != "platform_admin" && e.HomeOrganizationID != e.TargetOrganizationID) {
 		return false
 	}
 	if e.Operation == ScheduleUpdate {

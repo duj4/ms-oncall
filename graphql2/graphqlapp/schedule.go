@@ -246,6 +246,10 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 	}
 	update := func(ctx context.Context, tx *sql.Tx) error {
 		event.Outcome, event.Reason = "validation_failed", "target_unavailable"
+		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, input.ID)
+		if err != nil {
+			return err
+		}
 		sched, err := m.ScheduleStore.FindOneForUpdate(ctx, tx, input.ID, organizationID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return validation.NewFieldError("id", "not found")

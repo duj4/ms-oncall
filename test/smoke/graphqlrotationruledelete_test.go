@@ -249,8 +249,11 @@ func TestRotationRuleDeleteCurrentAuthority(t *testing.T) {
 	h.GraphQLToken(h.UUID("user-a"))
 	ikSetAuthority(t, h, "ORG_MEMBER", false)
 	rotationRuleDeleteCall(t, h, lc1Delete(h, "rotation-a"), true)
-	ikSetAuthority(t, h, "ORG_MEMBER", true)
+	// F01 approves PA Foreign Existing Root deletion. Keep this Foreign
+	// rejection control under ordinary OrgAdmin; the F01 matrix verifies PA.
+	ikSetAuthority(t, h, "ORG_ADMIN", false)
 	rotationRuleDeleteCall(t, h, lc1Delete(h, "rotation-b"), true)
+	ikSetAuthority(t, h, "ORG_MEMBER", true)
 	epB1Exec(t, h, `INSERT INTO schedule_rules(id,schedule_id,tgt_rotation_id) VALUES($1,$2,$3)`, h.UUID("f02-foreign"), h.UUID("schedule-b"), h.UUID("rotation-a"))
 	rotationRuleDeleteCall(t, h, lc1Delete(h, "rotation-a"), true)
 	epB1Exec(t, h, `DELETE FROM schedule_rules WHERE id=$1`, h.UUID("f02-foreign"))

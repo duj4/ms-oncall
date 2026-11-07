@@ -76,6 +76,19 @@ func TestEventPrivacyAndCombinations(t *testing.T) {
 	require.ErrorIs(t, Append(context.Background(), nil, base), ErrUnavailable)
 }
 
+func TestGlobalExistingRootEventKeepsHomeAndTargetSeparate(t *testing.T) {
+	for _, role := range []string{"ORG_MEMBER", "ORG_ADMIN"} {
+		e := Event{EventID: uuid.New(), RequestID: uuid.New(), AttemptID: uuid.New(), Operation: ScheduleUpdate,
+			ActorKind: "human", ActorID: uuid.New(), HomeOrganizationID: uuid.New(), AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "platform_admin", OrganizationRole: role,
+			TargetID: uuid.New(), TargetOrganizationID: uuid.New(), Outcome: "committed", Reason: "updated", OccurredAt: time.Now(), ScheduleRowWritten: true}
+		require.True(t, e.valid())
+		e.AuthorityRole, e.OrganizationRole = "org_admin", "ORG_ADMIN"
+		require.False(t, e.valid(), "ordinary OrgAdmin still requires Home=Target")
+		e.AuthorityRole, e.OrganizationRole = "org_member", "ORG_MEMBER"
+		require.False(t, e.valid())
+	}
+}
+
 func TestSnapshotRejectsPartialAndMisattributedState(t *testing.T) {
 	p := Participant{ID: uuid.New(), UserID: uuid.New(), Position: 0}
 	state := RotationState{ID: 1, Position: 0, Version: 2, ParticipantID: p.ID, ShiftStart: time.Now()}

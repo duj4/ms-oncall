@@ -100,6 +100,14 @@ func TestEPManagementIdentityAndSystemBoundary(t *testing.T) {
 				require.Nil(t, home)
 				require.True(t, permission.IsPermissionError(err))
 			}
+			for _, typ := range []assignment.TargetType{assignment.TargetTypeEscalationPolicy, assignment.TargetTypeSchedule, assignment.TargetTypeRotation} {
+				scope, err := existingRootTargetOrganization(c, nil, typ, uuid.NewString())
+				require.Nil(t, scope)
+				require.True(t, permission.IsPermissionError(err))
+			}
+			scope, err := existingStepTargetOrganization(c, nil, uuid.NewString())
+			require.Nil(t, scope)
+			require.True(t, permission.IsPermissionError(err))
 		})
 	}
 	sys := permission.SystemContext(context.Background(), "Engine")
