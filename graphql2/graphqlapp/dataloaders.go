@@ -96,7 +96,7 @@ func (a *App) registerLoaders(ctx context.Context) context.Context {
 			}
 			return a.ServiceStore.FindMany(ctx, ids, organizationID)
 		}, func(s service.Service) string { return s.ID }),
-		User: dataloader.NewStoreLoader(ctx, a.UserStore.FindMany, func(u user.User) string { return u.ID }),
+		User: dataloader.NewStoreLoader(ctx, a.findManyUserProfiles, func(u user.User) string { return u.ID }),
 		CM: dataloader.NewStoreLoaderWithDB(ctx, a.DB, func(ctx context.Context, db gadb.DBTX, ids []string) ([]contactmethod.ContactMethod, error) {
 			org, err := rootStoreOrganizationID(ctx)
 			if err != nil {
@@ -311,10 +311,25 @@ func (app *App) FindOneSchedule(ctx context.Context, id string) (*schedule.Sched
 func (app *App) FindOneUser(ctx context.Context, id string) (*user.User, error) {
 	loader := loadersFrom(ctx).User
 	if loader == nil {
-		return app.UserStore.FindOne(ctx, id)
+		users, err := app.findManyUserProfiles(ctx, []string{id})
+		if err != nil || len(users) == 0 {
+			return nil, err
+		}
+		return &users[0], nil
 	}
 
 	return loader.FetchOne(ctx, id)
+}
+
+func (app *App) findManyUserProfiles(ctx context.Context, ids []string) ([]user.User, error) {
+	home, pa, err := userProfileScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if home == nil || pa {
+		return app.UserStore.FindMany(ctx, ids)
+	}
+	return app.UserStore.FindManyInOrganization(ctx, ids, *home)
 }
 
 func (app *App) FindOneAlertMetric(ctx context.Context, id int) (*alertmetrics.Metric, error) {

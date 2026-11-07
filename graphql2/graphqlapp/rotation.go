@@ -180,6 +180,9 @@ func (r *Rotation) Users(ctx context.Context, rot *rotation.Rotation) ([]user.Us
 		// which can be bounded by the config_limit participants_per_rotation (but isn't by default).
 		go func(idx int) {
 			u, err := (*App)(r).FindOneUser(ctx, userIDs[idx])
+			if err == nil && u == nil {
+				err = permission.NewAccessDenied("User profile is outside the authorized Organization")
+			}
 			if err == nil {
 				users[idx] = *u
 			}
