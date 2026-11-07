@@ -76,8 +76,8 @@ var searchTemplate = template.Must(template.New("search").Funcs(search.Helpers()
 	WHERE true
  {{ if or .DestType (gt (len .DestArgs) 0) }}
   {{if not .Internal}} AND (NOT ucm.private OR ucm.user_id = :PrivateOwnerID) {{end}}
-  {{if .HasOrganization}} AND EXISTS(SELECT 1 FROM user_organization_assignments a JOIN normal_organizations n ON n.organization_id=a.effective_normal_organization_id WHERE a.user_id=ucm.user_id AND a.effective_organization_id=:OrganizationID AND a.effective_normal_organization_id=:OrganizationID) {{end}}
  {{end}}
+ {{if .HasOrganization}} AND EXISTS(SELECT 1 FROM user_organization_assignments a JOIN normal_organizations n ON n.organization_id=a.effective_normal_organization_id WHERE a.user_id=usr.id AND a.effective_organization_id=:OrganizationID AND a.effective_normal_organization_id=:OrganizationID) {{end}}
 	{{if .Omit}}
 		AND not usr.id = any(:omit)
 	{{end}}

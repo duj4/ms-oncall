@@ -12,6 +12,7 @@ import (
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rotation"
+	"github.com/target/goalert/user"
 	"github.com/target/goalert/validation"
 )
 
@@ -119,6 +120,20 @@ func (a *App) destinationFieldLabel(ctx context.Context, typeID, fieldID, value 
 
 func (a *App) destinationSearchField(ctx context.Context, typeID, fieldID string, options nfydest.SearchOptions) (*nfydest.SearchResult, error) {
 	switch typeID {
+	case user.DestTypeUser:
+		home, pa, err := userProfileScope(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if fieldID != user.FieldUserID {
+			return nil, validation.NewGenericError("unknown field ID")
+		}
+		return nfydest.SearchByCursorFunc(ctx, options, func(ctx context.Context, opts *user.SearchOptions) ([]user.User, error) {
+			if home != nil && !pa {
+				opts.OrganizationID = *home
+			}
+			return a.UserStore.Search(ctx, opts)
+		})
 	case schedule.DestTypeSchedule:
 		organizationID, err := rootStoreOrganizationID(ctx)
 		if err != nil {

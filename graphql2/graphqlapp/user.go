@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"sort"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/google/uuid"
 	"github.com/target/goalert/auth/basic"
 	"github.com/target/goalert/calsub"
@@ -373,9 +374,13 @@ func (q *Query) Users(ctx context.Context, opts *graphql2.UserSearchOptions, fir
 		searchOpts.FavoritesFirst = *opts.FavoritesFirst
 	}
 
-	org, err := rootStoreOrganizationID(ctx)
+	org, pa, err := userProfileScope(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// Global User management does not broaden destination-filtered CM reads.
+	if pa && searchOpts.DestType == "" && len(searchOpts.DestArgs) == 0 {
+		org = nil
 	}
 	if org != nil {
 		searchOpts.OrganizationID = *org
@@ -413,9 +418,46 @@ func (a *Query) User(ctx context.Context, id *string) (*user.User, error) {
 	} else {
 		userID = permission.UserID(ctx)
 	}
+	if userRelationshipSelection(ctx) {
+		// Preserve existing scoped business projections without materializing
+		// a foreign profile or placing a partial User in the profile loader.
+		if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
+			return nil, err
+		}
+		if err := validate.UUID("UserID", userID); err != nil {
+			return nil, err
+		}
+		var ref user.User
+		err := a.DB.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1`, userID).Scan(&ref.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &ref, nil
+	}
 	return (*App)(a).FindOneUser(ctx, userID)
 }
 
+// These existing relationship resolvers each enforce their own Organization
+// scope. This is not a foreign Profile field allowlist (G-CM-FIELDS).
+func userRelationshipSelection(ctx context.Context) bool {
+	if graphql.GetFieldContext(ctx) == nil || !graphql.HasOperationContext(ctx) {
+		return false
+	}
+	relationship := false
+	for _, field := range graphql.CollectFieldsCtx(ctx, []string{"User"}) {
+		switch field.Name {
+		case "id", "__typename":
+		case "onCallSteps", "onCallOverview", "assignedSchedules":
+			relationship = true
+		default:
+			return false
+		}
+	}
+	return relationship
+}
 func (a *User) IsFavorite(ctx context.Context, raw *user.User) (bool, error) {
 	return raw.IsUserFavorite(), nil
 }

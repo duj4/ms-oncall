@@ -9,6 +9,7 @@ import (
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/notification"
 	"github.com/target/goalert/notification/twilio"
+	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user/contactmethod"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
@@ -119,12 +120,12 @@ func (q *Query) UserContactMethod(ctx context.Context, idStr string) (*contactme
 }
 
 func (m *Mutation) CreateUserContactMethod(ctx context.Context, input graphql2.CreateUserContactMethodInput) (*contactmethod.ContactMethod, error) {
-	org, err := rootStoreOrganizationID(ctx)
+	home, pa, err := userProfileScope(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.CMStore.AuthorizeUser(ctx, m.DB, input.UserID, org); err != nil {
-		return nil, err
+	if home != nil && !pa && input.UserID != permission.UserID(ctx) {
+		return nil, permission.NewAccessDenied("Contact Method target authority is required")
 	}
 
 	cm := &contactmethod.ContactMethod{
@@ -151,7 +152,10 @@ func (m *Mutation) CreateUserContactMethod(ctx context.Context, input graphql2.C
 	}
 
 	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
-		var err error
+		org, err := contactMethodTargetOrganization(ctx, tx, input.UserID, home, pa)
+		if err != nil {
+			return err
+		}
 		cm, err = m.CMStore.Create(ctx, tx, cm, org)
 		if err != nil {
 			return err
@@ -177,7 +181,7 @@ func (m *Mutation) CreateUserContactMethod(ctx context.Context, input graphql2.C
 }
 
 func (m *Mutation) UpdateUserContactMethod(ctx context.Context, input graphql2.UpdateUserContactMethodInput) (bool, error) {
-	org, err := rootStoreOrganizationID(ctx)
+	home, pa, err := userProfileScope(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -190,6 +194,28 @@ func (m *Mutation) UpdateUserContactMethod(ctx context.Context, input graphql2.U
 		id, err := validate.ParseUUID("ID", input.ID)
 		if err != nil {
 			return err
+		}
+		org := home
+		if home != nil {
+			var owner string
+			// Authorize before locking or reading a non-owner's raw destination.
+			err := tx.QueryRowContext(ctx, `SELECT user_id FROM user_contact_methods
+				WHERE id=$1 AND ($2 OR user_id=$3) FOR UPDATE`,
+				id, pa, permission.UserID(ctx)).Scan(&owner)
+			if errors.Is(err, sql.ErrNoRows) {
+				return validation.NewFieldError("id", "contact method not found")
+			}
+			if err != nil {
+				return err
+			}
+			org, err = contactMethodTargetOrganization(ctx, tx, owner, home, pa)
+			if err != nil {
+				return err
+			}
+			if owner != permission.UserID(ctx) && (input.Private != nil ||
+				(*org != *home && input.EnableStatusUpdates != nil)) {
+				return permission.NewAccessDenied("Contact Method field authority is required")
+			}
 		}
 		cm, err := m.CMStore.FindOneForUpdate(ctx, tx, id, org)
 		if errors.Is(err, sql.ErrNoRows) {
