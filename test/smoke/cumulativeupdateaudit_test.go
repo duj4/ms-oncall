@@ -35,7 +35,9 @@ import (
 
 func cumulativeAuditHarness(t *testing.T) (*harness.Harness, *serviceAuditCapture) {
 	t.Helper()
-	h := harness.NewStoppedHarness(t, rotationUpdateAuditSQL, nil, "")
+	// Rotation.Normalize uses minute precision. Start with normalized fixtures so
+	// a description-only update can be checked against exact full-row snapshots.
+	h := harness.NewStoppedHarness(t, rotationUpdateAuditSQL+`UPDATE rotations SET start_time=date_trunc('minute',start_time);`, nil, "")
 	t.Cleanup(h.Close)
 	capture := new(serviceAuditCapture)
 	h.StartWithAppCfgHook(func(c *app.Config) { c.LegacyLogger.Logrus().AddHook(capture) })
@@ -126,12 +128,53 @@ func cumulativeAuditEvidence(t *testing.T, h *harness.Harness, capture *serviceA
 	}
 }
 
+// Compare every persisted business row, allowing only the requested descriptions
+// and the successful rotation's audited shift-start update.
+func cumulativeAuditBusinessChanges(t *testing.T, h *harness.Harness, before map[string]string, descriptions map[string]map[string]string, rotationEvent map[string]any) {
+	t.Helper()
+	after := serviceManagementSnapshot(t, h)
+	require.Len(t, after, len(before))
+	for table, raw := range before {
+		updates := descriptions[table]
+		if len(updates) == 0 && (table != "rotation_state" || rotationEvent == nil) {
+			require.Equal(t, raw, after[table], table)
+			continue
+		}
+		var expected, actual []map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &expected))
+		require.NoError(t, json.Unmarshal([]byte(after[table]), &actual))
+		changed := 0
+		for _, row := range expected {
+			if description, ok := updates[fmt.Sprint(row["id"])]; ok {
+				row["description"] = description
+				changed++
+			}
+			if table == "rotation_state" && row["rotation_id"] == rotationEvent["target_id"] {
+				require.Equal(t, rotationEvent["before_shift_start"], row["shift_start"])
+				row["shift_start"] = rotationEvent["after_shift_start"]
+				changed++
+			}
+		}
+		if table == "rotation_state" {
+			require.Equal(t, rotationEvent["before_state_id"], rotationEvent["after_state_id"])
+			if rotationEvent["after_state_id"] == nil {
+				require.Zero(t, changed)
+			} else {
+				require.Equal(t, 1, changed)
+			}
+		} else {
+			require.Equal(t, len(updates), changed, table)
+		}
+		require.ElementsMatch(t, expected, actual, table)
+	}
+}
+
 func TestD09C7MixedRootTransactionsAndAuthority(t *testing.T) {
 	for _, tc := range []struct {
 		name, user, authority, service, schedule, rotation string
 		committed                                          int
 	}{
-		{"PlatformAdmin", "user-a", "platform_admin", "service-b", "schedule-control", "rotation-b", 2},
+		{"PlatformAdmin", "user-a", "platform_admin", "service-b", "schedule-control", "rotation-b", 3},
 		{"OrgAdmin", "user-b", "org_admin", "service-a", "schedule-control", "rotation-b", 2},
 		{"OrgMember", "user-c", "org_member", "service-a", "schedule-control", "rotation-a", 0},
 	} {
@@ -145,25 +188,64 @@ func TestD09C7MixedRootTransactionsAndAuthority(t *testing.T) {
  updateRotation:updateService(input:{id:%q,description:"SYNTHETIC_C7_SERVICE"})
  updateService:updateSchedule(input:{id:%q,description:"SYNTHETIC_C7_SCHEDULE"})
  updateSchedule:updateRotation(input:{id:%q,description:"SYNTHETIC_C7_ROTATION"})}`, h.UUID(tc.service), h.UUID(tc.schedule), h.UUID(tc.rotation)))
-			require.Contains(t, response, `"errors"`)
-			require.Contains(t, response, `"data":null`, "non-null GraphQL bubbling does not roll back earlier successful root transactions")
+			var body struct {
+				Data   map[string]bool
+				Errors []struct{ Path []string }
+			}
+			require.NoError(t, json.Unmarshal([]byte(response), &body))
+			if tc.name == "PlatformAdmin" {
+				require.NotContains(t, response, `"errors"`)
+				require.Equal(t, map[string]bool{"updateRotation": true, "updateService": true, "updateSchedule": true}, body.Data)
+			} else {
+				require.Contains(t, response, `"errors"`)
+				require.Contains(t, response, `"data":null`, "non-null GraphQL bubbling does not roll back earlier successful root transactions")
+				if tc.name == "OrgAdmin" {
+					require.Len(t, body.Errors, 1)
+					require.Equal(t, []string{"updateSchedule"}, body.Errors[0].Path)
+				} else {
+					require.Len(t, body.Errors, 3)
+					paths := make([][]string, 0, len(body.Errors))
+					for _, e := range body.Errors {
+						paths = append(paths, e.Path)
+					}
+					require.ElementsMatch(t, [][]string{{"updateRotation"}, {"updateService"}, {"updateSchedule"}}, paths)
+				}
+			}
 			rows := cumulativeAuditEvents(t, h)
 			require.Len(t, rows, 3)
 			cumulativeAuditIdentity(t, rows, h.UUID(tc.user), tc.authority)
 			committed := 0
+			operations := map[string]int{}
+			descriptions := map[string]map[string]string{}
+			var rotationEvent map[string]any
 			for _, row := range rows {
+				operation := row["operation"].(string)
+				operations[operation]++
 				if row["outcome"] == "committed" {
 					committed++
+					require.Equal(t, "updated", row["reason_code"])
+					target, table, description := tc.service, "services", "SYNTHETIC_C7_SERVICE"
+					switch operation {
+					case "schedule.update":
+						target, table, description = tc.schedule, "schedules", "SYNTHETIC_C7_SCHEDULE"
+					case "rotation.update":
+						target, table, description = tc.rotation, "rotations", "SYNTHETIC_C7_ROTATION"
+						rotationEvent = row
+						require.Equal(t, true, row["rotation_row_written"])
+					}
+					require.Equal(t, h.UUID(target), row["target_id"])
 					wantOrg := harness.SmokeOrganizationID
-					if tc.name == "PlatformAdmin" && row["operation"] == "service.update" {
+					if tc.name == "PlatformAdmin" && operation != "schedule.update" {
 						wantOrg = h.UUID("org-b")
 					}
 					require.Equal(t, wantOrg, row["target_organization_id"])
+					descriptions[table] = map[string]string{h.UUID(target): description}
 				} else {
 					require.Nil(t, row["target_id"])
 					require.Nil(t, row["target_organization_id"], "unavailable target cannot be invented from Home or client ID")
 				}
 			}
+			require.Equal(t, map[string]int{"service.update": 1, "schedule.update": 1, "rotation.update": 1}, operations)
 			require.Equal(t, tc.committed, committed)
 			for _, row := range rows {
 				require.EqualValues(t, 2, row["requested_fields"])
@@ -180,17 +262,21 @@ func TestD09C7MixedRootTransactionsAndAuthority(t *testing.T) {
 			after := serviceManagementSnapshot(t, h)
 			for _, table := range []string{"rotations", "rotation_participants", "rotation_state", "users", "user_organization_assignments"} {
 				require.Contains(t, before, table)
+				if rotationEvent != nil && (table == "rotations" || table == "rotation_state") {
+					continue // Exact permitted changes are checked against the audit below.
+				}
 				require.Equal(t, before[table], after[table], table)
 			}
-			for _, item := range []struct{ table, id, value string }{{"services", tc.service, "SYNTHETIC_C7_SERVICE"}, {"schedules", tc.schedule, "SYNTHETIC_C7_SCHEDULE"}} {
+			for _, item := range []struct{ table, id, value string }{{"services", tc.service, "SYNTHETIC_C7_SERVICE"}, {"schedules", tc.schedule, "SYNTHETIC_C7_SCHEDULE"}, {"rotations", tc.rotation, "SYNTHETIC_C7_ROTATION"}} {
 				var actual string
 				require.NoError(t, h.App().DB().QueryRow(`SELECT description FROM `+item.table+` WHERE id=$1`, h.UUID(item.id)).Scan(&actual))
-				if tc.committed > 0 {
+				if _, ok := descriptions[item.table]; ok {
 					require.Equal(t, item.value, actual)
 				} else {
 					require.Empty(t, actual)
 				}
 			}
+			cumulativeAuditBusinessChanges(t, h, before, descriptions, rotationEvent)
 			cumulativeAuditEvidence(t, h, capture, token, response)
 		})
 	}
@@ -291,27 +377,48 @@ func TestD09C7MixedRootUnknownIsolation(t *testing.T) {
 			defer server.Close()
 			require.Contains(t, server.URL, "127.0.0.1:")
 			waitRotation := h.ExpectBackendError("rotation.update transaction failed")
+			waitSchedule := h.ExpectBackendError("sql: no rows in result set")
 			token := h.GraphQLToken(h.UUID("user-a"))
-			// The rejected middle root must not prevent the third transaction.
+			// PA may manage a valid Foreign Schedule. Keep one as an untouched
+			// control, and use a genuinely absent target for the rejected middle
+			// root, which must not prevent the third transaction.
 			_, err = h.App().DB().Exec(`INSERT INTO schedules(id,organization_id,name,time_zone) VALUES($1,$2,'Foreign schedule','Etc/UTC')`, h.UUID("c7-foreign-schedule"), h.UUID("org-b"))
 			require.NoError(t, err)
+			missingSchedule := h.UUID("c7-unavailable-schedule")
+			require.Zero(t, serviceManagementCount(t, h, "schedules", missingSchedule))
+			before := serviceManagementSnapshot(t, h)
 			response := cumulativeAuditHTTP(t, server.URL, token, fmt.Sprintf(`mutation{
  s:updateService(input:{id:%q,description:"SYNTHETIC_C7_SUCCESS"})
  f:updateSchedule(input:{id:%q,description:"SYNTHETIC_C7_DENIED"})
- u:updateRotation(input:{id:%q,description:"SYNTHETIC_C7_UNKNOWN"})}`, h.UUID("service-b"), h.UUID("c7-foreign-schedule"), h.UUID("rotation-a")))
+ u:updateRotation(input:{id:%q,description:"SYNTHETIC_C7_UNKNOWN"})}`, h.UUID("service-b"), missingSchedule, h.UUID("rotation-a")))
 			waitRotation()
+			waitSchedule()
 			require.EqualValues(t, 1, connector.injected.Load(), "one native rotation finalization, no mutation replay")
 			var body struct{ Errors []struct{ Path []string } }
 			require.NoError(t, json.Unmarshal([]byte(response), &body))
 			require.Len(t, body.Errors, 2)
 			require.Equal(t, []string{"f"}, body.Errors[0].Path)
 			require.Equal(t, []string{"u"}, body.Errors[1].Path)
+			require.Contains(t, response, `"data":null`)
 			rows := cumulativeAuditEvents(t, h)
 			cumulativeAuditIdentity(t, rows, h.UUID("user-a"), "platform_admin")
 			outcomes := map[string]int{}
 			attempt := ""
+			var rotationEvent map[string]any
 			for _, row := range rows {
+				require.EqualValues(t, 2, row["requested_fields"])
 				outcomes[row["operation"].(string)+"/"+row["outcome"].(string)]++
+				switch row["operation"] {
+				case "service.update":
+					require.Equal(t, h.UUID("service-b"), row["target_id"])
+					require.Equal(t, h.UUID("org-b"), row["target_organization_id"])
+					require.Equal(t, "updated", row["reason_code"])
+				case "schedule.update":
+					require.Equal(t, "target_unavailable", row["reason_code"])
+					require.Nil(t, row["target_id"])
+					require.Nil(t, row["target_organization_id"], "absent target has no actual Organization")
+					require.Equal(t, false, row["schedule_row_written"])
+				}
 				if row["operation"] == "rotation.update" {
 					if attempt != "" {
 						require.Equal(t, attempt, row["attempt_id"], "uncertainty appends beside the committed witness of the same attempt")
@@ -322,6 +429,11 @@ func TestD09C7MixedRootUnknownIsolation(t *testing.T) {
 					if row["outcome"] == "commit_unknown" {
 						require.Equal(t, "commit_unconfirmed", row["reason_code"])
 						require.Equal(t, false, row["rotation_row_written"])
+					} else {
+						require.Equal(t, "committed", row["outcome"])
+						require.Equal(t, "updated", row["reason_code"])
+						require.Equal(t, true, row["rotation_row_written"])
+						rotationEvent = row
 					}
 				}
 			}
@@ -334,6 +446,8 @@ func TestD09C7MixedRootUnknownIsolation(t *testing.T) {
 			require.NoError(t, h.App().DB().QueryRow(`SELECT description FROM rotations WHERE id=$1`, h.UUID("rotation-a")).Scan(&rotationDescription))
 			require.Equal(t, "SYNTHETIC_C7_SUCCESS", serviceDescription)
 			require.Empty(t, scheduleDescription)
+			require.Zero(t, serviceManagementCount(t, h, "schedules", missingSchedule), "failed target must remain absent")
+			descriptions := map[string]map[string]string{"services": {h.UUID("service-b"): "SYNTHETIC_C7_SUCCESS"}}
 			if rollback {
 				require.Len(t, rows, 3)
 				require.Zero(t, outcomes["rotation.update/committed"])
@@ -342,7 +456,9 @@ func TestD09C7MixedRootUnknownIsolation(t *testing.T) {
 				require.Len(t, rows, 4)
 				require.Equal(t, 1, outcomes["rotation.update/committed"])
 				require.Equal(t, "SYNTHETIC_C7_UNKNOWN", rotationDescription)
+				descriptions["rotations"] = map[string]string{h.UUID("rotation-a"): "SYNTHETIC_C7_UNKNOWN"}
 			}
+			cumulativeAuditBusinessChanges(t, h, before, descriptions, rotationEvent)
 			cumulativeAuditEvidence(t, h, capture, token, response)
 		})
 	}
