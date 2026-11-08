@@ -179,7 +179,7 @@ func rootCreateSafeError(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return validation.NewFieldError("input", "target or reference is unavailable")
 	}
-	return errors.New("Root Create transaction failed")
+	return errors.New("root Create transaction failed")
 }
 
 func (p *rootCreatePlan) finish(operationErr error) error {
@@ -194,7 +194,7 @@ func (p *rootCreatePlan) finish(operationErr error) error {
 		return nil
 	}
 	if operationErr == nil {
-		operationErr = errors.New("Root Create transaction interrupted")
+		operationErr = errors.New("root Create transaction interrupted")
 	}
 	if !p.audited {
 		return rootCreateSafeError(operationErr)

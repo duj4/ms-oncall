@@ -4,7 +4,9 @@ package smoke
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -84,7 +86,11 @@ func TestGlobalOrganizationHistoricalForeignRulesClear(t *testing.T) {
 		f.h.IgnoreErrorsWith("conn closed")
 		lock, err := f.h.App().DB().BeginTx(t.Context(), nil)
 		require.NoError(t, err)
-		defer lock.Rollback()
+		defer func() {
+			if err := lock.Rollback(); !errors.Is(err, sql.ErrTxDone) {
+				require.NoError(t, err)
+			}
+		}()
 		_, err = lock.ExecContext(t.Context(), `SELECT 1 FROM schedule_data WHERE schedule_id=$1 FOR UPDATE`, f.h.UUID("sched-b"))
 		require.NoError(t, err)
 		body, err := json.Marshal(map[string]any{"query": query, "variables": vars(f.h.UUID("sched-b"), []any{})})
