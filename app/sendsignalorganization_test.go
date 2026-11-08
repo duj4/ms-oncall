@@ -19,6 +19,7 @@ import (
 	"github.com/target/goalert/expflag"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
+	"github.com/target/goalert/migrate"
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/validation"
@@ -56,9 +57,11 @@ func (p *sendSignalOrganizationProvider) DisplayInfo(_ context.Context, args map
 func newSendSignalOrganizationRuntime(t *testing.T) *sendSignalOrganizationRuntime {
 	t.Helper()
 	h := &sendSignalOrganizationRuntime{calendarPolicyRuntime: newCalendarPolicyRuntime(t), provider: new(sendSignalOrganizationProvider)}
+	waitForSendSignalOrganizationEngine(t, h.calendarPolicyRuntime)
 	h.stop()
 	h.cfg.ExpFlags = expflag.FlagSet{expflag.UnivKeys}
 	h.start()
+	waitForSendSignalOrganizationEngine(t, h.calendarPolicyRuntime)
 	h.app.DestRegistry.RegisterProvider(context.Background(), h.provider)
 	for i, userID := range h.users {
 		require.NoError(t, h.pool.QueryRow(context.Background(), `SELECT effective_normal_organization_id FROM user_organization_assignments WHERE user_id=$1`, userID).Scan(&h.orgs[i]))
@@ -69,13 +72,85 @@ func newSendSignalOrganizationRuntime(t *testing.T) *sendSignalOrganizationRunti
 		_, err = h.pool.Exec(context.Background(), `INSERT INTO services(id,name,escalation_policy_id,organization_id) VALUES($1,$2,$3,$4)`, h.services[i], fmt.Sprintf("C6 Service %d", i), ep, h.orgs[i])
 		require.NoError(t, err)
 	}
-	var count int
-	require.NoError(t, h.pool.QueryRow(context.Background(), `SELECT count(*) FROM gorp_migrations`).Scan(&count))
-	require.Equal(t, 289, count)
+	count, err := verifySendSignalOrganizationMigrations(context.Background(), h.calendarPolicyRuntime)
+	require.NoError(t, err)
 	var database string
 	require.NoError(t, h.pool.QueryRow(context.Background(), `SELECT current_database()`).Scan(&database))
 	t.Logf("C6 disposable database: %s; canonical migrations=%d", database, count)
 	return h
+}
+
+// App startup completes before App._Run starts the Engine goroutine. A fast
+// fixture stop can otherwise interrupt Engine startup before its run loop owns
+// cleanup. In API-only mode Trigger is a no-op rendezvous with that real loop;
+// it neither consumes queued work nor starts River workers.
+func waitForSendSignalOrganizationEngine(t *testing.T, h *calendarPolicyRuntime) {
+	t.Helper()
+	require.True(t, h.cfg.APIOnly, "Engine readiness rendezvous requires API-only mode")
+	app := h.app
+	ready := make(chan struct{})
+	go func() {
+		app.Engine.Trigger()
+		close(ready)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		t.Fatal("API-only Engine did not enter its run loop before fixture shutdown")
+	}
+}
+
+// Keep the fixture bound to the same embedded canonical history as ApplyAll.
+// A matching count alone cannot establish migration identity or provenance.
+func verifySendSignalOrganizationMigrations(ctx context.Context, h *calendarPolicyRuntime) (int, error) {
+	var count int
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM gorp_migrations`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count applied migrations: %w", err)
+	}
+	if expected := len(migrate.Names()); count != expected {
+		return count, fmt.Errorf("applied migration count %d does not match canonical history count %d", count, expected)
+	}
+	return count, migrate.VerifyAll(ctx, h.pool.Config().ConnString())
+}
+
+func TestSendSignalOrganizationCanonicalMigrationPrecondition(t *testing.T) {
+	for _, test := range []struct {
+		name, mutate, wantError string
+		missing                 int
+	}{
+		{
+			name:      "missing applied migration",
+			mutate:    `DELETE FROM gorp_migrations WHERE id=$1`,
+			wantError: "does not match canonical history count",
+			missing:   1,
+		},
+		{
+			name:      "same count mismatched provenance",
+			mutate:    `UPDATE ms_oncall_migration_provenance SET content_sha256=repeat('0',64) WHERE migration_id=$1`,
+			wantError: "field content_sha256",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newCalendarPolicyRuntime(t)
+			waitForSendSignalOrganizationEngine(t, h)
+			h.stop()
+			ctx := context.Background()
+			count, err := verifySendSignalOrganizationMigrations(ctx, h)
+			require.NoError(t, err)
+			require.Equal(t, len(migrate.Names()), count)
+
+			// Corrupt only metadata in this disposable database, never SQL
+			// history or the schema through a destructive Down migration.
+			tag, err := h.pool.Exec(ctx, test.mutate, migrate.LatestID())
+			require.NoError(t, err)
+			require.EqualValues(t, 1, tag.RowsAffected())
+			count, err = verifySendSignalOrganizationMigrations(ctx, h)
+			require.Equal(t, len(migrate.Names())-test.missing, count)
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
 }
 
 func sendSignalOrganizationQuery(serviceID, target, params string) string {
@@ -227,7 +302,13 @@ func TestSendSignalOrganizationMissingAuthorityRuntime(t *testing.T) {
 
 	// The live HTTP admission seam leaves missing/Default durable human
 	// authority unavailable; GraphQL then fails closed before either write.
-	for _, assignment := range []string{"missing", "Default"} {
+	for _, test := range []struct {
+		assignment, expectedError string
+	}{
+		{"missing", "access denied: current Human authority is required"},
+		{"Default", "access denied: operation is outside approved Default management"},
+	} {
+		assignment := test.assignment
 		t.Run(assignment+" HTTP admission", func(t *testing.T) {
 			tx, err := h.pool.Begin(context.Background())
 			require.NoError(t, err)
@@ -245,12 +326,14 @@ func TestSendSignalOrganizationMissingAuthorityRuntime(t *testing.T) {
 			payload, err := json.Marshal(map[string]string{"query": sendSignalOrganizationQuery(h.services[0], "admission-denied", `{message:"denied"}`)})
 			require.NoError(t, err)
 			code, body := h.request(userID, http.MethodPost, "/api/graphql", "application/json", payload)
+			after := h.state(t)
+			require.Equal(t, before, after, "HTTP denial must preserve the complete business state")
+			t.Logf("HTTP admission status=%d; business snapshots compared: before=%+v after=%+v", code, before, after)
 			require.Equal(t, http.StatusOK, code)
 			var result calendarGraphQLResult
 			require.NoError(t, json.Unmarshal(body, &result))
 			require.Len(t, result.Errors, 1)
-			require.Equal(t, "access denied: normal Organization scoped authority is required", result.Errors[0].Message)
-			require.Equal(t, before, h.state(t))
+			require.Equal(t, test.expectedError, result.Errors[0].Message)
 		})
 	}
 }
