@@ -53,7 +53,7 @@ func scheduleUpdateAuditEvent(ctx context.Context, input graphql2.UpdateSchedule
 	if id, err := uuid.Parse(log.RequestID(ctx)); err == nil && id != uuid.Nil {
 		e.RequestID = id
 	}
-	home, err := rootStoreOrganizationID(ctx)
+	home, err := rootManagementHome(ctx)
 	if err != nil {
 		return e
 	}

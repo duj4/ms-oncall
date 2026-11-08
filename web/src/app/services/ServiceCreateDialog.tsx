@@ -1,14 +1,16 @@
 import { labelsDisabled } from '../util/labelProductPolicy'
 import React, { useState } from 'react'
-import { gql, useMutation, CombinedError } from 'urql'
+import { gql, useMutation } from 'urql'
 import FormDialog from '../dialogs/FormDialog'
 import ServiceForm, { Value } from './ServiceForm'
 import { Redirect } from 'wouter'
 import { Label } from '../../schema'
 import { useErrorConsumer } from '../util/ErrorConsumer'
 import { useConfigValue } from '../util/RequireConfig'
+import { useCreateTarget } from '../main/OrganizationManagement'
 
 interface InputVar {
+  targetOrganizationID?: string
   name: string
   description: string
   escalationPolicyID?: string
@@ -29,37 +31,45 @@ const createMutation = gql`
       name
       description
       escalationPolicyID
+      organization {
+        id
+      }
     }
   }
 `
 
 function inputVars(
   { name, description, escalationPolicyID, labels }: Value,
-  attempt = 0,
+  targetOrganizationID: string | undefined,
+  favorite: boolean,
+  canUseCurrentUser: boolean,
 ): InputVar {
   const vars: InputVar = {
     name,
+    targetOrganizationID,
     description,
     escalationPolicyID,
-    favorite: true,
+    favorite,
     labels,
   }
   if (!vars.escalationPolicyID) {
     vars.newEscalationPolicy = {
-      name: attempt ? `${name} Policy ${attempt}` : name + ' Policy',
+      name: name + ' Policy',
       description: 'Auto-generated policy for ' + name,
-      favorite: true,
-      steps: [
-        {
-          delayMinutes: 5,
-          targets: [
+      favorite,
+      steps: canUseCurrentUser
+        ? [
             {
-              type: 'user',
-              id: '__current_user',
+              delayMinutes: 5,
+              targets: [
+                {
+                  type: 'user',
+                  id: '__current_user',
+                },
+              ],
             },
-          ],
-        },
-      ],
+          ]
+        : [],
     }
   }
 
@@ -69,6 +79,7 @@ function inputVars(
 export default function ServiceCreateDialog(props: {
   onClose: () => void
 }): JSX.Element {
+  const target = useCreateTarget()
   const [value, setValue] = useState<Value>({
     name: '',
     description: '',
@@ -83,6 +94,23 @@ export default function ServiceCreateDialog(props: {
   const [reqLabels] = useConfigValue('Services.RequiredLabels') as [string[]]
 
   if (data && data.createService) {
+    if (
+      target.targetOrganizationID &&
+      data.createService.organization?.id !== target.targetOrganizationID
+    )
+      return (
+        <FormDialog
+          title='Creation result needs verification'
+          alert
+          onClose={props.onClose}
+          errors={[
+            {
+              message:
+                'The created organization could not be verified. Inspect existing resources before creating again.',
+            },
+          ]}
+        />
+      )
     errs.done()
     return <Redirect to={`/services/${data.createService.id}`} />
   }
@@ -97,37 +125,33 @@ export default function ServiceCreateDialog(props: {
   return (
     <FormDialog
       title='Create New Service'
+      subTitle={'Organization: ' + target.targetName}
+      loading={createKeyStatus.fetching}
+      disableSubmit={target.uncertain}
+      caption={
+        target.uncertain
+          ? 'Result unconfirmed. Verify existing resources before creating again.'
+          : undefined
+      }
       errors={errs.remainingLegacyCallback()}
       onClose={props.onClose}
-      onSubmit={() => {
-        let n = 1
-        const onErr = (err: CombinedError): Awaited<Promise<unknown>> => {
-          // retry if it's a policy name conflict
-          if (
-            err.graphQLErrors &&
-            err.graphQLErrors[0].extensions &&
-            err.graphQLErrors[0].extensions.isFieldError &&
-            err.graphQLErrors[0].extensions.fieldName ===
-              'newEscalationPolicy.Name'
-          ) {
-            n++
-            return commit({
-              variables: {
-                input: inputVars(value, n),
-              },
-            }).then(null, onErr)
-          }
-        }
-
-        return commit(
-          {
-            input: inputVars(value),
-          },
-          {
-            additionalTypenames: ['ServiceConnection'],
-          },
-        ).then(null, onErr)
-      }}
+      onSubmit={() =>
+        target.submit(() =>
+          commit(
+            {
+              input: inputVars(
+                value,
+                target.targetOrganizationID,
+                target.favorite,
+                target.canUseCurrentUser,
+              ),
+            },
+            {
+              additionalTypenames: ['ServiceConnection'],
+            },
+          ),
+        )
+      }
       form={
         <ServiceForm
           nameError={errs.getErrorByField('Name')}

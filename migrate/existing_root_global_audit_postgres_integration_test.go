@@ -30,7 +30,7 @@ func TestPostgresExistingRootGlobalAuditUpgrade(t *testing.T) {
 	for i, query := range queries {
 		require.NoError(t, db.QueryRowContext(ctx, query).Scan(&before[i]))
 	}
-	n, err := Up(ctx, uri, "")
+	n, err := Up(ctx, uri, "existing-root-global-update-audit")
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 	for i, query := range queries {
@@ -38,6 +38,11 @@ func TestPostgresExistingRootGlobalAuditUpgrade(t *testing.T) {
 		require.NoError(t, db.QueryRowContext(ctx, query).Scan(&after))
 		require.Equal(t, before[i], after, "history, append-only constraints and all business FKs are preserved")
 	}
+	// Keep the historical 291 -> 292 leg and its unchanged constraints above
+	// independently checked before applying the two A12 forward migrations.
+	n, err = Up(ctx, uri, "")
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	require.NoError(t, VerifyIsLatest(ctx, uri))
 	for _, role := range []string{"ORG_MEMBER", "ORG_ADMIN"} {

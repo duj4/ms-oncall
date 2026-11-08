@@ -12,6 +12,7 @@ import (
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/escalation"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/heartbeat"
@@ -39,7 +40,11 @@ func (q *Query) Service(ctx context.Context, id string) (*service.Service, error
 }
 
 func (q *Query) Services(ctx context.Context, opts *graphql2.ServiceSearchOptions) (conn *graphql2.ServiceConnection, err error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	var target *string
+	if opts != nil {
+		target = opts.TargetOrganizationID
+	}
+	organizationID, err := (*App)(q).rootListScope(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +215,14 @@ func (s *Service) Labels(ctx context.Context, raw *service.Service) ([]label.Lab
 }
 
 func (s *Service) EscalationPolicy(ctx context.Context, raw *service.Service) (*escalation.Policy, error) {
-	return (*App)(s).FindOnePolicy(ctx, raw.EscalationPolicyID)
+	policy, err := (*App)(s).FindOnePolicy(ctx, raw.EscalationPolicyID)
+	if err != nil {
+		return nil, err
+	}
+	if policy == nil || policy.OrganizationID != raw.OrganizationID {
+		return nil, permission.NewAccessDenied("Service policy relationship is unavailable")
+	}
+	return policy, nil
 }
 
 func (s *Service) IsFavorite(ctx context.Context, raw *service.Service) (bool, error) {
@@ -237,10 +249,18 @@ func (s *Service) IntegrationKeys(ctx context.Context, raw *service.Service) ([]
 }
 
 func (s *Service) HeartbeatMonitors(ctx context.Context, raw *service.Service) ([]heartbeat.Monitor, error) {
+	if ec, err := executioncontext.CheckHumanAuthority(ctx); err == nil {
+		home, _ := ec.HomeOrganizationID()
+		if raw.OrganizationID != home {
+			return nil, permission.NewAccessDenied("Heartbeat projection is outside Global Root management")
+		}
+	}
 	return s.HeartbeatStore.FindAllByService(ctx, raw.ID)
 }
 
 func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServiceInput) (result *service.Service, err error) {
+	plan := newRootCreatePlan(ctx, m.DB, "service")
+	defer func() { err = plan.finish(err) }()
 	for _, key := range input.NewIntegrationKeys {
 		if integrationkey.Type(key.Type) == integrationkey.TypeUniversal {
 			continue
@@ -254,17 +274,17 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 		return nil, label.ErrDisabled
 	}
 
-	home, err := serviceManagementAuthority(ctx, serviceManagementCreate)
+	target, err := plan.scope(input.TargetOrganizationID, input.Favorite)
 	if err != nil {
 		return nil, err
 	}
-	organizationID := *home
+	organizationID := *target
 
 	if input.NewEscalationPolicy != nil && input.EscalationPolicyID != nil && *input.EscalationPolicyID != "" {
 		return nil, validation.NewFieldError("newEscalationPolicy", "cannot be used with `escalationPolicyID`.")
 	}
 
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = plan.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		svc := &service.Service{
 			OrganizationID: organizationID,
 			Name:           input.Name,
@@ -302,6 +322,9 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 			if err != nil {
 				return err
 			}
+			if err := lockServiceUpdatePolicy(ctx, tx, svc.EscalationPolicyID, svc.OrganizationID); err != nil {
+				return err
+			}
 		}
 
 		result, err = m.ServiceStore.CreateServiceTx(ctx, tx, svc)
@@ -325,6 +348,9 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 		}
 
 		for i, key := range input.NewIntegrationKeys {
+			if err := validateNestedParent("serviceID", key.ServiceID, result.ID); err != nil {
+				return err
+			}
 			key.ServiceID = &result.ID
 			_, err = m.CreateIntegrationKey(ctx, key)
 			if err != nil {
@@ -349,7 +375,7 @@ func (m *Mutation) CreateService(ctx context.Context, input graphql2.CreateServi
 		}
 
 		return err
-	})
+	}, func() string { return result.ID })
 
 	return result, err
 }

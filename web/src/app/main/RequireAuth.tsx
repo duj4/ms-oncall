@@ -4,8 +4,8 @@ import { GenericError } from '../error-pages'
 
 const checkAuthQuery = gql`
   {
-    user {
-      id
+    currentOrganizationContext {
+      userID
     }
   }
 `

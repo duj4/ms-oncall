@@ -1759,6 +1759,64 @@
           "sha256": "272f4c1297d93a94e70a1628913d8f7018dbf108099062d3e526b4fcc77dd10c"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-default-pa-update-audit-d02-s3-a12",
+      "first_position": 293,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D02-S3-A12 direct owner bounded local implementation; Project policy baseline is context, not implementation acceptance",
+        "base_commit": "65deaa3e0bacfc10bf9cee210a333bcd3ac43faa",
+        "base_tree": "dcbcbd21a3ed70c2768fe6ada23316b019904bc3",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "881d32f31bf9612c7991d82b281deef747ec6d1b",
+        "authorization_tree": "b341a9776cef607221ecba3ca94e9ab4ef826137"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-existing-root-global-update-audit-d02-s1-a1-f01",
+        "migration_id": "20261107115255-existing-root-global-update-audit.sql",
+        "sha256": "272f4c1297d93a94e70a1628913d8f7018dbf108099062d3e526b4fcc77dd10c",
+        "evidence": "DIRECT_OWNER_D02_S3_A12_APPEND_AFTER_EXACT_IMMUTABLE_PREDECESSOR"
+      },
+      "adaptation_evidence": "BOUNDED_DEFAULT_PA_UPDATE_AUDIT_AND_SEPARATE_FOUR_ROOT_CREATE_AUDIT_NO_UPSTREAM_SQL_COPY_NO_HISTORICAL_REWRITE",
+      "entries": [
+        {
+          "id": "20261108090912-default-pa-update-audit.sql",
+          "original_id": "20261108090912-default-pa-update-audit.sql",
+          "sha256": "58471fa27708d4a85002be8c5537ebc0f0da226e4ccd746e6215e071d331fd39"
+        }
+      ]
+    },
+    {
+      "id": "ms-oncall-global-root-create-audit-d02-s3-a12",
+      "first_position": 294,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D02-S3-A12 direct owner bounded local implementation; Project policy baseline is context, not implementation acceptance",
+        "base_commit": "65deaa3e0bacfc10bf9cee210a333bcd3ac43faa",
+        "base_tree": "dcbcbd21a3ed70c2768fe6ada23316b019904bc3",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "881d32f31bf9612c7991d82b281deef747ec6d1b",
+        "authorization_tree": "b341a9776cef607221ecba3ca94e9ab4ef826137"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-default-pa-update-audit-d02-s3-a12",
+        "migration_id": "20261108090912-default-pa-update-audit.sql",
+        "sha256": "58471fa27708d4a85002be8c5537ebc0f0da226e4ccd746e6215e071d331fd39",
+        "evidence": "DIRECT_OWNER_D02_S3_A12_APPEND_AFTER_EXACT_IMMUTABLE_PREDECESSOR"
+      },
+      "adaptation_evidence": "BOUNDED_DEFAULT_PA_UPDATE_AUDIT_AND_SEPARATE_FOUR_ROOT_CREATE_AUDIT_NO_UPSTREAM_SQL_COPY_NO_HISTORICAL_REWRITE",
+      "entries": [
+        {
+          "id": "20261108090913-global-root-create-audit.sql",
+          "original_id": "20261108090913-global-root-create-audit.sql",
+          "sha256": "c0159d26a26787d49daff82510ed71543d0501a74509a4ad81dcbef6cb8a79d9"
+        }
+      ]
     }
   ]
 }

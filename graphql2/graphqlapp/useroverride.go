@@ -63,6 +63,9 @@ func (m *Mutation) CreateUserOverride(ctx context.Context, input graphql2.Create
 		return nil, validation.NewFieldError("ScheduleID", "is required")
 	}
 	organizationID, err := rootStoreOrganizationID(ctx)
+	if target, ok := inheritedCreationTarget(ctx); ok {
+		organizationID, err = &target, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +145,12 @@ func (q *Query) UserOverrides(ctx context.Context, input *graphql2.UserOverrideS
 
 	searchOpts.Limit++
 	organizationID, err := rootStoreOrganizationID(ctx)
+	// Calendar projection is derived from the explicit actual Schedule. The
+	// cursor cannot restore a different parent or produce global Override scope.
+	if input.ScheduleID != nil {
+		organizationID, err = (*App)(q).rootReadScope(ctx, assignment.TargetTypeSchedule, *input.ScheduleID)
+		searchOpts.ScheduleID = *input.ScheduleID
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -204,12 +204,13 @@ type CreateBasicAuthInput struct {
 }
 
 type CreateEscalationPolicyInput struct {
-	Name        string                            `json:"name"`
-	Description *string                           `json:"description,omitempty"`
-	Repeat      *int                              `json:"repeat,omitempty"`
-	Favorite    *bool                             `json:"favorite,omitempty"`
-	Steps       []CreateEscalationPolicyStepInput `json:"steps,omitempty"`
-	Labels      []SetLabelInput                   `json:"labels,omitempty"`
+	TargetOrganizationID *string                           `json:"targetOrganizationID,omitempty"`
+	Name                 string                            `json:"name"`
+	Description          *string                           `json:"description,omitempty"`
+	Repeat               *int                              `json:"repeat,omitempty"`
+	Favorite             *bool                             `json:"favorite,omitempty"`
+	Steps                []CreateEscalationPolicyStepInput `json:"steps,omitempty"`
+	Labels               []SetLabelInput                   `json:"labels,omitempty"`
 }
 
 type CreateEscalationPolicyStepInput struct {
@@ -251,28 +252,31 @@ type CreateIntegrationKeyInput struct {
 }
 
 type CreateRotationInput struct {
-	Name        string          `json:"name"`
-	Description *string         `json:"description,omitempty"`
-	TimeZone    string          `json:"timeZone"`
-	Start       time.Time       `json:"start"`
-	Favorite    *bool           `json:"favorite,omitempty"`
-	Type        rotation.Type   `json:"type"`
-	ShiftLength *int            `json:"shiftLength,omitempty"`
-	UserIDs     []string        `json:"userIDs,omitempty"`
-	Labels      []SetLabelInput `json:"labels,omitempty"`
+	TargetOrganizationID *string         `json:"targetOrganizationID,omitempty"`
+	Name                 string          `json:"name"`
+	Description          *string         `json:"description,omitempty"`
+	TimeZone             string          `json:"timeZone"`
+	Start                time.Time       `json:"start"`
+	Favorite             *bool           `json:"favorite,omitempty"`
+	Type                 rotation.Type   `json:"type"`
+	ShiftLength          *int            `json:"shiftLength,omitempty"`
+	UserIDs              []string        `json:"userIDs,omitempty"`
+	Labels               []SetLabelInput `json:"labels,omitempty"`
 }
 
 type CreateScheduleInput struct {
-	Name             string                    `json:"name"`
-	Description      *string                   `json:"description,omitempty"`
-	TimeZone         string                    `json:"timeZone"`
-	Favorite         *bool                     `json:"favorite,omitempty"`
-	Targets          []ScheduleTargetInput     `json:"targets,omitempty"`
-	NewUserOverrides []CreateUserOverrideInput `json:"newUserOverrides,omitempty"`
-	Labels           []SetLabelInput           `json:"labels,omitempty"`
+	TargetOrganizationID *string                   `json:"targetOrganizationID,omitempty"`
+	Name                 string                    `json:"name"`
+	Description          *string                   `json:"description,omitempty"`
+	TimeZone             string                    `json:"timeZone"`
+	Favorite             *bool                     `json:"favorite,omitempty"`
+	Targets              []ScheduleTargetInput     `json:"targets,omitempty"`
+	NewUserOverrides     []CreateUserOverrideInput `json:"newUserOverrides,omitempty"`
+	Labels               []SetLabelInput           `json:"labels,omitempty"`
 }
 
 type CreateServiceInput struct {
+	TargetOrganizationID *string                       `json:"targetOrganizationID,omitempty"`
 	Name                 string                        `json:"name"`
 	Description          *string                       `json:"description,omitempty"`
 	Favorite             *bool                         `json:"favorite,omitempty"`
@@ -335,6 +339,17 @@ type CreatedGQLAPIKey struct {
 	Token string `json:"token"`
 }
 
+type CurrentOrganizationContext struct {
+	UserID                 string               `json:"userID"`
+	HomeOrganization       *OrganizationSummary `json:"homeOrganization"`
+	HomeClassification     string               `json:"homeClassification"`
+	HomeOrgRole            string               `json:"homeOrgRole"`
+	IsPlatformAdmin        bool                 `json:"isPlatformAdmin"`
+	CanManageOrganizations bool                 `json:"canManageOrganizations"`
+	CanReadGlobalRoots     bool                 `json:"canReadGlobalRoots"`
+	CanCreateGlobalRoots   bool                 `json:"canCreateGlobalRoots"`
+}
+
 type DebugCarrierInfoInput struct {
 	Number string `json:"number"`
 }
@@ -391,6 +406,7 @@ type DestinationDisplayInfoError struct {
 func (DestinationDisplayInfoError) IsInlineDisplayInfo() {}
 
 type DestinationFieldSearchInput struct {
+	TargetOrganizationID *string `json:"targetOrganizationID,omitempty"`
 	// the type of destination to search for
 	DestType string `json:"destType"`
 	// the ID of the input field to search for
@@ -420,10 +436,11 @@ type EscalationPolicyConnection struct {
 }
 
 type EscalationPolicySearchOptions struct {
-	First  *int     `json:"first,omitempty"`
-	After  *string  `json:"after,omitempty"`
-	Search *string  `json:"search,omitempty"`
-	Omit   []string `json:"omit,omitempty"`
+	TargetOrganizationID *string  `json:"targetOrganizationID,omitempty"`
+	First                *int     `json:"first,omitempty"`
+	After                *string  `json:"after,omitempty"`
+	Search               *string  `json:"search,omitempty"`
+	Omit                 []string `json:"omit,omitempty"`
 	// Include only favorited escalation policies in the results.
 	FavoritesOnly *bool `json:"favoritesOnly,omitempty"`
 	// Sort favorite escalation policies first.
@@ -592,6 +609,17 @@ type OnCallServiceAssignment struct {
 	ServiceName          string `json:"serviceName"`
 }
 
+type OrganizationDirectoryConnection struct {
+	Nodes    []OrganizationSummary `json:"nodes"`
+	PageInfo *PageInfo             `json:"pageInfo"`
+}
+
+// Safe Organization identity without ACL or enterprise mapping data.
+type OrganizationSummary struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+}
+
 type PageInfo struct {
 	EndCursor   *string `json:"endCursor,omitempty"`
 	HasNextPage bool    `json:"hasNextPage"`
@@ -615,10 +643,11 @@ type RotationConnection struct {
 }
 
 type RotationSearchOptions struct {
-	First  *int     `json:"first,omitempty"`
-	After  *string  `json:"after,omitempty"`
-	Search *string  `json:"search,omitempty"`
-	Omit   []string `json:"omit,omitempty"`
+	TargetOrganizationID *string  `json:"targetOrganizationID,omitempty"`
+	First                *int     `json:"first,omitempty"`
+	After                *string  `json:"after,omitempty"`
+	Search               *string  `json:"search,omitempty"`
+	Omit                 []string `json:"omit,omitempty"`
 	// Include only favorited rotations in the results.
 	FavoritesOnly *bool `json:"favoritesOnly,omitempty"`
 	// Sort favorite rotations first.
@@ -666,10 +695,11 @@ type ScheduleRuleInput struct {
 }
 
 type ScheduleSearchOptions struct {
-	First  *int     `json:"first,omitempty"`
-	After  *string  `json:"after,omitempty"`
-	Search *string  `json:"search,omitempty"`
-	Omit   []string `json:"omit,omitempty"`
+	TargetOrganizationID *string  `json:"targetOrganizationID,omitempty"`
+	First                *int     `json:"first,omitempty"`
+	After                *string  `json:"after,omitempty"`
+	Search               *string  `json:"search,omitempty"`
+	Omit                 []string `json:"omit,omitempty"`
 	// Include only favorited services in the results.
 	FavoritesOnly *bool `json:"favoritesOnly,omitempty"`
 	// Sort favorite services first.
@@ -711,11 +741,12 @@ type ServiceConnection struct {
 }
 
 type ServiceSearchOptions struct {
-	First  *int     `json:"first,omitempty"`
-	After  *string  `json:"after,omitempty"`
-	Search *string  `json:"search,omitempty"`
-	Omit   []string `json:"omit,omitempty"`
-	Only   []string `json:"only,omitempty"`
+	TargetOrganizationID *string  `json:"targetOrganizationID,omitempty"`
+	First                *int     `json:"first,omitempty"`
+	After                *string  `json:"after,omitempty"`
+	Search               *string  `json:"search,omitempty"`
+	Omit                 []string `json:"omit,omitempty"`
+	Only                 []string `json:"only,omitempty"`
 	// Include only favorited services in the results.
 	FavoritesOnly *bool `json:"favoritesOnly,omitempty"`
 	// Sort favorite services first.
@@ -988,13 +1019,14 @@ type UserOverrideSearchOptions struct {
 }
 
 type UserSearchOptions struct {
-	First   *int               `json:"first,omitempty"`
-	After   *string            `json:"after,omitempty"`
-	Search  *string            `json:"search,omitempty"`
-	Omit    []string           `json:"omit,omitempty"`
-	CMValue *string            `json:"CMValue,omitempty"`
-	CMType  *ContactMethodType `json:"CMType,omitempty"`
-	Dest    *gadb.DestV1       `json:"dest,omitempty"`
+	TargetOrganizationID *string            `json:"targetOrganizationID,omitempty"`
+	First                *int               `json:"first,omitempty"`
+	After                *string            `json:"after,omitempty"`
+	Search               *string            `json:"search,omitempty"`
+	Omit                 []string           `json:"omit,omitempty"`
+	CMValue              *string            `json:"CMValue,omitempty"`
+	CMType               *ContactMethodType `json:"CMType,omitempty"`
+	Dest                 *gadb.DestV1       `json:"dest,omitempty"`
 	// Include only favorited services in the results.
 	FavoritesOnly *bool `json:"favoritesOnly,omitempty"`
 	// Sort favorite services first.

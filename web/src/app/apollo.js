@@ -12,6 +12,7 @@ import { POLL_INTERVAL } from './config'
 import promiseBatch from './util/promiseBatch'
 import { pathPrefix } from './env'
 import { refetchAll } from './urql'
+import { containsRootCreate } from './util/rootCreatePolicy'
 
 let pendingMutations = 0
 window.onbeforeunload = function (e) {
@@ -67,7 +68,8 @@ const retryLink = new RetryLink({
   },
   attempts: {
     max: 5,
-    retryIf: (error) => {
+    retryIf: (error, operation) => {
+      if (containsRootCreate(operation.query)) return false
       // Retry on any error except HTTP Response errors with the
       // exception of 502-504 response codes (e.g. no retry on 401/auth etc..).
       return (
@@ -210,6 +212,43 @@ export const GraphQLClientWithErrors = new ApolloClient({
     mutate: { awaitRefetchQueries: true, errorPolicy: 'all' },
   },
 })
+
+// Management pages own one cache/polling client per target and authority epoch.
+// Stopped clients and their late results cannot populate the successor cache.
+const organizationClients = new Set()
+export function refetchOrganizationQueries() {
+  return Promise.all(
+    [...organizationClients].map((client) =>
+      client.reFetchObservableQueries(true),
+    ),
+  )
+}
+export function createOrganizationClient() {
+  const client = new ApolloClient({
+    link: graphql2Link,
+    cache: new InMemoryCache(),
+    defaultOptions: {
+      query: { ...queryOpts, fetchPolicy: 'network-only' },
+      watchQuery: { ...queryOpts, fetchPolicy: 'network-only' },
+    },
+  })
+  organizationClients.add(client)
+  const stop = client.stop.bind(client)
+  client.stop = () => {
+    organizationClients.delete(client)
+    stop()
+  }
+  const mutate = client.mutate.bind(client)
+  client.mutate = (...args) =>
+    mutate(...args).then((result) => {
+      refetchAll()
+      return client
+        .reFetchObservableQueries(true)
+        .catch(() => undefined)
+        .then(() => result)
+    })
+  return client
+}
 
 // refetch all *active* polling queries on mutations
 const mutate = GraphQLClient.mutate

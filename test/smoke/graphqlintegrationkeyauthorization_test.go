@@ -98,7 +98,7 @@ func TestGraphQLIntegrationKeyAuthorizationMember(t *testing.T) {
 	// SVC-B1 independently forbids Member Service management without credential intent.
 	ordinary = stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{createService(input:{name:"No credential intent",escalationPolicyID:%q,newIntegrationKeys:[]}){id}}`, h.UUID("policy-a")))
 	require.NotEmpty(t, ordinary.Errors)
-	require.Contains(t, ordinary.Errors[0].Message, "Service management authority is required")
+	require.Contains(t, ordinary.Errors[0].Message, "Root Create authority is required")
 	require.Equal(t, before, ikAuthorizationSnapshot(t, h))
 }
 

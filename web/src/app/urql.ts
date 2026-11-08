@@ -8,10 +8,18 @@ import {
   Client,
 } from 'urql'
 import { pipe, tap } from 'wonka'
-import { GraphQLClient, GraphQLClientWithErrors } from './apollo'
+import {
+  GraphQLClient,
+  GraphQLClientWithErrors,
+  refetchOrganizationQueries,
+} from './apollo'
 import { pathPrefix, isCypress } from './env'
+import { containsRootCreate } from './util/rootCreatePolicy'
 
-const refetch: Array<(force: boolean) => void> = []
+const refetch = new Map<Client, (force: boolean) => void>()
+export function disposeClient(client: Client): void {
+  refetch.delete(client)
+}
 export function refetchAll(force = false): void {
   refetch.forEach((refetch) => refetch(force))
 }
@@ -29,7 +37,7 @@ const refetchExchange = (): Exchange => {
       const watchedOps$ = new Map<number, Operation>()
       const observedOps$ = new Map<number, number>()
 
-      refetch.push((force) => {
+      refetch.set(client, (force) => {
         if (!force) {
           // use existing policy (cache-first will not re-fetch)
           watchedOps$.forEach((op) => {
@@ -100,6 +108,7 @@ const apolloRefetchExchange: Exchange = ({ forward }) => {
         if (result.operation.kind !== 'mutation') return
         GraphQLClient.reFetchObservableQueries(true)
         GraphQLClientWithErrors.reFetchObservableQueries(true)
+        refetchOrganizationQueries().catch(() => undefined)
       }),
     )
   }
@@ -113,7 +122,10 @@ export function newClient(url: string): Client {
       refetchExchange(),
       cacheExchange,
       apolloRefetchExchange,
-      retryExchange({}) as Exchange,
+      retryExchange({
+        retryIf: (error, operation) =>
+          !containsRootCreate(operation.query) && !!error.networkError,
+      }) as Exchange,
       fetchExchange,
     ],
     requestPolicy: 'cache-and-network',

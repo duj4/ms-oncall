@@ -19,6 +19,7 @@ import ServiceMaintenanceModeDialog from './ServiceMaintenanceDialog'
 import ServiceNotices from './ServiceNotices'
 import type { HeartbeatMonitor, Label } from '../../schema'
 import ServiceRecentEvents from './ServiceRecentEvents'
+import { useOrganizationManagement } from '../main/OrganizationManagement'
 
 interface AlertNode {
   id: string
@@ -32,7 +33,7 @@ const query = gql`
     description
   }
 
-  query serviceDetailsQuery($serviceID: ID!) {
+  query serviceDetailsQuery($serviceID: ID!, $global: Boolean!) {
     service(id: $serviceID) {
       ...ServiceTitleQuery
       maintenanceExpiresAt
@@ -44,7 +45,7 @@ const query = gql`
         id
         name
       }
-      heartbeatMonitors {
+      heartbeatMonitors @skip(if: $global) {
         id
         lastState
       }
@@ -61,7 +62,7 @@ const query = gql`
         filterByServiceID: [$serviceID]
         first: 1
       }
-    ) {
+    ) @skip(if: $global) {
       nodes {
         id
         status
@@ -88,12 +89,13 @@ export default function ServiceDetails(props: {
   serviceID: string
 }): JSX.Element {
   const { serviceID } = props
+  const global = !!useOrganizationManagement()?.foreign
   const [showEdit, setShowEdit] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
   const [showMaintMode, setShowMaintMode] = useState(false)
   const [{ data, fetching, error }] = useQuery({
     query,
-    variables: { serviceID },
+    variables: { serviceID, global },
   })
 
   if (fetching && !_.get(data, 'service.id')) return <Spinner />
@@ -131,7 +133,7 @@ export default function ServiceDetails(props: {
               <ServiceOnCallList serviceID={serviceID} />
             </Grid>
             <Grid item xs={12}>
-              <ServiceRecentEvents serviceID={serviceID} />
+              {!global && <ServiceRecentEvents serviceID={serviceID} />}
             </Grid>
           </Grid>
         }

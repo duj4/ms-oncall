@@ -201,6 +201,9 @@ func (a *Mutation) CreateBasicAuth(ctx context.Context, input graphql2.CreateBas
 	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+		if err := authorizeDefaultUserTarget(ctx, tx, input.UserID); err != nil {
+			return err
+		}
 		return a.AuthBasicStore.CreateTx(ctx, tx, input.UserID, input.Username, pw)
 	})
 	if err != nil {
@@ -228,6 +231,9 @@ func (a *Mutation) UpdateBasicAuth(ctx context.Context, input graphql2.UpdateBas
 	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+		if err := authorizeDefaultUserTarget(ctx, tx, input.UserID); err != nil {
+			return err
+		}
 		return a.AuthBasicStore.UpdateTx(ctx, tx, input.UserID, validatedPW, pw)
 	})
 	if err != nil {
@@ -294,6 +300,9 @@ func (a *Mutation) CreateUser(ctx context.Context, input graphql2.CreateUserInpu
 
 func (a *Mutation) UpdateUser(ctx context.Context, input graphql2.UpdateUserInput) (bool, error) {
 	err := withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+		if err := authorizeDefaultUserTarget(ctx, tx, input.ID); err != nil {
+			return err
+		}
 		usr, err := a.UserStore.FindOneTx(ctx, tx, input.ID, true)
 		if err != nil {
 			return err
@@ -381,6 +390,14 @@ func (q *Query) Users(ctx context.Context, opts *graphql2.UserSearchOptions, fir
 	// Global User management does not broaden destination-filtered CM reads.
 	if pa && searchOpts.DestType == "" && len(searchOpts.DestArgs) == 0 {
 		org = nil
+	}
+	// A target-filtered selector is operational affiliation, independent of the
+	// PA's existing global Profile directory. Cursor data never chooses scope.
+	if opts.TargetOrganizationID != nil {
+		org, err = (*App)(q).rootListScope(ctx, opts.TargetOrganizationID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if org != nil {
 		searchOpts.OrganizationID = *org

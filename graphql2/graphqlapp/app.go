@@ -215,6 +215,9 @@ func (a *App) Handler() http.Handler {
 			}
 		}()
 		fieldCtx := graphql.GetFieldContext(ctx)
+		if err := defaultHumanOperation(ctx, fieldCtx.Object, fieldCtx.Field.Name, fieldCtx.Args); err != nil {
+			return nil, err
+		}
 
 		start := time.Now()
 		res, err = next(ctx)

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/alert"
 	"github.com/target/goalert/alert/alertmetrics"
+	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/dataloader"
 	"github.com/target/goalert/escalation"
 	"github.com/target/goalert/gadb"
@@ -69,32 +70,16 @@ func (a *App) registerLoaders(ctx context.Context) context.Context {
 		}, func(a alert.Alert) int { return a.ID }),
 		AlertState: dataloader.NewStoreLoader(ctx, a.AlertStore.State, func(s alert.State) int { return s.ID }),
 		EP: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]escalation.Policy, error) {
-			organizationID, err := rootStoreOrganizationID(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return a.PolicyStore.FindManyPolicies(ctx, ids, organizationID)
+			return loadScopedRoots(ctx, a, assignment.TargetTypeEscalationPolicy, ids, a.PolicyStore.FindManyPolicies)
 		}, func(p escalation.Policy) string { return p.ID }),
 		Rotation: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]rotation.Rotation, error) {
-			organizationID, err := rootStoreOrganizationID(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return a.RotationStore.FindMany(ctx, ids, organizationID)
+			return loadScopedRoots(ctx, a, assignment.TargetTypeRotation, ids, a.RotationStore.FindMany)
 		}, func(r rotation.Rotation) string { return r.ID }),
 		Schedule: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]schedule.Schedule, error) {
-			organizationID, err := rootStoreOrganizationID(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return a.ScheduleStore.FindMany(ctx, ids, organizationID)
+			return loadScopedRoots(ctx, a, assignment.TargetTypeSchedule, ids, a.ScheduleStore.FindMany)
 		}, func(s schedule.Schedule) string { return s.ID }),
 		Service: dataloader.NewStoreLoader(ctx, func(ctx context.Context, ids []string) ([]service.Service, error) {
-			organizationID, err := rootStoreOrganizationID(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return a.ServiceStore.FindMany(ctx, ids, organizationID)
+			return loadScopedRoots(ctx, a, assignment.TargetTypeService, ids, a.ServiceStore.FindMany)
 		}, func(s service.Service) string { return s.ID }),
 		User: dataloader.NewStoreLoader(ctx, a.findManyUserProfiles, func(u user.User) string { return u.ID }),
 		CM: dataloader.NewStoreLoaderWithDB(ctx, a.DB, func(ctx context.Context, db gadb.DBTX, ids []string) ([]contactmethod.ContactMethod, error) {
@@ -285,7 +270,7 @@ func (app *App) FindOneAlertFeedback(ctx context.Context, id int) (*alert.Feedba
 func (app *App) FindOneRotation(ctx context.Context, id string) (*rotation.Rotation, error) {
 	loader := loadersFrom(ctx).Rotation
 	if loader == nil {
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := app.rootReadScope(ctx, assignment.TargetTypeRotation, id)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +283,7 @@ func (app *App) FindOneRotation(ctx context.Context, id string) (*rotation.Rotat
 func (app *App) FindOneSchedule(ctx context.Context, id string) (*schedule.Schedule, error) {
 	loader := loadersFrom(ctx).Schedule
 	if loader == nil {
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := app.rootReadScope(ctx, assignment.TargetTypeSchedule, id)
 		if err != nil {
 			return nil, err
 		}
@@ -390,7 +375,7 @@ func (app *App) FindOneNC(ctx context.Context, id uuid.UUID) (*notificationchann
 func (app *App) FindOnePolicy(ctx context.Context, id string) (*escalation.Policy, error) {
 	loader := loadersFrom(ctx).EP
 	if loader == nil {
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := app.rootReadScope(ctx, assignment.TargetTypeEscalationPolicy, id)
 		if err != nil {
 			return nil, err
 		}
@@ -403,7 +388,7 @@ func (app *App) FindOnePolicy(ctx context.Context, id string) (*escalation.Polic
 func (app *App) FindOneService(ctx context.Context, id string) (*service.Service, error) {
 	loader := loadersFrom(ctx).Service
 	if loader == nil {
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := app.rootReadScope(ctx, assignment.TargetTypeService, id)
 		if err != nil {
 			return nil, err
 		}

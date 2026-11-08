@@ -12,13 +12,13 @@ import (
 )
 
 type fakeHumanExecutionContextReader struct {
-	value  *organization.CurrentUserOrganization
+	value  *organization.CurrentHumanOrganization
 	err    error
 	calls  int
 	lastID uuid.UUID
 }
 
-func (r *fakeHumanExecutionContextReader) FindCurrentUserOrganization(_ context.Context, id uuid.UUID) (*organization.CurrentUserOrganization, error) {
+func (r *fakeHumanExecutionContextReader) FindCurrentHumanOrganization(_ context.Context, id uuid.UUID) (*organization.CurrentHumanOrganization, error) {
 	r.calls++
 	r.lastID = id
 	if r.value == nil {
@@ -57,10 +57,11 @@ func newHumanExecutionContextFixture(t *testing.T) *humanExecutionContextFixture
 		userID:    userID,
 		orgID:     orgID,
 		ctx:       ctx,
-		reader: &fakeHumanExecutionContextReader{value: &organization.CurrentUserOrganization{
+		reader: &fakeHumanExecutionContextReader{value: &organization.CurrentHumanOrganization{
 			UserID:         userID,
 			UserRole:       permission.RoleUser,
 			OrganizationID: orgID,
+			Classification: organization.ClassificationNormal,
 			Role:           organization.OrganizationRoleMember,
 		}},
 	}

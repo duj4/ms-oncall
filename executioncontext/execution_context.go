@@ -188,6 +188,21 @@ func (c *ExecutionContext) EffectiveOrganizationID() (uuid.UUID, bool) {
 	return c.effectiveOrganizationID, true
 }
 
+// HomeOrganizationID identifies a validated Human's persisted Home. It does
+// not grant Normal business scope or operational membership to Default users.
+func (c *ExecutionContext) HomeOrganizationID() (uuid.UUID, bool) {
+	if !c.Valid() || c.PrincipalKind() != PrincipalKindHuman {
+		return uuid.Nil, false
+	}
+	if id, ok := c.EffectiveOrganizationID(); ok {
+		return id, true
+	}
+	if c.AuthorityMode() == AuthorityModeDefaultRestricted || c.AuthorityMode() == AuthorityModePlatformGlobal {
+		return uuid.MustParse(organization.DefaultOrganizationID), true
+	}
+	return uuid.Nil, false
+}
+
 // executionContextSpec is the package construction input. Production
 // constructors must derive it from their principal-specific trusted inputs.
 type executionContextSpec struct {

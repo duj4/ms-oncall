@@ -24,7 +24,8 @@ import {
 import DialogTitleWrapper from '../dialogs/components/DialogTitleWrapper'
 import DialogContentError from '../dialogs/components/DialogContentError'
 import { useIsWidthDown } from '../util/useWidth'
-import { Redirect } from 'wouter'
+import { Redirect, useLocation } from 'wouter'
+import { useCreateTarget } from '../main/OrganizationManagement'
 import { CreateEscalationPolicyStepInput } from '../../schema'
 
 const mutation = gql`
@@ -34,6 +35,9 @@ const mutation = gql`
       name
       description
       escalationPolicyID
+      organization {
+        id
+      }
     }
   }
 `
@@ -45,6 +49,8 @@ const useStyles = makeStyles(() => ({
 }))
 
 export default function WizardRouter(): React.JSX.Element {
+  const target = useCreateTarget()
+  const [, navigate] = useLocation()
   const classes = useStyles()
   const fullScreen = useIsWidthDown('md')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -101,6 +107,7 @@ export default function WizardRouter(): React.JSX.Element {
       delayMinutes: value.delayMinutes,
       newSchedule: {
         ...getSchedule(key, value, secondary),
+        favorite: target.favorite,
         targets: getScheduleTargets(key, value, secondary),
       },
     })
@@ -134,6 +141,8 @@ export default function WizardRouter(): React.JSX.Element {
       variables = {
         input: {
           ...getService(value),
+          targetOrganizationID: target.targetOrganizationID,
+          favorite: target.favorite,
           newEscalationPolicy: {
             ...getEscalationPolicy(value),
             steps: getSteps(),
@@ -145,34 +154,47 @@ export default function WizardRouter(): React.JSX.Element {
     }
 
     if (variables) {
-      commit(variables).then((result) => {
-        if (result.error) {
-          const nonFieldErrs = nonFieldErrors(result.error).map((e) => ({
-            message: e.message,
-          }))
+      target
+        .submit(() => commit(variables))
+        .then((result) => {
+          if (!result) return
+          if (result.error) {
+            const nonFieldErrs = nonFieldErrors(result.error).map((e) => ({
+              message: e.message,
+            }))
 
-          const fieldErrs = fieldErrors(result.error)
-            .map((e) => {
-              const fieldError = e.field.split('.').pop()
-              if (!fieldError) return null
+            const fieldErrs = fieldErrors(result.error)
+              .map((e) => {
+                const fieldError = e.field.split('.').pop()
+                if (!fieldError) return null
 
-              const name = fieldError
-                .replace(/([A-Z])/g, ' $1') // insert a space before all caps
-                .replace(/^./, (str) => str.toUpperCase()) // uppercase the first character
+                const name = fieldError
+                  .replace(/([A-Z])/g, ' $1') // insert a space before all caps
+                  .replace(/^./, (str) => str.toUpperCase()) // uppercase the first character
 
-              return { message: `${name}: ${e.message}` }
-            })
-            .filter((error) => error !== null) as { message: string }[]
+                return { message: `${name}: ${e.message}` }
+              })
+              .filter((error) => error !== null) as { message: string }[]
 
-          const errors = nonFieldErrs.concat(fieldErrs)
+            const errors = nonFieldErrs.concat(fieldErrs)
 
-          if (errors.length) {
-            setErrorMessage(errors.map((e) => e.message).join('\n'))
+            if (errors.length) {
+              setErrorMessage(errors.map((e) => e.message).join('\n'))
+            }
+          } else {
+            if (
+              target.targetOrganizationID &&
+              result.data?.createService?.organization?.id !==
+                target.targetOrganizationID
+            ) {
+              setErrorMessage(
+                'The created organization could not be verified. Inspect existing resources before creating again.',
+              )
+              return
+            }
+            setComplete(true)
           }
-        } else {
-          setComplete(true)
-        }
-      })
+        })
     }
   }
 
@@ -212,9 +234,16 @@ export default function WizardRouter(): React.JSX.Element {
       <Card>
         <Form
           onSubmit={(e, isValid) => submit(e, isValid, commit)}
-          disabled={fetching}
+          disabled={fetching || target.uncertain}
         >
           <CardContent>
+            <p>Management organization: {target.targetName}</p>
+            {target.uncertain && (
+              <p>
+                Result unconfirmed. Inspect existing resources before creating
+                again.
+              </p>
+            )}
             <WizardForm
               errors={fieldErrors(error)}
               value={value}
@@ -222,10 +251,23 @@ export default function WizardRouter(): React.JSX.Element {
             />
           </CardContent>
           <CardActions className={classes.cardActions}>
+            <Button
+              disabled={fetching}
+              onClick={() => {
+                target.cancel()
+                navigate(
+                  '/services?org=' +
+                    encodeURIComponent(target.targetOrganizationID || ''),
+                )
+              }}
+            >
+              Cancel setup
+            </Button>
             <LoadingButton
               attemptCount={fieldErrors(error).length ? 1 : 0}
               buttonText='Submit'
               loading={fetching}
+              disabled={target.uncertain}
               type='submit'
             />
           </CardActions>

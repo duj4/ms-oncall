@@ -51,6 +51,7 @@ func TestExecutionContextReadOnlyMethodSurface(t *testing.T) {
 		"AuthenticationSource",
 		"AuthorityMode",
 		"EffectiveOrganizationID",
+		"HomeOrganizationID",
 		"PrincipalID",
 		"PrincipalKind",
 		"Privileges",

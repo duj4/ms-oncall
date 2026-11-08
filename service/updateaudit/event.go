@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/target/goalert/organization"
 )
 
 var (
@@ -69,7 +70,9 @@ func (e Event) valid() bool {
 		if e.ActorID == uuid.Nil || e.HomeOrganizationID == uuid.Nil || e.AuthoritySource != "current_local_user_organization_at_admission" {
 			return false
 		}
-		if e.OrganizationRole != "ORG_ADMIN" && e.OrganizationRole != "ORG_MEMBER" {
+		defaultPA := e.OrganizationRole == "NONE" && e.HomeOrganizationID.String() == organization.DefaultOrganizationID &&
+			e.AuthorityRole == "platform_admin" && e.TargetOrganizationID.String() != organization.DefaultOrganizationID
+		if !defaultPA && e.OrganizationRole != "ORG_ADMIN" && e.OrganizationRole != "ORG_MEMBER" {
 			return false
 		}
 		return e.AuthorityRole == "platform_admin" || e.AuthorityRole == "org_admin" && e.OrganizationRole == "ORG_ADMIN" || e.AuthorityRole == "org_member" && e.OrganizationRole == "ORG_MEMBER"

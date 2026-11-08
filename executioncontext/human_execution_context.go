@@ -23,7 +23,7 @@ var (
 )
 
 type humanExecutionContextReader interface {
-	FindCurrentUserOrganization(context.Context, uuid.UUID) (*organization.CurrentUserOrganization, error)
+	FindCurrentHumanOrganization(context.Context, uuid.UUID) (*organization.CurrentHumanOrganization, error)
 }
 
 // HumanExecutionContextConstructor reconstructs ordinary human authority from
@@ -83,7 +83,7 @@ func (c *HumanExecutionContextConstructor) Construct(ctx context.Context) (Execu
 		return zero, humanExecutionContextFailure("legacy authentication metadata is inconsistent with Requester")
 	}
 
-	current, err := c.organizations.FindCurrentUserOrganization(ctx, authenticatedUserID)
+	current, err := c.organizations.FindCurrentHumanOrganization(ctx, authenticatedUserID)
 	if err != nil {
 		return zero, humanExecutionContextLookupFailure("read current User Organization", err)
 	}
@@ -99,12 +99,26 @@ func (c *HumanExecutionContextConstructor) Construct(ctx context.Context) (Execu
 	if permission.Admin(ctx) != (current.UserRole == permission.RoleAdmin) {
 		return zero, humanExecutionContextFailure("legacy and current global User roles are inconsistent")
 	}
-	if current.OrganizationID == uuid.Nil || current.OrganizationID.String() == organization.DefaultOrganizationID ||
-		(current.Role != organization.OrganizationRoleMember && current.Role != organization.OrganizationRoleAdmin) {
-		return zero, humanExecutionContextFailure("current User Organization is not operational")
+	mode := AuthorityModeOrganizationScoped
+	var effectiveOrganizationID *uuid.UUID
+	switch current.Classification {
+	case organization.ClassificationNormal:
+		if current.OrganizationID == uuid.Nil || current.OrganizationID.String() == organization.DefaultOrganizationID ||
+			(current.Role != organization.OrganizationRoleMember && current.Role != organization.OrganizationRoleAdmin) {
+			return zero, humanExecutionContextFailure("invalid Normal Home")
+		}
+		effectiveOrganizationID = &current.OrganizationID
+	case organization.ClassificationDefault:
+		if current.OrganizationID.String() != organization.DefaultOrganizationID || current.Role != organization.OrganizationRoleNone {
+			return zero, humanExecutionContextFailure("invalid Default Home")
+		}
+		mode = AuthorityModeDefaultRestricted
+		if current.UserRole == permission.RoleAdmin {
+			mode = AuthorityModePlatformGlobal
+		}
+	default:
+		return zero, humanExecutionContextFailure("invalid Home classification")
 	}
-
-	effectiveOrganizationID := current.OrganizationID
 	typedContext, err := newExecutionContext(executionContextSpec{
 		principalKind:            PrincipalKindHuman,
 		principalID:              current.UserID.String(),
@@ -113,10 +127,10 @@ func (c *HumanExecutionContextConstructor) Construct(ctx context.Context) (Execu
 		authenticationSourceID:   sessionID.String(),
 		organizationRole:         current.Role,
 		platformAdmin:            current.UserRole == permission.RoleAdmin,
-		authorityMode:            AuthorityModeOrganizationScoped,
-		effectiveOrganizationID:  &effectiveOrganizationID,
+		authorityMode:            mode,
+		effectiveOrganizationID:  effectiveOrganizationID,
 	})
-	if err != nil || !EligibleForOrganizationBusinessScope(&typedContext, effectiveOrganizationID) {
+	if err != nil || !typedContext.Valid() {
 		if err == nil {
 			err = errInvalidExecutionContext
 		}

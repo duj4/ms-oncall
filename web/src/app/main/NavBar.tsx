@@ -19,6 +19,7 @@ import { WizardHat as WizardIcon } from 'mdi-material-ui'
 import { Theme, useTheme } from '@mui/material/styles'
 import RequireConfig from '../util/RequireConfig'
 import NavBarLink, { NavBarSubLink } from './NavBarLink'
+import { useOrganizationManagement } from './OrganizationManagement'
 
 import logoImgSrc from '../public/logos/lightmode_logo.svg'
 import darkModeLogoImgSrc from '../public/logos/darkmode_logo.svg'
@@ -42,6 +43,8 @@ const useStyles = makeStyles((theme: Theme) => ({
 export default function NavBar(): React.JSX.Element {
   const classes = useStyles()
   const theme = useTheme()
+  const defaultHome =
+    useOrganizationManagement()?.identity.homeClassification === 'DEFAULT'
 
   let localDevFooter = null
   let localDevRiver = null
@@ -80,7 +83,9 @@ export default function NavBar(): React.JSX.Element {
       <Divider />
       <nav>
         <List role='navigation' className={classes.list} data-cy='nav-list'>
-          <NavBarLink to='/alerts' title='Alerts' icon={<Notifications />} />
+          {!defaultHome && (
+            <NavBarLink to='/alerts' title='Alerts' icon={<Notifications />} />
+          )}
           <NavBarLink
             to='/rotations'
             title='Rotations'
@@ -93,29 +98,35 @@ export default function NavBar(): React.JSX.Element {
             icon={<Layers />}
           />
           <NavBarLink to='/services' title='Services' icon={<VpnKey />} />
-          <NavBarLink to='/users' title='Users' icon={<Group />} />
+          {!defaultHome && (
+            <NavBarLink to='/users' title='Users' icon={<Group />} />
+          )}
 
-          <RequireConfig isAdmin>
-            <NavBarLink to='/admin' title='Admin' icon={<Build />}>
-              <NavBarSubLink to='/admin/config' title='Config' />
-              <NavBarSubLink to='/admin/maintenance' title='Maintenance' />
-              <NavBarSubLink to='/admin/limits' title='System Limits' />
-              <NavBarSubLink to='/admin/toolbox' title='Toolbox' />
-              <NavBarSubLink to='/admin/message-logs' title='Message Logs' />
-              <NavBarSubLink to='/admin/alert-counts' title='Alert Counts' />
-              <NavBarSubLink
-                to='/admin/service-metrics'
-                title='Service Metrics'
-              />
-              <NavBarSubLink to='/admin/switchover' title='Switchover' />
-              <NavBarSubLink to='/admin/api-keys' title='API Keys' />
-              {localDevRiver}
-            </NavBarLink>
-          </RequireConfig>
+          {!defaultHome && (
+            <RequireConfig isAdmin>
+              <NavBarLink to='/admin' title='Admin' icon={<Build />}>
+                <NavBarSubLink to='/admin/config' title='Config' />
+                <NavBarSubLink to='/admin/maintenance' title='Maintenance' />
+                <NavBarSubLink to='/admin/limits' title='System Limits' />
+                <NavBarSubLink to='/admin/toolbox' title='Toolbox' />
+                <NavBarSubLink to='/admin/message-logs' title='Message Logs' />
+                <NavBarSubLink to='/admin/alert-counts' title='Alert Counts' />
+                <NavBarSubLink
+                  to='/admin/service-metrics'
+                  title='Service Metrics'
+                />
+                <NavBarSubLink to='/admin/switchover' title='Switchover' />
+                <NavBarSubLink to='/admin/api-keys' title='API Keys' />
+                {localDevRiver}
+              </NavBarLink>
+            </RequireConfig>
+          )}
 
-          <NavBarLink to='/wizard' title='Wizard' icon={<WizardIcon />} />
+          {!defaultHome && (
+            <NavBarLink to='/wizard' title='Wizard' icon={<WizardIcon />} />
+          )}
 
-          {localDevFooter}
+          {!defaultHome && localDevFooter}
         </List>
       </nav>
     </React.Fragment>

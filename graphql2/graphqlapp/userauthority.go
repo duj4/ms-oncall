@@ -12,7 +12,7 @@ import (
 // admission establishes Home and PA independently; other root reads keep their
 // existing scopes. A nil Home retains the existing non-Human compatibility path.
 func userProfileScope(ctx context.Context) (home *uuid.UUID, platformAdmin bool, err error) {
-	home, err = rootStoreOrganizationID(ctx)
+	home, err = rootManagementHome(ctx)
 	if err != nil || home == nil {
 		return home, false, err
 	}

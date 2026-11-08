@@ -18,7 +18,7 @@ import (
 func TestServiceUpdateAuditCanonicalBundle(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 292)
+	require.Len(t, h.entries, 294)
 	// Pin the entire exact original manifest, not merely its entry count.
 	marker := []byte(",\n    {\n      \"id\": \"ms-oncall-schedule-rotation-update-audit-d09-c4\",")
 	i := bytes.Index(h.manifest, marker)
@@ -70,7 +70,7 @@ func TestPostgresServiceUpdateAuditMigration(t *testing.T) {
 	require.Zero(t, n)
 	n, err = Up(ctx, testURL, "")
 	require.NoError(t, err)
-	require.Equal(t, 2, n)
+	require.Equal(t, 4, n)
 	n, err = Up(ctx, testURL, "")
 	require.NoError(t, err)
 	require.Zero(t, n)

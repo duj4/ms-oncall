@@ -1,5 +1,10 @@
 import React, { Suspense, useState } from 'react'
 import { gql, useQuery } from 'urql'
+import {
+  useTargetOrganizationID,
+  useOrganizationManagement,
+} from '../main/OrganizationManagement'
+import { GenericError } from '../error-pages'
 import ScheduleCreateDialog from './ScheduleCreateDialog'
 import { useURLParam } from '../actions'
 import { ScheduleConnection } from '../../schema'
@@ -30,9 +35,11 @@ const context = { suspense: false }
 export default function ScheduleList(): JSX.Element {
   const [search] = useURLParam<string>('search', '')
   const [create, setCreate] = useState(false)
+  const canCreate = useOrganizationManagement()?.canCreate ?? true
   const [cursor, setCursor] = useState('')
 
   const inputVars = {
+    targetOrganizationID: useTargetOrganizationID(),
     favoritesFirst: true,
     search,
     after: cursor,
@@ -54,6 +61,8 @@ export default function ScheduleList(): JSX.Element {
     pause: !nextCursor,
   })
 
+  if (q.error) return <GenericError error={q.error.message} />
+
   return (
     <React.Fragment>
       <Suspense>
@@ -64,7 +73,7 @@ export default function ScheduleList(): JSX.Element {
         nextCursor={nextCursor}
         onCursorChange={setCursor}
         loading={q.fetching}
-        onCreateClick={() => setCreate(true)}
+        {...(canCreate ? { onCreateClick: () => setCreate(true) } : {})}
         slots={{
           search: <Search />,
           list: (

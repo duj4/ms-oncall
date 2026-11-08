@@ -8,6 +8,7 @@ import {
 import MaterialSelect from './MaterialSelect'
 import { FavoriteIcon } from '../util/SetFavoriteButton'
 import { HelperText } from '../forms'
+import { useTargetOrganizationID } from '../main/OrganizationManagement'
 
 const searchOptionsQuery = gql`
   query DestinationFieldSearch($input: DestinationFieldSearchInput!) {
@@ -65,6 +66,7 @@ export default function DestinationSearchSelect(
   props: DestinationSearchSelectProps,
 ): JSX.Element {
   const [inputValue, setInputValue] = useState('')
+  const target = useTargetOrganizationID()
 
   // check validation of the input phoneNumber through graphql
   const [{ data, fetching, error }] = useQuery<{
@@ -74,6 +76,13 @@ export default function DestinationSearchSelect(
     variables: {
       input: {
         destType: props.destType,
+        targetOrganizationID: [
+          'builtin-user',
+          'builtin-schedule',
+          'builtin-rotation',
+        ].includes(props.destType)
+          ? target
+          : undefined,
         search: inputValue,
         fieldID: props.fieldID,
       },

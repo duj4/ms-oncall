@@ -1,5 +1,10 @@
 import React, { Suspense, useState } from 'react'
 import { gql, useQuery } from 'urql'
+import {
+  useTargetOrganizationID,
+  useOrganizationManagement,
+} from '../main/OrganizationManagement'
+import { GenericError } from '../error-pages'
 import { useURLParam } from '../actions'
 import getServiceFilters from '../util/getServiceFilters'
 import ServiceCreateDialog from './ServiceCreateDialog'
@@ -32,9 +37,11 @@ export default function ServiceList(): JSX.Element {
   const [search, setSearch] = useURLParam<string>('search', '')
   const { labelKey, labelValue, integrationKey } = getServiceFilters(search)
   const [create, setCreate] = useState(false)
+  const canCreate = useOrganizationManagement()?.canCreate ?? true
   const [cursor, setCursor] = useState('')
 
   const inputVars = {
+    targetOrganizationID: useTargetOrganizationID(),
     favoritesFirst: true,
     search,
     after: cursor,
@@ -56,6 +63,8 @@ export default function ServiceList(): JSX.Element {
     pause: !nextCursor,
   })
 
+  if (q.error) return <GenericError error={q.error.message} />
+
   return (
     <React.Fragment>
       <Suspense>
@@ -66,7 +75,7 @@ export default function ServiceList(): JSX.Element {
         nextCursor={nextCursor}
         onCursorChange={setCursor}
         loading={q.fetching}
-        onCreateClick={() => setCreate(true)}
+        {...(canCreate ? { onCreateClick: () => setCreate(true) } : {})}
         slots={{
           search: (
             <Search

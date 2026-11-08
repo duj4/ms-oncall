@@ -13,6 +13,7 @@ import (
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/escalation"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
@@ -186,15 +187,9 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 			if _, err := s.Normalize(); err != nil {
 				return err
 			}
-			home := organizationID
 			organizationID, err = existingRootTargetOrganizationTx(ctx, tx, assignment.TargetTypeEscalationPolicy, s.PolicyID, false)
 			if err != nil {
 				return err
-			}
-			if (input.NewSchedule != nil || input.NewRotation != nil) && *organizationID != *home {
-				// Global Existing EP management does not decide G-D10. Nested
-				// Root creation still belongs to Home and cannot attach here.
-				return permission.NewAccessDenied("nested root creation requires the Home Organization")
 			}
 			_, err := m.PolicyStore.FindOnePolicyTx(ctx, tx, s.PolicyID, organizationID)
 			if errors.Is(err, sql.ErrNoRows) {
@@ -203,6 +198,9 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 			if err != nil {
 				return err
 			}
+		}
+		if organizationID != nil {
+			ctx = withCreationTarget(ctx, tx, *organizationID)
 		}
 
 		step, err = m.PolicyStore.CreateStepTx(ctx, tx, s)
@@ -257,16 +255,18 @@ func (m *Mutation) CreateEscalationPolicyStep(ctx context.Context, input graphql
 }
 
 func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.CreateEscalationPolicyInput) (pol *escalation.Policy, err error) {
+	plan := newRootCreatePlan(ctx, m.DB, "escalation_policy")
+	defer func() { err = plan.finish(err) }()
 	if config.LabelsDisabled() && len(input.Labels) != 0 {
 		return nil, label.ErrDisabled
 	}
 
-	organizationID, err := epManagementAuthority(ctx, epManagementCreate)
+	organizationID, err := plan.scope(input.TargetOrganizationID, input.Favorite)
 	if err != nil {
 		return nil, err
 	}
 
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = plan.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		p := &escalation.Policy{
 			OrganizationID: *organizationID,
 			Name:           input.Name,
@@ -290,6 +290,9 @@ func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.Cr
 		}
 
 		for i, step := range input.Steps {
+			if err := validateNestedParent("escalationPolicyID", step.EscalationPolicyID, pol.ID); err != nil {
+				return err
+			}
 			step.EscalationPolicyID = &pol.ID
 			_, err = m.CreateEscalationPolicyStep(ctx, step)
 			if err != nil {
@@ -306,7 +309,7 @@ func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.Cr
 		}
 
 		return err
-	})
+	}, func() string { return pol.ID })
 
 	return pol, err
 }
@@ -483,11 +486,29 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 }
 
 func (a *EscalationPolicyStep) Actions(ctx context.Context, raw *escalation.Step) ([]gadb.DestV1, error) {
-	return a.PolicyStore.FindAllStepActionsTx(ctx, nil, raw.ID)
+	policy, err := (*App)(a).FindOnePolicy(ctx, raw.PolicyID)
+	if err != nil {
+		return nil, err
+	}
+	if policy == nil {
+		return nil, permission.NewAccessDenied("Step parent is unavailable")
+	}
+	actions, err := a.PolicyStore.FindAllStepActionsTx(ctx, nil, raw.ID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := executioncontext.CheckHumanAuthority(ctx); err == nil {
+		for _, action := range actions {
+			if err := (*Mutation)(a).validateEscalationPolicyActionTargetTx(ctx, nil, action, &policy.OrganizationID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return actions, nil
 }
 
 func (step *EscalationPolicyStep) Targets(ctx context.Context, raw *escalation.Step) ([]assignment.RawTarget, error) {
-	act, err := step.PolicyStore.FindAllStepActionsTx(ctx, nil, raw.ID)
+	act, err := step.Actions(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -530,7 +551,7 @@ func (ep *EscalationPolicy) Notices(ctx context.Context, raw *escalation.Policy)
 }
 
 func (ep *EscalationPolicy) AssignedTo(ctx context.Context, raw *escalation.Policy) ([]assignment.RawTarget, error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := (*App)(ep).rootReadScope(ctx, assignment.TargetTypeEscalationPolicy, raw.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -562,7 +583,7 @@ func (q *Query) EscalationPolicies(ctx context.Context, opts *graphql2.Escalatio
 	}
 
 	var searchOpts escalation.SearchOptions
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := (*App)(q).rootListScope(ctx, opts.TargetOrganizationID)
 	if err != nil {
 		return nil, err
 	}

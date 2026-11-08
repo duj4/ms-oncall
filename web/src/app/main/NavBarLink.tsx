@@ -11,6 +11,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { Collapse, Theme } from '@mui/material'
 import AppLink from '../util/AppLink'
 import { OpenInNew } from '@mui/icons-material'
+import { useTargetOrganizationID } from './OrganizationManagement'
 
 const useStyles = makeStyles((theme: Theme) => {
   const { nav, navSelected } = styles(theme)
@@ -85,12 +86,20 @@ export default function NavBarLink({
 }: NavBarLinkProps): React.JSX.Element {
   const classes = useStyles()
   const [path] = useLocation()
+  const target = useTargetOrganizationID()
+  const targetLink =
+    target &&
+    ['/services', '/schedules', '/rotations', '/escalation-policies'].includes(
+      to,
+    )
+      ? to + '?org=' + encodeURIComponent(target)
+      : to
   const isRoute = path.startsWith(to)
 
   return (
     <React.Fragment>
       <AppLink
-        to={to}
+        to={targetLink}
         className={!children && isRoute ? classes.navSelected : classes.nav}
       >
         <ListItemButton tabIndex={-1}>

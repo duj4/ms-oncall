@@ -25,7 +25,7 @@ func scheduleRotationManagementAuthority(ctx context.Context, operation schedule
 	if ctx == nil || operation > scheduleRotationManagementUpdate {
 		return nil, deny
 	}
-	home, err := rootStoreOrganizationID(ctx)
+	home, err := rootManagementHome(ctx)
 	if err != nil {
 		return nil, err
 	}

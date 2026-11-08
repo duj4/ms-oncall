@@ -29,7 +29,7 @@ func serviceManagementAuthority(ctx context.Context, operation serviceManagement
 	if ctx == nil || operation > serviceManagementDelete {
 		return nil, deny
 	}
-	home, err := rootStoreOrganizationID(ctx)
+	home, err := rootManagementHome(ctx)
 	if err != nil {
 		return nil, err
 	}

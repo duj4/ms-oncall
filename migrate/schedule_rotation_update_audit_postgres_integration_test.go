@@ -133,7 +133,7 @@ func TestPostgresBoundedAuditUpgradePreservation(t *testing.T) {
 	for i, q := range queries {
 		require.NoError(t, db.QueryRowContext(ctx, q).Scan(&before[i]))
 	}
-	n, err := Up(ctx, uri, "")
+	n, err := Up(ctx, uri, "existing-root-global-update-audit")
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 	for i, q := range queries {
@@ -141,6 +141,9 @@ func TestPostgresBoundedAuditUpgradePreservation(t *testing.T) {
 		require.NoError(t, db.QueryRowContext(ctx, q).Scan(&after))
 		require.Equal(t, before[i], after, "old snapshot %d", i)
 	}
+	n, err = Up(ctx, uri, "")
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	require.NoError(t, VerifyIsLatest(ctx, uri))
 	n, err = Up(ctx, uri, "")
@@ -163,7 +166,7 @@ func TestPostgresBoundedAuditMigrationAtomicity(t *testing.T) {
 	ctx, uri, db := boundedAuditDB(t, 290)
 	_, err := db.ExecContext(ctx, "CREATE TABLE "+boundedAuditTable+"(collision boolean)")
 	require.NoError(t, err)
-	n, err := Up(ctx, uri, "")
+	n, err := Up(ctx, uri, "existing-root-global-update-audit")
 	require.Error(t, err)
 	require.Zero(t, n)
 	checkAbsent := func() {
@@ -204,7 +207,7 @@ func TestPostgresBoundedAuditMigrationAtomicity(t *testing.T) {
 	var absent bool
 	require.NoError(t, db.QueryRowContext(ctx, "SELECT to_regclass('"+boundedAuditTable+"') IS NULL").Scan(&absent))
 	require.True(t, absent)
-	n, err = Up(ctx, uri, "")
+	n, err = Up(ctx, uri, "existing-root-global-update-audit")
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 	boundedEvidence(t, db, "recovered")
@@ -240,9 +243,12 @@ func TestPostgresBoundedAuditHistoryFailClosed(t *testing.T) {
 	var pg *pgconn.PgError
 	require.ErrorAs(t, err, &pg)
 	require.Equal(t, "23505", pg.Code)
-	n, err := Up(ctx, uri, "")
+	n, err := Up(ctx, uri, "existing-root-global-update-audit")
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+	n, err = Up(ctx, uri, "")
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	boundedEvidence(t, db, "rejected-corruption-restored")
 }
@@ -461,7 +467,7 @@ func TestPostgresBoundedAuditRotationEffects(t *testing.T) {
 // Reproduce the make db-schema header and the repository's actual DumpSchema
 // using only a new isolated DB. No shared mk_dump_schema name or schema fixture.
 func TestPostgresBoundedAuditCanonicalSchema(t *testing.T) {
-	ctx, uri, db := boundedAuditDB(t, 292)
+	ctx, uri, db := boundedAuditDB(t, 294)
 	conn, err := pgx.Connect(ctx, uri)
 	require.NoError(t, err)
 	defer conn.Close(ctx)
@@ -693,7 +699,7 @@ func TestPostgresBoundedAuditDedupeAndConstraints(t *testing.T) {
 func TestBoundedAuditCanonicalTail(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 292)
+	require.Len(t, h.entries, 294)
 	e := h.entries[290]
 	require.EqualValues(t, 291, e.Position)
 	require.Equal(t, "ms-oncall-schedule-rotation-update-audit-d09-c4", e.BundleID)
