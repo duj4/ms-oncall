@@ -26,6 +26,10 @@ import { NotificationProvider } from './SnackbarNotification'
 import ReactGA from 'react-ga4'
 import { useConfigValue } from '../util/RequireConfig'
 import Spinner from '../loading/components/Spinner'
+import {
+  OrganizationControls,
+  useOrganizationManagement,
+} from './OrganizationManagement'
 
 const useStyles = makeStyles((theme: Theme) => ({
   root: {
@@ -39,7 +43,7 @@ const useStyles = makeStyles((theme: Theme) => ({
   main: {
     width: '100%',
     overflowY: 'auto',
-    marginTop: '64px',
+    marginTop: '144px',
   },
   mainContainer: { position: 'relative', height: '100%' },
   appBar: {
@@ -53,7 +57,9 @@ const useStyles = makeStyles((theme: Theme) => ({
   },
 }))
 
-export default function App(): React.JSX.Element {
+function OrganizationApp(): React.JSX.Element {
+  const organization = useOrganizationManagement()
+  const defaultHome = organization?.identity.homeClassification === 'DEFAULT'
   const [analyticsID] = useConfigValue('General.GoogleAnalyticsID') as [string]
 
   useEffect(() => {
@@ -96,8 +102,9 @@ export default function App(): React.JSX.Element {
                 <div style={{ flex: 1 }} />
                 <PageActionContainer />
                 <SearchContainer />
-                <UserSettingsPopover />
+                {!defaultHome && <UserSettingsPopover />}
               </Toolbar>
+              <OrganizationControls />
             </AppBar>
 
             <Hidden mdDown>
@@ -127,8 +134,8 @@ export default function App(): React.JSX.Element {
             >
               <ErrorBoundary>
                 <Suspense fallback={<Spinner />}>
-                  <LazyNewUserSetup />
-                  <AuthLink />
+                  {!defaultHome && <LazyNewUserSetup />}
+                  {!defaultHome && <AuthLink />}
                   <Grid
                     container
                     justifyContent='center'
@@ -146,4 +153,8 @@ export default function App(): React.JSX.Element {
       </PageActionProvider>
     </div>
   )
+}
+
+export default function App(): React.JSX.Element {
+  return <OrganizationApp />
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/google/uuid"
+	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/notification/nfydest"
@@ -16,13 +18,22 @@ import (
 	"github.com/target/goalert/validation"
 )
 
+type selectorTargetKey struct{}
+
+func selectorRootScope(ctx context.Context) (*uuid.UUID, error) {
+	if target, ok := ctx.Value(selectorTargetKey{}).(uuid.UUID); ok {
+		return &target, nil
+	}
+	return rootStoreOrganizationID(ctx)
+}
+
 // destinationDisplayInfo applies GraphQL request organization scope to root
 // resources represented as destinations. Other destination types continue to
 // use the shared registry unchanged.
 func (a *App) destinationDisplayInfo(ctx context.Context, dest gadb.DestV1) (*nfydest.DisplayInfo, error) {
 	switch dest.Type {
 	case schedule.DestTypeSchedule:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := a.rootReadScope(ctx, assignment.TargetTypeSchedule, dest.Args[schedule.FieldScheduleID])
 		if err != nil {
 			return nil, err
 		}
@@ -38,7 +49,7 @@ func (a *App) destinationDisplayInfo(ctx context.Context, dest gadb.DestV1) (*nf
 			Text:        sched.Name,
 		}, nil
 	case rotation.DestTypeRotation:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := a.rootReadScope(ctx, assignment.TargetTypeRotation, dest.Args[rotation.FieldRotationID])
 		if err != nil {
 			return nil, err
 		}
@@ -61,7 +72,7 @@ func (a *App) destinationDisplayInfo(ctx context.Context, dest gadb.DestV1) (*nf
 func (a *App) destinationValidateField(ctx context.Context, typeID, fieldID, value string) error {
 	switch typeID {
 	case schedule.DestTypeSchedule:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := a.rootReadScope(ctx, assignment.TargetTypeSchedule, value)
 		if err != nil {
 			return err
 		}
@@ -71,7 +82,7 @@ func (a *App) destinationValidateField(ctx context.Context, typeID, fieldID, val
 		_, err = a.ScheduleStore.FindOne(ctx, value, organizationID)
 		return err
 	case rotation.DestTypeRotation:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := a.rootReadScope(ctx, assignment.TargetTypeRotation, value)
 		if err != nil {
 			return err
 		}
@@ -88,7 +99,7 @@ func (a *App) destinationValidateField(ctx context.Context, typeID, fieldID, val
 func (a *App) destinationFieldLabel(ctx context.Context, typeID, fieldID, value string) (string, error) {
 	switch typeID {
 	case schedule.DestTypeSchedule:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := a.rootReadScope(ctx, assignment.TargetTypeSchedule, value)
 		if err != nil {
 			return "", err
 		}
@@ -101,7 +112,7 @@ func (a *App) destinationFieldLabel(ctx context.Context, typeID, fieldID, value 
 		}
 		return sched.Name, nil
 	case rotation.DestTypeRotation:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := a.rootReadScope(ctx, assignment.TargetTypeRotation, value)
 		if err != nil {
 			return "", err
 		}
@@ -132,10 +143,13 @@ func (a *App) destinationSearchField(ctx context.Context, typeID, fieldID string
 			if home != nil && !pa {
 				opts.OrganizationID = *home
 			}
+			if target, ok := ctx.Value(selectorTargetKey{}).(uuid.UUID); ok {
+				opts.OrganizationID = target
+			}
 			return a.UserStore.Search(ctx, opts)
 		})
 	case schedule.DestTypeSchedule:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := selectorRootScope(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +163,7 @@ func (a *App) destinationSearchField(ctx context.Context, typeID, fieldID string
 			return a.ScheduleStore.Search(ctx, opts)
 		})
 	case rotation.DestTypeRotation:
-		organizationID, err := rootStoreOrganizationID(ctx)
+		organizationID, err := selectorRootScope(ctx)
 		if err != nil {
 			return nil, err
 		}

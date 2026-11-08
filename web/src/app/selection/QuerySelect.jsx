@@ -7,6 +7,7 @@ import { DEBOUNCE_DELAY } from '../config'
 import { useQuery } from 'urql'
 import { FavoriteIcon } from '../util/SetFavoriteButton'
 import { print } from 'graphql/language/printer'
+import { useTargetOrganizationID } from '../main/OrganizationManagement'
 
 // valueCheck ensures the type is `arrayOf(p.string)` if `multiple` is set
 // and `p.string` otherwise.
@@ -87,13 +88,15 @@ function makeUseValues(query, mapNode) {
 
 // makeUseOptions will return a hook that will fetch available options
 // for a given search query.
-function makeUseOptions(query, mapNode, vars, defaultVars) {
+function makeUseOptions(query, mapNode, vars, defaultVars, targetScoped) {
   const q = fieldAlias(query, 'data')
   return function useOptions(value, search, extraVars) {
+    const target = useTargetOrganizationID()
     const params = { first: 5, omit: Array.isArray(value) ? value : [] } // only omit in multi-select mode
     const input = search
       ? { ...vars, ...extraVars, ...params, search }
       : { ...defaultVars, ...extraVars, ...params }
+    if (targetScoped && target) input.targetOrganizationID = target
 
     const [{ data, fetching: loading, error }] = useQuery({
       query: print(q),
@@ -174,6 +177,12 @@ export function makeQuerySelect(displayName, options) {
     mapDataNode,
     variables,
     defaultQueryVariables,
+    [
+      'UserSelect',
+      'ScheduleSelect',
+      'RotationSelect',
+      'EscalationPolicySelect',
+    ].includes(displayName),
   )
 
   function QuerySelect(props) {

@@ -8,6 +8,7 @@ import { ThemeProvider } from './theme/themeConfig'
 import { GraphQLClient } from './apollo'
 import './styles'
 import App from './main/App'
+import OrganizationManagement from './main/OrganizationManagement'
 import store from './reduxStore'
 import { ConfigProvider } from './util/RequireConfig'
 import { warn } from './util/debug'
@@ -67,9 +68,11 @@ root.render(
                 <URQLProvider value={urqlClient}>
                   <NewVersionCheck />
                   <RequireAuth fallback={<Login />}>
-                    <ConfigProvider>
-                      <App />
-                    </ConfigProvider>
+                    <OrganizationManagement>
+                      <ConfigProvider>
+                        <App />
+                      </ConfigProvider>
+                    </OrganizationManagement>
                   </RequireAuth>
                 </URQLProvider>
               </Router>

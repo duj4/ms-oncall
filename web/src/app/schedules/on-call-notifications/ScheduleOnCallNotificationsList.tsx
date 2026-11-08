@@ -1,5 +1,13 @@
 import React, { Suspense, useState } from 'react'
-import { Button, Grid, Card, Typography, Tooltip, Theme } from '@mui/material'
+import {
+  Button,
+  Grid,
+  Card,
+  Typography,
+  Tooltip,
+  Theme,
+  Alert,
+} from '@mui/material'
 import OtherActions from '../../util/OtherActions'
 import { onCallRuleSummary } from './util'
 import ScheduleOnCallNotificationsDeleteDialog from './ScheduleOnCallNotificationsDeleteDialog'
@@ -7,7 +15,10 @@ import CreateFAB from '../../lists/CreateFAB'
 import { useIsWidthDown } from '../../util/useWidth'
 import { Add } from '@mui/icons-material'
 import Error from '@mui/icons-material/Error'
-import { gql, useQuery } from 'urql'
+import { gql, useQuery, useMutation } from 'urql'
+import { useOrganizationManagement } from '../../main/OrganizationManagement'
+import FormDialog from '../../dialogs/FormDialog'
+import { refetchAll } from '../../urql'
 import { Schedule } from '../../../schema'
 import { DestinationAvatar } from '../../util/DestinationAvatar'
 import { styles as globalStyles } from '../../styles/materialStyles'
@@ -51,7 +62,7 @@ const useStyles = makeStyles((theme: Theme) => ({
   ...globalStyles(theme),
 }))
 
-export default function ScheduleOnCallNotificationsList({
+function HomeScheduleOnCallNotificationsList({
   scheduleID,
 }: ScheduleOnCallNotificationsListProps): JSX.Element {
   const [createRule, setCreateRule] = useState(false)
@@ -203,6 +214,47 @@ export default function ScheduleOnCallNotificationsList({
           />
         )}
       </Suspense>
+    </React.Fragment>
+  )
+}
+
+export default function ScheduleOnCallNotificationsList(
+  props: ScheduleOnCallNotificationsListProps,
+): JSX.Element {
+  const scope = useOrganizationManagement()
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [result, clear] = useMutation(gql`
+    mutation ($input: SetScheduleOnCallNotificationRulesInput!) {
+      setScheduleOnCallNotificationRules(input: $input)
+    }
+  `)
+  if (!scope?.foreign) return <HomeScheduleOnCallNotificationsList {...props} />
+  return (
+    <React.Fragment>
+      <Alert severity='info'>
+        Foreign organization notification destinations are currently
+        unavailable. Existing rules can be cleared.
+      </Alert>
+      <Button onClick={() => setConfirmClear(true)}>
+        Clear notification rules
+      </Button>
+      {confirmClear && (
+        <FormDialog
+          title='Clear all OnCall notification rules?'
+          confirm
+          loading={result.fetching}
+          errors={result.error ? [{ message: result.error.message }] : []}
+          onClose={() => setConfirmClear(false)}
+          onSubmit={() =>
+            clear({ input: { scheduleID: props.scheduleID, rules: [] } }).then(
+              (response) => {
+                refetchAll(true)
+                if (!response.error) setConfirmClear(false)
+              },
+            )
+          }
+        />
+      )}
     </React.Fragment>
   )
 }

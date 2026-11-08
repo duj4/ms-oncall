@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
 	"github.com/target/goalert/organization"
@@ -34,11 +35,13 @@ func (q *Query) Rotation(ctx context.Context, id string) (*rotation.Rotation, er
 }
 
 func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRotationInput) (result *rotation.Rotation, err error) {
+	plan := newRootCreatePlan(ctx, m.DB, "rotation")
+	defer func() { err = plan.finish(err) }()
 	if config.LabelsDisabled() && len(input.Labels) != 0 {
 		return nil, label.ErrDisabled
 	}
 
-	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementCreate)
+	organizationID, err := plan.scope(input.TargetOrganizationID, input.Favorite)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +50,7 @@ func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRota
 	if err != nil {
 		return nil, validation.NewFieldError("TimeZone", err.Error())
 	}
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = plan.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		rot := &rotation.Rotation{
 			OrganizationID: *organizationID,
 			Name:           input.Name,
@@ -91,7 +94,7 @@ func (m *Mutation) CreateRotation(ctx context.Context, input graphql2.CreateRota
 			}
 		}
 		return err
-	})
+	}, func() string { return result.ID })
 
 	return result, err
 }
@@ -162,6 +165,13 @@ func (r *Rotation) UserIDs(ctx context.Context, rot *rotation.Rotation) ([]strin
 	for i, p := range parts {
 		ids[i] = p.Target.TargetID()
 	}
+	if _, err := executioncontext.CheckHumanAuthority(ctx); err == nil {
+		for _, id := range ids {
+			if err := organization.NewStore(r.DB).ValidateUserOrganizationTx(ctx, nil, uuid.MustParse(id), rot.OrganizationID); err != nil {
+				return nil, permission.NewAccessDenied("Rotation participant relationship is unavailable")
+			}
+		}
+	}
 
 	return ids, nil
 }
@@ -216,7 +226,11 @@ func (r *Rotation) ActiveUserIndex(ctx context.Context, obj *rotation.Rotation) 
 }
 
 func (q *Query) Rotations(ctx context.Context, opts *graphql2.RotationSearchOptions) (conn *graphql2.RotationConnection, err error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	var target *string
+	if opts != nil {
+		target = opts.TargetOrganizationID
+	}
+	organizationID, err := (*App)(q).rootListScope(ctx, target)
 	if err != nil {
 		return nil, err
 	}

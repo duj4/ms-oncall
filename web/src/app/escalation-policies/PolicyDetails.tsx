@@ -12,6 +12,7 @@ import Spinner from '../loading/components/Spinner'
 import { EPAvatar } from '../util/avatars'
 import { Redirect } from 'wouter'
 import { Target } from 'web/src/schema'
+import { useOrganizationManagement } from '../main/OrganizationManagement'
 
 const query = gql`
   query ($id: ID!) {
@@ -60,6 +61,7 @@ const alertStatus = (a: { status: string }[]): LinkStatus | null => {
 export default function PolicyDetails(props: {
   policyID: string
 }): React.JSX.Element {
+  const global = !!useOrganizationManagement()?.foreign
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
 
@@ -71,6 +73,7 @@ export default function PolicyDetails(props: {
   })
   const [alertStatusResult] = useQuery({
     query: alertStatusQuery,
+    pause: global,
     variables: {
       serviceIDs: _data?.escalationPolicy?.assignedTo
         .filter((a: Target) => a.type === 'service')

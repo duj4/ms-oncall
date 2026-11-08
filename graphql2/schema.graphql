@@ -530,6 +530,7 @@ input CreateUserOverrideInput {
 }
 
 input CreateScheduleInput {
+  targetOrganizationID: ID
   name: String!
   description: String
   timeZone: String!
@@ -586,6 +587,7 @@ type TimeZone {
 }
 
 input CreateServiceInput {
+  targetOrganizationID: ID
   name: String!
   description: String = ""
 
@@ -599,6 +601,7 @@ input CreateServiceInput {
 }
 
 input CreateEscalationPolicyInput {
+  targetOrganizationID: ID
   name: String!
   description: String = ""
   repeat: Int = 3
@@ -684,6 +687,7 @@ type ScheduleConnection {
 }
 
 type Schedule {
+  organization: OrganizationSummary!
   id: ID!
   name: String!
   description: String!
@@ -777,12 +781,37 @@ type ScheduleRule {
   target: Target!
 }
 
+"""
+Safe Organization identity without ACL or enterprise mapping data.
+"""
+type OrganizationSummary {
+  id: ID!
+  displayName: String!
+}
+
+type CurrentOrganizationContext {
+  userID: ID!
+  homeOrganization: OrganizationSummary!
+  homeClassification: String!
+  homeOrgRole: String!
+  isPlatformAdmin: Boolean!
+  canManageOrganizations: Boolean!
+  canReadGlobalRoots: Boolean!
+  canCreateGlobalRoots: Boolean!
+}
+
+type OrganizationDirectoryConnection {
+  nodes: [OrganizationSummary!]!
+  pageInfo: PageInfo!
+}
+
 type RotationConnection {
   nodes: [Rotation!]!
   pageInfo: PageInfo!
 }
 
 input CreateRotationInput {
+  targetOrganizationID: ID
   name: String!
   description: String
 
@@ -799,6 +828,7 @@ input CreateRotationInput {
 }
 
 type Rotation {
+  organization: OrganizationSummary!
   id: ID!
   name: String!
   description: String!
@@ -856,6 +886,7 @@ input UpdateRotationInput {
 }
 
 input RotationSearchOptions {
+  targetOrganizationID: ID
   first: Int = 15
   after: String = ""
   search: String = ""
@@ -887,6 +918,7 @@ input CalcRotationHandoffTimesInput {
 }
 
 input EscalationPolicySearchOptions {
+  targetOrganizationID: ID
   first: Int = 15
   after: String = ""
   search: String = ""
@@ -904,6 +936,7 @@ input EscalationPolicySearchOptions {
 }
 
 input ScheduleSearchOptions {
+  targetOrganizationID: ID
   first: Int = 15
   after: String = ""
   search: String = ""
@@ -921,6 +954,7 @@ input ScheduleSearchOptions {
 }
 
 input ServiceSearchOptions {
+  targetOrganizationID: ID
   first: Int = 15
   after: String = ""
   search: String = ""
@@ -939,6 +973,7 @@ input ServiceSearchOptions {
 }
 
 input UserSearchOptions {
+  targetOrganizationID: ID
   first: Int = 15
   after: String = ""
   search: String = ""
@@ -1106,6 +1141,7 @@ type AlertMetadata {
 }
 
 type Service {
+  organization: OrganizationSummary!
   id: ID!
   name: String!
   description: String!
@@ -1226,6 +1262,7 @@ type ServiceOnCallUser {
 }
 
 type EscalationPolicy {
+  organization: OrganizationSummary!
   id: ID!
   name: String!
   description: String!

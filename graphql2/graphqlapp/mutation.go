@@ -119,6 +119,16 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 		// Without a registry, safe destination validation is unavailable.
 		return false, authorityErr
 	}
+	home := organizationID
+	if authorityErr == nil && home != nil && len(input.Rules) > 0 {
+		target, err := (*App)(a).rootReadScope(ctx, assignment.TargetTypeSchedule, input.ScheduleID)
+		if err != nil {
+			return false, err
+		}
+		if target != nil && *target != *home {
+			return false, validation.NewFieldError("Rules", "Foreign Schedule destination/channel ownership policy is not defined")
+		}
+	}
 
 	rules := make([]schedule.OnCallNotificationRule, 0, len(input.Rules))
 	validationChannels := make(map[gadb.DestHashV1]uuid.UUID)
@@ -157,6 +167,13 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 		return false, authorityErr
 	}
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+		organizationID, err = existingRootTargetOrganizationTx(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID, false)
+		if err != nil {
+			return err
+		}
+		if home != nil && organizationID != nil && *home != *organizationID && len(input.Rules) > 0 {
+			return validation.NewFieldError("Rules", "Foreign Schedule destination/channel ownership policy is not defined")
+		}
 		if organizationID != nil {
 			// Use the existing nonlocking parent check before channel mapping.
 			_, err := gadb.New(tx).SchedCheckOrganization(ctx, gadb.SchedCheckOrganizationParams{ScheduleID: schedID, OrganizationID: *organizationID})
@@ -227,6 +244,10 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID)
+		if err != nil {
+			return err
+		}
 		if clearSet {
 			return a.ScheduleStore.SetClearTemporaryScheduleScoped(ctx, tx, schedID, tmp, *input.ClearStart, *input.ClearEnd, organizationID)
 		}
@@ -259,6 +280,10 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 	}
 
 	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID)
+		if err != nil {
+			return err
+		}
 		return a.ScheduleStore.ClearTemporarySchedulesScoped(ctx, tx, schedID, input.Start, input.End, organizationID)
 	})
 
@@ -286,7 +311,20 @@ func (a *Mutation) TestContactMethod(ctx context.Context, id string) (bool, erro
 }
 
 func (a *Mutation) AddAuthSubject(ctx context.Context, input user.AuthSubject) (bool, error) {
-	err := a.UserStore.AddAuthSubjectTx(ctx, nil, &input)
+	isDefault, err := isDefaultHuman(ctx)
+	if err != nil {
+		return false, err
+	}
+	if isDefault {
+		err := withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+			if err := authorizeDefaultUserTarget(ctx, tx, input.UserID); err != nil {
+				return err
+			}
+			return a.UserStore.AddAuthSubjectTx(ctx, tx, &input)
+		})
+		return err == nil, err
+	}
+	err = a.UserStore.AddAuthSubjectTx(ctx, nil, &input)
 	if err != nil {
 		return false, err
 	}
@@ -294,7 +332,20 @@ func (a *Mutation) AddAuthSubject(ctx context.Context, input user.AuthSubject) (
 }
 
 func (a *Mutation) DeleteAuthSubject(ctx context.Context, input user.AuthSubject) (bool, error) {
-	err := a.UserStore.DeleteAuthSubjectTx(ctx, nil, &input)
+	isDefault, err := isDefaultHuman(ctx)
+	if err != nil {
+		return false, err
+	}
+	if isDefault {
+		err := withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
+			if err := authorizeDefaultUserTarget(ctx, tx, input.UserID); err != nil {
+				return err
+			}
+			return a.UserStore.DeleteAuthSubjectTx(ctx, tx, &input)
+		})
+		return err == nil, err
+	}
+	err = a.UserStore.DeleteAuthSubjectTx(ctx, nil, &input)
 	if err != nil {
 		return false, err
 	}
@@ -310,8 +361,19 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 }
 
 func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
+	isDefault, err := isDefaultHuman(ctx)
+	if err != nil {
+		return false, err
+	}
 	var hasRootTarget, hasIntegrationKey, hasService, hasEPManagement bool
 	for _, tgt := range input {
+		if isDefault {
+			switch tgt.TargetType() {
+			case assignment.TargetTypeService, assignment.TargetTypeEscalationPolicy, assignment.TargetTypeSchedule, assignment.TargetTypeRotation, assignment.TargetTypeIntegrationKey, assignment.TargetTypeContactMethod, assignment.TargetTypeNotificationRule, assignment.TargetTypeUser, assignment.TargetTypeUserSession:
+			default:
+				return false, permission.NewAccessDenied("delete operation is outside approved Default management")
+			}
+		}
 		if tgt.TargetType() == assignment.TargetTypeService {
 			hasService = true
 		}
@@ -361,7 +423,11 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 		}
 	} else if hasRootTarget {
 		var err error
-		homeOrganizationID, err = rootStoreOrganizationID(ctx)
+		if hasEPManagement || hasIntegrationKey {
+			homeOrganizationID, err = rootManagementHome(ctx)
+		} else {
+			homeOrganizationID, err = rootStoreOrganizationID(ctx)
+		}
 		if err != nil {
 			return false, err
 		}
@@ -369,7 +435,7 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 
 	// Retry because deleting frequently can cause a deadlock
 	// under heavy load.
-	err := retry.DoTemporaryError(func(int) error {
+	err = retry.DoTemporaryError(func(int) error {
 		return a.tryDeleteAll(ctx, input, homeOrganizationID)
 	},
 		retry.Log(ctx),
@@ -381,6 +447,10 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 }
 
 func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, homeOrganizationID *uuid.UUID) error {
+	isDefault, err := isDefaultHuman(ctx)
+	if err != nil {
+		return err
+	}
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -390,6 +460,26 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 	m := make(map[assignment.TargetType][]string)
 	for _, tgt := range input {
 		m[tgt.TargetType()] = append(m[tgt.TargetType()], tgt.TargetID())
+	}
+	if isDefault {
+		for _, id := range m[assignment.TargetTypeUser] {
+			if err := authorizeDefaultUserTarget(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+		for _, id := range m[assignment.TargetTypeUserSession] {
+			var owner string
+			err := tx.QueryRowContext(ctx, `SELECT user_id FROM auth_user_sessions WHERE id=$1 FOR UPDATE`, id).Scan(&owner)
+			if err == sql.ErrNoRows {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := authorizeDefaultUserTarget(ctx, tx, owner); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Resolve Rotation before Schedule to retain the existing table/root lock

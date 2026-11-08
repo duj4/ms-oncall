@@ -61,6 +61,9 @@ func (c ikAuthorityConn) Begin() (driver.Tx, error) {
 type ikAuthorityRows struct{ values []driver.Value }
 
 func (r *ikAuthorityRows) Columns() []string {
+	if len(r.values) == 5 {
+		return []string{"user", "global_role", "org", "classification", "org_role"}
+	}
 	if len(r.values) == 4 {
 		return []string{"user", "global_role", "org", "org_role"}
 	}
@@ -81,6 +84,17 @@ func (r *ikAuthorityRows) Next(dest []driver.Value) error {
 func (c ikAuthorityConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
 	f := c.f
 	f.queries++
+	if strings.Contains(query, "SELECT u.id, u.role, o.id, o.classification, a.organization_role") {
+		role := "user"
+		if f.platformAdmin {
+			role = "admin"
+		}
+		classification := "NORMAL"
+		if f.home.String() == organization.DefaultOrganizationID {
+			classification = "DEFAULT"
+		}
+		return &ikAuthorityRows{[]driver.Value{f.user.String(), role, f.home.String(), classification, string(f.role)}}, nil
+	}
 	if strings.Contains(query, "FROM public.users AS u") {
 		role := "user"
 		if f.platformAdmin {

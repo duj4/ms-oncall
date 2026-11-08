@@ -245,6 +245,7 @@ export interface CreateEscalationPolicyInput {
   name: string
   repeat?: null | number
   steps?: null | CreateEscalationPolicyStepInput[]
+  targetOrganizationID?: null | string
 }
 
 export interface CreateEscalationPolicyStepInput {
@@ -287,6 +288,7 @@ export interface CreateRotationInput {
   name: string
   shiftLength?: null | number
   start: ISOTimestamp
+  targetOrganizationID?: null | string
   timeZone: string
   type: RotationType
   userIDs?: null | string[]
@@ -298,6 +300,7 @@ export interface CreateScheduleInput {
   labels?: null | SetLabelInput[]
   name: string
   newUserOverrides?: null | CreateUserOverrideInput[]
+  targetOrganizationID?: null | string
   targets?: null | ScheduleTargetInput[]
   timeZone: string
 }
@@ -311,6 +314,7 @@ export interface CreateServiceInput {
   newEscalationPolicy?: null | CreateEscalationPolicyInput
   newHeartbeatMonitors?: null | CreateHeartbeatMonitorInput[]
   newIntegrationKeys?: null | CreateIntegrationKeyInput[]
+  targetOrganizationID?: null | string
 }
 
 export interface CreateUserCalendarSubscriptionInput {
@@ -358,6 +362,17 @@ export interface CreateUserOverrideInput {
 export interface CreatedGQLAPIKey {
   id: string
   token: string
+}
+
+export interface CurrentOrganizationContext {
+  canCreateGlobalRoots: boolean
+  canManageOrganizations: boolean
+  canReadGlobalRoots: boolean
+  homeClassification: string
+  homeOrgRole: string
+  homeOrganization: OrganizationSummary
+  isPlatformAdmin: boolean
+  userID: string
 }
 
 export interface DebugCarrierInfo {
@@ -452,6 +467,7 @@ export interface DestinationFieldSearchInput {
   first?: null | number
   omit?: null | string[]
   search?: null | string
+  targetOrganizationID?: null | string
 }
 
 export interface DestinationFieldValidateInput {
@@ -507,6 +523,7 @@ export interface EscalationPolicy {
   labels: Label[]
   name: string
   notices: Notice[]
+  organization: OrganizationSummary
   repeat: number
   steps: EscalationPolicyStep[]
 }
@@ -523,6 +540,7 @@ export interface EscalationPolicySearchOptions {
   first?: null | number
   omit?: null | string[]
   search?: null | string
+  targetOrganizationID?: null | string
 }
 
 export interface EscalationPolicyStep {
@@ -875,6 +893,16 @@ export interface OnCallShift {
   userID: string
 }
 
+export interface OrganizationDirectoryConnection {
+  nodes: OrganizationSummary[]
+  pageInfo: PageInfo
+}
+
+export interface OrganizationSummary {
+  displayName: string
+  id: string
+}
+
 export interface PageInfo {
   endCursor?: null | string
   hasNextPage: boolean
@@ -899,6 +927,7 @@ export interface Query {
   calcRotationHandoffTimes: ISOTimestamp[]
   config: ConfigValue[]
   configHints: ConfigHint[]
+  currentOrganizationContext: CurrentOrganizationContext
   debugMessageStatus: DebugMessageStatusInfo
   debugMessages: DebugMessage[]
   destinationDisplayInfo: DestinationDisplayInfo
@@ -920,6 +949,7 @@ export interface Query {
   labelValues: StringConnection
   labels: LabelConnection
   linkAccountInfo?: null | LinkAccountInfo
+  manageableOrganizations: OrganizationDirectoryConnection
   messageLogs: MessageLogConnection
   messageStatusHistory: MessageStatusHistory[]
   phoneNumberInfo?: null | PhoneNumberInfo
@@ -952,6 +982,7 @@ export interface Rotation {
   labels: Label[]
   name: string
   nextHandoffTimes: ISOTimestamp[]
+  organization: OrganizationSummary
   shiftLength: number
   start: ISOTimestamp
   timeZone: string
@@ -972,6 +1003,7 @@ export interface RotationSearchOptions {
   first?: null | number
   omit?: null | string[]
   search?: null | string
+  targetOrganizationID?: null | string
 }
 
 export type RotationType = 'daily' | 'hourly' | 'monthly' | 'weekly'
@@ -1021,6 +1053,7 @@ export interface Schedule {
   labels: Label[]
   name: string
   onCallNotificationRules: OnCallNotificationRule[]
+  organization: OrganizationSummary
   shifts: OnCallShift[]
   target?: null | ScheduleTarget
   targets: ScheduleTarget[]
@@ -1056,6 +1089,7 @@ export interface ScheduleSearchOptions {
   first?: null | number
   omit?: null | string[]
   search?: null | string
+  targetOrganizationID?: null | string
 }
 
 export interface ScheduleTarget {
@@ -1096,6 +1130,7 @@ export interface Service {
   name: string
   notices: Notice[]
   onCallUsers: ServiceOnCallUser[]
+  organization: OrganizationSummary
   recentEvents: AlertLogEntryConnection
 }
 
@@ -1124,6 +1159,7 @@ export interface ServiceSearchOptions {
   omit?: null | string[]
   only?: null | string[]
   search?: null | string
+  targetOrganizationID?: null | string
 }
 
 export interface SetAlertNoiseReasonInput {
@@ -1520,6 +1556,7 @@ export interface UserSearchOptions {
   first?: null | number
   omit?: null | string[]
   search?: null | string
+  targetOrganizationID?: null | string
 }
 
 export interface UserSession {

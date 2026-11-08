@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/util/sqlutil"
 )
 
@@ -91,7 +92,9 @@ func (e Event) valid() bool {
 	}
 	switch e.ActorKind {
 	case "human":
-		if e.ActorID == uuid.Nil || e.HomeOrganizationID == uuid.Nil || e.AuthoritySource != "current_local_user_organization_at_admission" || (e.OrganizationRole != "ORG_ADMIN" && e.OrganizationRole != "ORG_MEMBER") {
+		defaultPA := e.OrganizationRole == "NONE" && e.HomeOrganizationID.String() == organization.DefaultOrganizationID &&
+			e.AuthorityRole == "platform_admin" && e.TargetOrganizationID.String() != organization.DefaultOrganizationID
+		if e.ActorID == uuid.Nil || e.HomeOrganizationID == uuid.Nil || e.AuthoritySource != "current_local_user_organization_at_admission" || (!defaultPA && e.OrganizationRole != "ORG_ADMIN" && e.OrganizationRole != "ORG_MEMBER") {
 			return false
 		}
 		roleMatches := e.AuthorityRole == "platform_admin" || e.AuthorityRole == "org_admin" && e.OrganizationRole == "ORG_ADMIN" || e.AuthorityRole == "org_member" && e.OrganizationRole == "ORG_MEMBER"

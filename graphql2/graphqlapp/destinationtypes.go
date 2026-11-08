@@ -6,6 +6,9 @@ import (
 
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/notification/nfydest"
+	"github.com/target/goalert/schedule"
+	"github.com/target/goalert/schedule/rotation"
+	"github.com/target/goalert/user"
 	"github.com/target/goalert/validation"
 )
 
@@ -21,6 +24,18 @@ func (q *Query) DestinationFieldValueName(ctx context.Context, input graphql2.De
 }
 
 func (q *Query) DestinationFieldSearch(ctx context.Context, input graphql2.DestinationFieldSearchInput) (*graphql2.FieldSearchConnection, error) {
+	if input.TargetOrganizationID != nil {
+		switch input.DestType {
+		case user.DestTypeUser, schedule.DestTypeSchedule, rotation.DestTypeRotation:
+			scope, err := (*App)(q).rootListScope(ctx, input.TargetOrganizationID)
+			if err != nil {
+				return nil, err
+			}
+			ctx = context.WithValue(ctx, selectorTargetKey{}, *scope)
+		default:
+			return nil, validation.NewFieldError("targetOrganizationID", "target filtering is unavailable for this destination type")
+		}
+	}
 	var opts nfydest.SearchOptions
 	opts.Omit = input.Omit
 	if input.First != nil {

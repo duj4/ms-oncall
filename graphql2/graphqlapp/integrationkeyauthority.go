@@ -28,7 +28,7 @@ func integrationKeyAccessDenied() error {
 }
 
 func integrationKeyManagementAuthority(ctx context.Context) (*integrationKeyAuthority, error) {
-	home, err := rootStoreOrganizationID(ctx)
+	home, err := rootManagementHome(ctx)
 	if err != nil {
 		return nil, integrationKeyAccessDenied()
 	}

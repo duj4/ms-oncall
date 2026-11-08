@@ -28,7 +28,7 @@ func epManagementAuthority(ctx context.Context, operation epManagementOperation)
 	if ctx == nil || operation > epManagementDelete {
 		return nil, deny
 	}
-	home, err := rootStoreOrganizationID(ctx)
+	home, err := rootManagementHome(ctx)
 	if err != nil {
 		return nil, err
 	}

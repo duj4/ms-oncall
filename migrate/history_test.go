@@ -15,7 +15,7 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(history.entries), 292; got != want {
+	if got, want := len(history.entries), 294; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
 	// The exact original manifest, all 1–290 SQL digests and provenance are

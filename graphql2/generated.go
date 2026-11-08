@@ -219,6 +219,17 @@ type ComplexityRoot struct {
 		Token func(childComplexity int) int
 	}
 
+	CurrentOrganizationContext struct {
+		CanCreateGlobalRoots   func(childComplexity int) int
+		CanManageOrganizations func(childComplexity int) int
+		CanReadGlobalRoots     func(childComplexity int) int
+		HomeClassification     func(childComplexity int) int
+		HomeOrgRole            func(childComplexity int) int
+		HomeOrganization       func(childComplexity int) int
+		IsPlatformAdmin        func(childComplexity int) int
+		UserID                 func(childComplexity int) int
+	}
+
 	DebugCarrierInfo struct {
 		MobileCountryCode func(childComplexity int) int
 		MobileNetworkCode func(childComplexity int) int
@@ -310,15 +321,16 @@ type ComplexityRoot struct {
 	}
 
 	EscalationPolicy struct {
-		AssignedTo  func(childComplexity int) int
-		Description func(childComplexity int) int
-		ID          func(childComplexity int) int
-		IsFavorite  func(childComplexity int) int
-		Labels      func(childComplexity int) int
-		Name        func(childComplexity int) int
-		Notices     func(childComplexity int) int
-		Repeat      func(childComplexity int) int
-		Steps       func(childComplexity int) int
+		AssignedTo   func(childComplexity int) int
+		Description  func(childComplexity int) int
+		ID           func(childComplexity int) int
+		IsFavorite   func(childComplexity int) int
+		Labels       func(childComplexity int) int
+		Name         func(childComplexity int) int
+		Notices      func(childComplexity int) int
+		Organization func(childComplexity int) int
+		Repeat       func(childComplexity int) int
+		Steps        func(childComplexity int) int
 	}
 
 	EscalationPolicyConnection struct {
@@ -562,6 +574,16 @@ type ComplexityRoot struct {
 		UserID    func(childComplexity int) int
 	}
 
+	OrganizationDirectoryConnection struct {
+		Nodes    func(childComplexity int) int
+		PageInfo func(childComplexity int) int
+	}
+
+	OrganizationSummary struct {
+		DisplayName func(childComplexity int) int
+		ID          func(childComplexity int) int
+	}
+
 	PageInfo struct {
 		EndCursor   func(childComplexity int) int
 		HasNextPage func(childComplexity int) int
@@ -577,56 +599,58 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		ActionInputValidate       func(childComplexity int, input gadb.UIKActionV1) int
-		Alert                     func(childComplexity int, id int) int
-		Alerts                    func(childComplexity int, input *AlertSearchOptions) int
-		AuthSubjectsForProvider   func(childComplexity int, first *int, after *string, providerID string) int
-		CalcRotationHandoffTimes  func(childComplexity int, input *CalcRotationHandoffTimesInput) int
-		Config                    func(childComplexity int, all *bool) int
-		ConfigHints               func(childComplexity int) int
-		DebugMessageStatus        func(childComplexity int, input DebugMessageStatusInput) int
-		DebugMessages             func(childComplexity int, input *DebugMessagesInput) int
-		DestinationDisplayInfo    func(childComplexity int, input gadb.DestV1) int
-		DestinationFieldSearch    func(childComplexity int, input DestinationFieldSearchInput) int
-		DestinationFieldValidate  func(childComplexity int, input DestinationFieldValidateInput) int
-		DestinationFieldValueName func(childComplexity int, input DestinationFieldValidateInput) int
-		DestinationTypes          func(childComplexity int, isDynamicAction *bool) int
-		EscalationPolicies        func(childComplexity int, input *EscalationPolicySearchOptions) int
-		EscalationPolicy          func(childComplexity int, id string) int
-		ExperimentalFlags         func(childComplexity int) int
-		Expr                      func(childComplexity int) int
-		GenerateSlackAppManifest  func(childComplexity int) int
-		GqlAPIKeys                func(childComplexity int) int
-		HeartbeatMonitor          func(childComplexity int, id string) int
-		IntegrationKey            func(childComplexity int, id string) int
-		IntegrationKeyTypes       func(childComplexity int) int
-		IntegrationKeys           func(childComplexity int, input *IntegrationKeySearchOptions) int
-		LabelKeys                 func(childComplexity int, input *LabelKeySearchOptions) int
-		LabelValues               func(childComplexity int, input *LabelValueSearchOptions) int
-		Labels                    func(childComplexity int, input *LabelSearchOptions) int
-		LinkAccountInfo           func(childComplexity int, token string) int
-		MessageLogs               func(childComplexity int, input *MessageLogSearchOptions) int
-		MessageStatusHistory      func(childComplexity int, id string) int
-		PhoneNumberInfo           func(childComplexity int, number string) int
-		Rotation                  func(childComplexity int, id string) int
-		Rotations                 func(childComplexity int, input *RotationSearchOptions) int
-		Schedule                  func(childComplexity int, id string) int
-		Schedules                 func(childComplexity int, input *ScheduleSearchOptions) int
-		Service                   func(childComplexity int, id string) int
-		Services                  func(childComplexity int, input *ServiceSearchOptions) int
-		SlackChannel              func(childComplexity int, id string) int
-		SlackChannels             func(childComplexity int, input *SlackChannelSearchOptions) int
-		SlackUserGroup            func(childComplexity int, id string) int
-		SlackUserGroups           func(childComplexity int, input *SlackUserGroupSearchOptions) int
-		SwoStatus                 func(childComplexity int) int
-		SystemLimits              func(childComplexity int) int
-		TimeZones                 func(childComplexity int, input *TimeZoneSearchOptions) int
-		User                      func(childComplexity int, id *string) int
-		UserCalendarSubscription  func(childComplexity int, id string) int
-		UserContactMethod         func(childComplexity int, id string) int
-		UserOverride              func(childComplexity int, id string) int
-		UserOverrides             func(childComplexity int, input *UserOverrideSearchOptions) int
-		Users                     func(childComplexity int, input *UserSearchOptions, first *int, after *string, search *string) int
+		ActionInputValidate        func(childComplexity int, input gadb.UIKActionV1) int
+		Alert                      func(childComplexity int, id int) int
+		Alerts                     func(childComplexity int, input *AlertSearchOptions) int
+		AuthSubjectsForProvider    func(childComplexity int, first *int, after *string, providerID string) int
+		CalcRotationHandoffTimes   func(childComplexity int, input *CalcRotationHandoffTimesInput) int
+		Config                     func(childComplexity int, all *bool) int
+		ConfigHints                func(childComplexity int) int
+		CurrentOrganizationContext func(childComplexity int) int
+		DebugMessageStatus         func(childComplexity int, input DebugMessageStatusInput) int
+		DebugMessages              func(childComplexity int, input *DebugMessagesInput) int
+		DestinationDisplayInfo     func(childComplexity int, input gadb.DestV1) int
+		DestinationFieldSearch     func(childComplexity int, input DestinationFieldSearchInput) int
+		DestinationFieldValidate   func(childComplexity int, input DestinationFieldValidateInput) int
+		DestinationFieldValueName  func(childComplexity int, input DestinationFieldValidateInput) int
+		DestinationTypes           func(childComplexity int, isDynamicAction *bool) int
+		EscalationPolicies         func(childComplexity int, input *EscalationPolicySearchOptions) int
+		EscalationPolicy           func(childComplexity int, id string) int
+		ExperimentalFlags          func(childComplexity int) int
+		Expr                       func(childComplexity int) int
+		GenerateSlackAppManifest   func(childComplexity int) int
+		GqlAPIKeys                 func(childComplexity int) int
+		HeartbeatMonitor           func(childComplexity int, id string) int
+		IntegrationKey             func(childComplexity int, id string) int
+		IntegrationKeyTypes        func(childComplexity int) int
+		IntegrationKeys            func(childComplexity int, input *IntegrationKeySearchOptions) int
+		LabelKeys                  func(childComplexity int, input *LabelKeySearchOptions) int
+		LabelValues                func(childComplexity int, input *LabelValueSearchOptions) int
+		Labels                     func(childComplexity int, input *LabelSearchOptions) int
+		LinkAccountInfo            func(childComplexity int, token string) int
+		ManageableOrganizations    func(childComplexity int, first *int, after *string, search *string) int
+		MessageLogs                func(childComplexity int, input *MessageLogSearchOptions) int
+		MessageStatusHistory       func(childComplexity int, id string) int
+		PhoneNumberInfo            func(childComplexity int, number string) int
+		Rotation                   func(childComplexity int, id string) int
+		Rotations                  func(childComplexity int, input *RotationSearchOptions) int
+		Schedule                   func(childComplexity int, id string) int
+		Schedules                  func(childComplexity int, input *ScheduleSearchOptions) int
+		Service                    func(childComplexity int, id string) int
+		Services                   func(childComplexity int, input *ServiceSearchOptions) int
+		SlackChannel               func(childComplexity int, id string) int
+		SlackChannels              func(childComplexity int, input *SlackChannelSearchOptions) int
+		SlackUserGroup             func(childComplexity int, id string) int
+		SlackUserGroups            func(childComplexity int, input *SlackUserGroupSearchOptions) int
+		SwoStatus                  func(childComplexity int) int
+		SystemLimits               func(childComplexity int) int
+		TimeZones                  func(childComplexity int, input *TimeZoneSearchOptions) int
+		User                       func(childComplexity int, id *string) int
+		UserCalendarSubscription   func(childComplexity int, id string) int
+		UserContactMethod          func(childComplexity int, id string) int
+		UserOverride               func(childComplexity int, id string) int
+		UserOverrides              func(childComplexity int, input *UserOverrideSearchOptions) int
+		Users                      func(childComplexity int, input *UserSearchOptions, first *int, after *string, search *string) int
 	}
 
 	Rotation struct {
@@ -637,6 +661,7 @@ type ComplexityRoot struct {
 		Labels           func(childComplexity int) int
 		Name             func(childComplexity int) int
 		NextHandoffTimes func(childComplexity int, num *int) int
+		Organization     func(childComplexity int) int
 		ShiftLength      func(childComplexity int) int
 		Start            func(childComplexity int) int
 		TimeZone         func(childComplexity int) int
@@ -684,6 +709,7 @@ type ComplexityRoot struct {
 		Labels                  func(childComplexity int) int
 		Name                    func(childComplexity int) int
 		OnCallNotificationRules func(childComplexity int) int
+		Organization            func(childComplexity int) int
 		Shifts                  func(childComplexity int, start time.Time, end time.Time, userIDs []string) int
 		Target                  func(childComplexity int, input assignment.RawTarget) int
 		Targets                 func(childComplexity int) int
@@ -726,6 +752,7 @@ type ComplexityRoot struct {
 		Name                 func(childComplexity int) int
 		Notices              func(childComplexity int) int
 		OnCallUsers          func(childComplexity int) int
+		Organization         func(childComplexity int) int
 		RecentEvents         func(childComplexity int, input *AlertRecentEventsOptions) int
 	}
 
@@ -920,6 +947,8 @@ type DestinationResolver interface {
 	DisplayInfo(ctx context.Context, obj *gadb.DestV1) (InlineDisplayInfo, error)
 }
 type EscalationPolicyResolver interface {
+	Organization(ctx context.Context, obj *escalation.Policy) (*OrganizationSummary, error)
+
 	IsFavorite(ctx context.Context, obj *escalation.Policy) (bool, error)
 	AssignedTo(ctx context.Context, obj *escalation.Policy) ([]assignment.RawTarget, error)
 	Steps(ctx context.Context, obj *escalation.Policy) ([]escalation.Step, error)
@@ -1029,6 +1058,8 @@ type OnCallShiftResolver interface {
 	User(ctx context.Context, obj *oncall.Shift) (*user.User, error)
 }
 type QueryResolver interface {
+	CurrentOrganizationContext(ctx context.Context) (*CurrentOrganizationContext, error)
+	ManageableOrganizations(ctx context.Context, first *int, after *string, search *string) (*OrganizationDirectoryConnection, error)
 	PhoneNumberInfo(ctx context.Context, number string) (*PhoneNumberInfo, error)
 	ExperimentalFlags(ctx context.Context) ([]string, error)
 	MessageLogs(ctx context.Context, input *MessageLogSearchOptions) (*MessageLogConnection, error)
@@ -1081,6 +1112,8 @@ type QueryResolver interface {
 	ActionInputValidate(ctx context.Context, input gadb.UIKActionV1) (bool, error)
 }
 type RotationResolver interface {
+	Organization(ctx context.Context, obj *rotation.Rotation) (*OrganizationSummary, error)
+
 	IsFavorite(ctx context.Context, obj *rotation.Rotation) (bool, error)
 
 	TimeZone(ctx context.Context, obj *rotation.Rotation) (string, error)
@@ -1092,6 +1125,8 @@ type RotationResolver interface {
 	Labels(ctx context.Context, obj *rotation.Rotation) ([]label.Label, error)
 }
 type ScheduleResolver interface {
+	Organization(ctx context.Context, obj *schedule.Schedule) (*OrganizationSummary, error)
+
 	TimeZone(ctx context.Context, obj *schedule.Schedule) (string, error)
 	AssignedTo(ctx context.Context, obj *schedule.Schedule) ([]assignment.RawTarget, error)
 	Shifts(ctx context.Context, obj *schedule.Schedule, start time.Time, end time.Time, userIDs []string) ([]oncall.Shift, error)
@@ -1106,6 +1141,8 @@ type ScheduleRuleResolver interface {
 	Target(ctx context.Context, obj *rule.Rule) (*assignment.RawTarget, error)
 }
 type ServiceResolver interface {
+	Organization(ctx context.Context, obj *service.Service) (*OrganizationSummary, error)
+
 	EscalationPolicy(ctx context.Context, obj *service.Service) (*escalation.Policy, error)
 	IsFavorite(ctx context.Context, obj *service.Service) (bool, error)
 
@@ -1624,6 +1661,55 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.CreatedGQLAPIKey.Token(childComplexity), true
 
+	case "CurrentOrganizationContext.canCreateGlobalRoots":
+		if e.ComplexityRoot.CurrentOrganizationContext.CanCreateGlobalRoots == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.CanCreateGlobalRoots(childComplexity), true
+	case "CurrentOrganizationContext.canManageOrganizations":
+		if e.ComplexityRoot.CurrentOrganizationContext.CanManageOrganizations == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.CanManageOrganizations(childComplexity), true
+	case "CurrentOrganizationContext.canReadGlobalRoots":
+		if e.ComplexityRoot.CurrentOrganizationContext.CanReadGlobalRoots == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.CanReadGlobalRoots(childComplexity), true
+	case "CurrentOrganizationContext.homeClassification":
+		if e.ComplexityRoot.CurrentOrganizationContext.HomeClassification == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.HomeClassification(childComplexity), true
+	case "CurrentOrganizationContext.homeOrgRole":
+		if e.ComplexityRoot.CurrentOrganizationContext.HomeOrgRole == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.HomeOrgRole(childComplexity), true
+	case "CurrentOrganizationContext.homeOrganization":
+		if e.ComplexityRoot.CurrentOrganizationContext.HomeOrganization == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.HomeOrganization(childComplexity), true
+	case "CurrentOrganizationContext.isPlatformAdmin":
+		if e.ComplexityRoot.CurrentOrganizationContext.IsPlatformAdmin == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.IsPlatformAdmin(childComplexity), true
+	case "CurrentOrganizationContext.userID":
+		if e.ComplexityRoot.CurrentOrganizationContext.UserID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.CurrentOrganizationContext.UserID(childComplexity), true
+
 	case "DebugCarrierInfo.mobileCountryCode":
 		if e.ComplexityRoot.DebugCarrierInfo.MobileCountryCode == nil {
 			break
@@ -2036,6 +2122,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.EscalationPolicy.Notices(childComplexity), true
+	case "EscalationPolicy.organization":
+		if e.ComplexityRoot.EscalationPolicy.Organization == nil {
+			break
+		}
+
+		return e.ComplexityRoot.EscalationPolicy.Organization(childComplexity), true
 	case "EscalationPolicy.repeat":
 		if e.ComplexityRoot.EscalationPolicy.Repeat == nil {
 			break
@@ -3336,6 +3428,32 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.OnCallShift.UserID(childComplexity), true
 
+	case "OrganizationDirectoryConnection.nodes":
+		if e.ComplexityRoot.OrganizationDirectoryConnection.Nodes == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrganizationDirectoryConnection.Nodes(childComplexity), true
+	case "OrganizationDirectoryConnection.pageInfo":
+		if e.ComplexityRoot.OrganizationDirectoryConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrganizationDirectoryConnection.PageInfo(childComplexity), true
+
+	case "OrganizationSummary.displayName":
+		if e.ComplexityRoot.OrganizationSummary.DisplayName == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrganizationSummary.DisplayName(childComplexity), true
+	case "OrganizationSummary.id":
+		if e.ComplexityRoot.OrganizationSummary.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrganizationSummary.ID(childComplexity), true
+
 	case "PageInfo.endCursor":
 		if e.ComplexityRoot.PageInfo.EndCursor == nil {
 			break
@@ -3458,6 +3576,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.ConfigHints(childComplexity), true
+	case "Query.currentOrganizationContext":
+		if e.ComplexityRoot.Query.CurrentOrganizationContext == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Query.CurrentOrganizationContext(childComplexity), true
 	case "Query.debugMessageStatus":
 		if e.ComplexityRoot.Query.DebugMessageStatus == nil {
 			break
@@ -3665,6 +3789,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.LinkAccountInfo(childComplexity, args["token"].(string)), true
+	case "Query.manageableOrganizations":
+		if e.ComplexityRoot.Query.ManageableOrganizations == nil {
+			break
+		}
+
+		args, err := ec.field_Query_manageableOrganizations_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.ManageableOrganizations(childComplexity, args["first"].(*int), args["after"].(*string), args["search"].(*string)), true
 	case "Query.messageLogs":
 		if e.ComplexityRoot.Query.MessageLogs == nil {
 			break
@@ -3945,6 +4080,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Rotation.NextHandoffTimes(childComplexity, args["num"].(*int)), true
+	case "Rotation.organization":
+		if e.ComplexityRoot.Rotation.Organization == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Rotation.Organization(childComplexity), true
 	case "Rotation.shiftLength":
 		if e.ComplexityRoot.Rotation.ShiftLength == nil {
 			break
@@ -4142,6 +4283,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Schedule.OnCallNotificationRules(childComplexity), true
+	case "Schedule.organization":
+		if e.ComplexityRoot.Schedule.Organization == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Schedule.Organization(childComplexity), true
 	case "Schedule.shifts":
 		if e.ComplexityRoot.Schedule.Shifts == nil {
 			break
@@ -4341,6 +4488,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Service.OnCallUsers(childComplexity), true
+	case "Service.organization":
+		if e.ComplexityRoot.Service.Organization == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Service.Organization(childComplexity), true
 	case "Service.recentEvents":
 		if e.ComplexityRoot.Service.RecentEvents == nil {
 			break
@@ -5361,6 +5514,28 @@ func (ec *executionContext) childFields_CreatedGQLAPIKey(ctx context.Context, fi
 	return nil, fmt.Errorf("no field named %q was found under type CreatedGQLAPIKey", field.Name)
 }
 
+func (ec *executionContext) childFields_CurrentOrganizationContext(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "userID":
+		return ec.fieldContext_CurrentOrganizationContext_userID(ctx, field)
+	case "homeOrganization":
+		return ec.fieldContext_CurrentOrganizationContext_homeOrganization(ctx, field)
+	case "homeClassification":
+		return ec.fieldContext_CurrentOrganizationContext_homeClassification(ctx, field)
+	case "homeOrgRole":
+		return ec.fieldContext_CurrentOrganizationContext_homeOrgRole(ctx, field)
+	case "isPlatformAdmin":
+		return ec.fieldContext_CurrentOrganizationContext_isPlatformAdmin(ctx, field)
+	case "canManageOrganizations":
+		return ec.fieldContext_CurrentOrganizationContext_canManageOrganizations(ctx, field)
+	case "canReadGlobalRoots":
+		return ec.fieldContext_CurrentOrganizationContext_canReadGlobalRoots(ctx, field)
+	case "canCreateGlobalRoots":
+		return ec.fieldContext_CurrentOrganizationContext_canCreateGlobalRoots(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type CurrentOrganizationContext", field.Name)
+}
+
 func (ec *executionContext) childFields_DebugCarrierInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "name":
@@ -5535,6 +5710,8 @@ func (ec *executionContext) childFields_DynamicParamConfig(ctx context.Context, 
 
 func (ec *executionContext) childFields_EscalationPolicy(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
+	case "organization":
+		return ec.fieldContext_EscalationPolicy_organization(ctx, field)
 	case "id":
 		return ec.fieldContext_EscalationPolicy_id(ctx, field)
 	case "name":
@@ -5917,6 +6094,26 @@ func (ec *executionContext) childFields_OnCallShift(ctx context.Context, field g
 	return nil, fmt.Errorf("no field named %q was found under type OnCallShift", field.Name)
 }
 
+func (ec *executionContext) childFields_OrganizationDirectoryConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "nodes":
+		return ec.fieldContext_OrganizationDirectoryConnection_nodes(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_OrganizationDirectoryConnection_pageInfo(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OrganizationDirectoryConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_OrganizationSummary(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "id":
+		return ec.fieldContext_OrganizationSummary_id(ctx, field)
+	case "displayName":
+		return ec.fieldContext_OrganizationSummary_displayName(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OrganizationSummary", field.Name)
+}
+
 func (ec *executionContext) childFields_PageInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "endCursor":
@@ -5947,6 +6144,8 @@ func (ec *executionContext) childFields_PhoneNumberInfo(ctx context.Context, fie
 
 func (ec *executionContext) childFields_Rotation(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
+	case "organization":
+		return ec.fieldContext_Rotation_organization(ctx, field)
 	case "id":
 		return ec.fieldContext_Rotation_id(ctx, field)
 	case "name":
@@ -6041,6 +6240,8 @@ func (ec *executionContext) childFields_SWOStatus(ctx context.Context, field gra
 
 func (ec *executionContext) childFields_Schedule(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
+	case "organization":
+		return ec.fieldContext_Schedule_organization(ctx, field)
 	case "id":
 		return ec.fieldContext_Schedule_id(ctx, field)
 	case "name":
@@ -6111,6 +6312,8 @@ func (ec *executionContext) childFields_ScheduleTarget(ctx context.Context, fiel
 
 func (ec *executionContext) childFields_Service(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
+	case "organization":
+		return ec.fieldContext_Service_organization(ctx, field)
 	case "id":
 		return ec.fieldContext_Service_id(ctx, field)
 	case "name":
@@ -7794,6 +7997,36 @@ func (ec *executionContext) field_Query_linkAccountInfo_args(ctx context.Context
 		return nil, err
 	}
 	args["token"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_manageableOrganizations_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "search",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["search"] = arg2
 	return args, nil
 }
 
@@ -9969,6 +10202,199 @@ func (ec *executionContext) fieldContext_CreatedGQLAPIKey_token(_ context.Contex
 	return graphql.NewScalarFieldContext("CreatedGQLAPIKey", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _CurrentOrganizationContext_userID(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_userID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.UserID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_userID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("CurrentOrganizationContext", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _CurrentOrganizationContext_homeOrganization(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_homeOrganization(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HomeOrganization, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *OrganizationSummary) graphql.Marshaler {
+			return ec.marshalNOrganizationSummary2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_homeOrganization(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CurrentOrganizationContext",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OrganizationSummary(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CurrentOrganizationContext_homeClassification(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_homeClassification(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HomeClassification, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_homeClassification(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("CurrentOrganizationContext", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _CurrentOrganizationContext_homeOrgRole(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_homeOrgRole(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HomeOrgRole, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_homeOrgRole(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("CurrentOrganizationContext", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _CurrentOrganizationContext_isPlatformAdmin(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_isPlatformAdmin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.IsPlatformAdmin, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_isPlatformAdmin(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("CurrentOrganizationContext", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _CurrentOrganizationContext_canManageOrganizations(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_canManageOrganizations(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.CanManageOrganizations, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_canManageOrganizations(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("CurrentOrganizationContext", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _CurrentOrganizationContext_canReadGlobalRoots(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_canReadGlobalRoots(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.CanReadGlobalRoots, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_canReadGlobalRoots(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("CurrentOrganizationContext", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _CurrentOrganizationContext_canCreateGlobalRoots(ctx context.Context, field graphql.CollectedField, obj *CurrentOrganizationContext) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_CurrentOrganizationContext_canCreateGlobalRoots(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.CanCreateGlobalRoots, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_CurrentOrganizationContext_canCreateGlobalRoots(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("CurrentOrganizationContext", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
 func (ec *executionContext) _DebugCarrierInfo_name(ctx context.Context, field graphql.CollectedField, obj *twilio.CarrierInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -11383,6 +11809,38 @@ func (ec *executionContext) _DynamicParamConfig_defaultValue(ctx context.Context
 }
 func (ec *executionContext) fieldContext_DynamicParamConfig_defaultValue(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("DynamicParamConfig", field, false, false, errors.New("field of type ExprStringExpression does not have child fields"))
+}
+
+func (ec *executionContext) _EscalationPolicy_organization(ctx context.Context, field graphql.CollectedField, obj *escalation.Policy) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_EscalationPolicy_organization(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.EscalationPolicy().Organization(ctx, obj)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *OrganizationSummary) graphql.Marshaler {
+			return ec.marshalNOrganizationSummary2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_EscalationPolicy_organization(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "EscalationPolicy",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OrganizationSummary(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _EscalationPolicy_id(ctx context.Context, field graphql.CollectedField, obj *escalation.Policy) (ret graphql.Marshaler) {
@@ -16910,6 +17368,116 @@ func (ec *executionContext) fieldContext_OnCallShift_truncated(_ context.Context
 	return graphql.NewScalarFieldContext("OnCallShift", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
+func (ec *executionContext) _OrganizationDirectoryConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *OrganizationDirectoryConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrganizationDirectoryConnection_nodes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Nodes, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []OrganizationSummary) graphql.Marshaler {
+			return ec.marshalNOrganizationSummary2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummaryᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OrganizationDirectoryConnection_nodes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OrganizationDirectoryConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OrganizationSummary(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OrganizationDirectoryConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *OrganizationDirectoryConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrganizationDirectoryConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OrganizationDirectoryConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OrganizationDirectoryConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OrganizationSummary_id(ctx context.Context, field graphql.CollectedField, obj *OrganizationSummary) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrganizationSummary_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OrganizationSummary_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OrganizationSummary", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _OrganizationSummary_displayName(ctx context.Context, field graphql.CollectedField, obj *OrganizationSummary) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrganizationSummary_displayName(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.DisplayName, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OrganizationSummary_displayName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OrganizationSummary", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
 func (ec *executionContext) _PageInfo_endCursor(ctx context.Context, field graphql.CollectedField, obj *PageInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -17092,6 +17660,82 @@ func (ec *executionContext) _PhoneNumberInfo_error(ctx context.Context, field gr
 }
 func (ec *executionContext) fieldContext_PhoneNumberInfo_error(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("PhoneNumberInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Query_currentOrganizationContext(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_currentOrganizationContext(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().CurrentOrganizationContext(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *CurrentOrganizationContext) graphql.Marshaler {
+			return ec.marshalNCurrentOrganizationContext2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐCurrentOrganizationContext(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_currentOrganizationContext(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_CurrentOrganizationContext(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_manageableOrganizations(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_manageableOrganizations(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().ManageableOrganizations(ctx, fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["search"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *OrganizationDirectoryConnection) graphql.Marshaler {
+			return ec.marshalNOrganizationDirectoryConnection2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationDirectoryConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_manageableOrganizations(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OrganizationDirectoryConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_manageableOrganizations_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _Query_phoneNumberInfo(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
@@ -19292,6 +19936,38 @@ func (ec *executionContext) fieldContext_Query___schema(_ context.Context, field
 	return fc, nil
 }
 
+func (ec *executionContext) _Rotation_organization(ctx context.Context, field graphql.CollectedField, obj *rotation.Rotation) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Rotation_organization(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Rotation().Organization(ctx, obj)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *OrganizationSummary) graphql.Marshaler {
+			return ec.marshalNOrganizationSummary2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Rotation_organization(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Rotation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OrganizationSummary(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Rotation_id(ctx context.Context, field graphql.CollectedField, obj *rotation.Rotation) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -20103,6 +20779,38 @@ func (ec *executionContext) fieldContext_SWOStatus_nextDBVersion(_ context.Conte
 	return graphql.NewScalarFieldContext("SWOStatus", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _Schedule_organization(ctx context.Context, field graphql.CollectedField, obj *schedule.Schedule) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Schedule_organization(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Schedule().Organization(ctx, obj)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *OrganizationSummary) graphql.Marshaler {
+			return ec.marshalNOrganizationSummary2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Schedule_organization(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Schedule",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OrganizationSummary(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Schedule_id(ctx context.Context, field graphql.CollectedField, obj *schedule.Schedule) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -20759,6 +21467,38 @@ func (ec *executionContext) fieldContext_ScheduleTarget_rules(_ context.Context,
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_ScheduleRule(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Service_organization(ctx context.Context, field graphql.CollectedField, obj *service.Service) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Service_organization(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Service().Organization(ctx, obj)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *OrganizationSummary) graphql.Marshaler {
+			return ec.marshalNOrganizationSummary2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Service_organization(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Service",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OrganizationSummary(ctx, field)
 		},
 	}
 	return fc, nil
@@ -25430,13 +26170,20 @@ func (ec *executionContext) unmarshalInputCreateEscalationPolicyInput(ctx contex
 		asMap["repeat"] = 3
 	}
 
-	fieldsInOrder := [...]string{"name", "description", "repeat", "favorite", "steps", "labels"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "name", "description", "repeat", "favorite", "steps", "labels"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalNString2string(ctx, v)
@@ -25740,13 +26487,20 @@ func (ec *executionContext) unmarshalInputCreateRotationInput(ctx context.Contex
 		asMap["shiftLength"] = 1
 	}
 
-	fieldsInOrder := [...]string{"name", "description", "timeZone", "start", "favorite", "type", "shiftLength", "userIDs", "labels"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "name", "description", "timeZone", "start", "favorite", "type", "shiftLength", "userIDs", "labels"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalNString2string(ctx, v)
@@ -25826,13 +26580,20 @@ func (ec *executionContext) unmarshalInputCreateScheduleInput(ctx context.Contex
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "description", "timeZone", "favorite", "targets", "newUserOverrides", "labels"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "name", "description", "timeZone", "favorite", "targets", "newUserOverrides", "labels"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalNString2string(ctx, v)
@@ -25902,13 +26663,20 @@ func (ec *executionContext) unmarshalInputCreateServiceInput(ctx context.Context
 		asMap["description"] = ""
 	}
 
-	fieldsInOrder := [...]string{"name", "description", "favorite", "escalationPolicyID", "newEscalationPolicy", "newIntegrationKeys", "labels", "newHeartbeatMonitors"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "name", "description", "favorite", "escalationPolicyID", "newEscalationPolicy", "newIntegrationKeys", "labels", "newHeartbeatMonitors"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalNString2string(ctx, v)
@@ -26441,13 +27209,20 @@ func (ec *executionContext) unmarshalInputDestinationFieldSearchInput(ctx contex
 		asMap["first"] = 15
 	}
 
-	fieldsInOrder := [...]string{"destType", "fieldID", "search", "omit", "after", "first"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "destType", "fieldID", "search", "omit", "after", "first"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "destType":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("destType"))
 			data, err := ec.unmarshalNDestinationType2string(ctx, v)
@@ -26612,13 +27387,20 @@ func (ec *executionContext) unmarshalInputEscalationPolicySearchOptions(ctx cont
 		asMap["favoritesFirst"] = false
 	}
 
-	fieldsInOrder := [...]string{"first", "after", "search", "omit", "favoritesOnly", "favoritesFirst"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "first", "after", "search", "omit", "favoritesOnly", "favoritesFirst"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "first":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -27258,13 +28040,20 @@ func (ec *executionContext) unmarshalInputRotationSearchOptions(ctx context.Cont
 		asMap["favoritesFirst"] = false
 	}
 
-	fieldsInOrder := [...]string{"first", "after", "search", "omit", "favoritesOnly", "favoritesFirst"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "first", "after", "search", "omit", "favoritesOnly", "favoritesFirst"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "first":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -27390,13 +28179,20 @@ func (ec *executionContext) unmarshalInputScheduleSearchOptions(ctx context.Cont
 		asMap["favoritesFirst"] = false
 	}
 
-	fieldsInOrder := [...]string{"first", "after", "search", "omit", "favoritesOnly", "favoritesFirst"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "first", "after", "search", "omit", "favoritesOnly", "favoritesFirst"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "first":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -27640,13 +28436,20 @@ func (ec *executionContext) unmarshalInputServiceSearchOptions(ctx context.Conte
 		asMap["favoritesFirst"] = false
 	}
 
-	fieldsInOrder := [...]string{"first", "after", "search", "omit", "only", "favoritesOnly", "favoritesFirst"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "first", "after", "search", "omit", "only", "favoritesOnly", "favoritesFirst"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "first":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -29226,13 +30029,20 @@ func (ec *executionContext) unmarshalInputUserSearchOptions(ctx context.Context,
 		asMap["favoritesFirst"] = false
 	}
 
-	fieldsInOrder := [...]string{"first", "after", "search", "omit", "CMValue", "CMType", "dest", "favoritesOnly", "favoritesFirst"}
+	fieldsInOrder := [...]string{"targetOrganizationID", "first", "after", "search", "omit", "CMValue", "CMType", "dest", "favoritesOnly", "favoritesFirst"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "targetOrganizationID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("targetOrganizationID"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TargetOrganizationID = data
 		case "first":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -30845,6 +31655,80 @@ func (ec *executionContext) _CreatedGQLAPIKey(ctx context.Context, sel ast.Selec
 	return out
 }
 
+var currentOrganizationContextImplementors = []string{"CurrentOrganizationContext"}
+
+func (ec *executionContext) _CurrentOrganizationContext(ctx context.Context, sel ast.SelectionSet, obj *CurrentOrganizationContext) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, currentOrganizationContextImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CurrentOrganizationContext")
+		case "userID":
+			out.Values[i] = ec._CurrentOrganizationContext_userID(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "homeOrganization":
+			out.Values[i] = ec._CurrentOrganizationContext_homeOrganization(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "homeClassification":
+			out.Values[i] = ec._CurrentOrganizationContext_homeClassification(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "homeOrgRole":
+			out.Values[i] = ec._CurrentOrganizationContext_homeOrgRole(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "isPlatformAdmin":
+			out.Values[i] = ec._CurrentOrganizationContext_isPlatformAdmin(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "canManageOrganizations":
+			out.Values[i] = ec._CurrentOrganizationContext_canManageOrganizations(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "canReadGlobalRoots":
+			out.Values[i] = ec._CurrentOrganizationContext_canReadGlobalRoots(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "canCreateGlobalRoots":
+			out.Values[i] = ec._CurrentOrganizationContext_canCreateGlobalRoots(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var debugCarrierInfoImplementors = []string{"DebugCarrierInfo"}
 
 func (ec *executionContext) _DebugCarrierInfo(ctx context.Context, sel ast.SelectionSet, obj *twilio.CarrierInfo) graphql.Marshaler {
@@ -31558,6 +32442,42 @@ func (ec *executionContext) _EscalationPolicy(ctx context.Context, sel ast.Selec
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("EscalationPolicy")
+		case "organization":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._EscalationPolicy_organization(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "id":
 			out.Values[i] = ec._EscalationPolicy_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -34212,6 +35132,94 @@ func (ec *executionContext) _OnCallShift(ctx context.Context, sel ast.SelectionS
 	return out
 }
 
+var organizationDirectoryConnectionImplementors = []string{"OrganizationDirectoryConnection"}
+
+func (ec *executionContext) _OrganizationDirectoryConnection(ctx context.Context, sel ast.SelectionSet, obj *OrganizationDirectoryConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, organizationDirectoryConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OrganizationDirectoryConnection")
+		case "nodes":
+			out.Values[i] = ec._OrganizationDirectoryConnection_nodes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._OrganizationDirectoryConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var organizationSummaryImplementors = []string{"OrganizationSummary"}
+
+func (ec *executionContext) _OrganizationSummary(ctx context.Context, sel ast.SelectionSet, obj *OrganizationSummary) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, organizationSummaryImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OrganizationSummary")
+		case "id":
+			out.Values[i] = ec._OrganizationSummary_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "displayName":
+			out.Values[i] = ec._OrganizationSummary_displayName(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var pageInfoImplementors = []string{"PageInfo"}
 
 func (ec *executionContext) _PageInfo(ctx context.Context, sel ast.SelectionSet, obj *PageInfo) graphql.Marshaler {
@@ -34339,6 +35347,50 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("Query")
+		case "currentOrganizationContext":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_currentOrganizationContext(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "manageableOrganizations":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_manageableOrganizations(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "phoneNumberInfo":
 			field := field
 
@@ -35487,6 +36539,42 @@ func (ec *executionContext) _Rotation(ctx context.Context, sel ast.SelectionSet,
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("Rotation")
+		case "organization":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Rotation_organization(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "id":
 			out.Values[i] = ec._Rotation_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -36034,6 +37122,42 @@ func (ec *executionContext) _Schedule(ctx context.Context, sel ast.SelectionSet,
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("Schedule")
+		case "organization":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Schedule_organization(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "id":
 			out.Values[i] = ec._Schedule_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -36595,6 +37719,42 @@ func (ec *executionContext) _Service(ctx context.Context, sel ast.SelectionSet, 
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("Service")
+		case "organization":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Service_organization(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "id":
 			out.Values[i] = ec._Service_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -39904,6 +41064,20 @@ func (ec *executionContext) marshalNCreatedGQLAPIKey2ᚖgithubᚗcomᚋtargetᚋ
 	return ec._CreatedGQLAPIKey(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNCurrentOrganizationContext2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐCurrentOrganizationContext(ctx context.Context, sel ast.SelectionSet, v CurrentOrganizationContext) graphql.Marshaler {
+	return ec._CurrentOrganizationContext(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNCurrentOrganizationContext2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐCurrentOrganizationContext(ctx context.Context, sel ast.SelectionSet, v *CurrentOrganizationContext) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._CurrentOrganizationContext(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalNDebugCarrierInfo2githubᚗcomᚋtargetᚋgoalertᚋnotificationᚋtwilioᚐCarrierInfo(ctx context.Context, sel ast.SelectionSet, v twilio.CarrierInfo) graphql.Marshaler {
 	return ec._DebugCarrierInfo(ctx, sel, &v)
 }
@@ -40949,6 +42123,50 @@ func (ec *executionContext) marshalNOnCallShift2ᚕgithubᚗcomᚋtargetᚋgoale
 	}
 
 	return ret
+}
+
+func (ec *executionContext) marshalNOrganizationDirectoryConnection2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationDirectoryConnection(ctx context.Context, sel ast.SelectionSet, v OrganizationDirectoryConnection) graphql.Marshaler {
+	return ec._OrganizationDirectoryConnection(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOrganizationDirectoryConnection2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationDirectoryConnection(ctx context.Context, sel ast.SelectionSet, v *OrganizationDirectoryConnection) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._OrganizationDirectoryConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNOrganizationSummary2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx context.Context, sel ast.SelectionSet, v OrganizationSummary) graphql.Marshaler {
+	return ec._OrganizationSummary(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOrganizationSummary2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummaryᚄ(ctx context.Context, sel ast.SelectionSet, v []OrganizationSummary) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNOrganizationSummary2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNOrganizationSummary2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOrganizationSummary(ctx context.Context, sel ast.SelectionSet, v *OrganizationSummary) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._OrganizationSummary(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNPageInfo2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐPageInfo(ctx context.Context, sel ast.SelectionSet, v *PageInfo) graphql.Marshaler {

@@ -148,8 +148,15 @@ func TestPostgresHumanExecutionContextSingleStatementLinearization(t *testing.T)
 	`, userID, defaultID); err != nil {
 		t.Fatal(err)
 	}
-	if value, err := constructor.Construct(WithExecutionContext(requestContext, observedA)); !errors.Is(err, ErrHumanExecutionContextUnavailable) || value.Valid() {
-		t.Fatalf("non-operational current truth with inherited A = (%#v, %v), want unavailable", value, err)
+	value, err := constructor.Construct(WithExecutionContext(requestContext, observedA))
+	if err != nil || !value.Valid() || value.AuthorityMode() != AuthorityModeDefaultRestricted {
+		t.Fatalf("persisted Default identity = (%#v, %v)", value, err)
+	}
+	if _, present := value.EffectiveOrganizationID(); present {
+		t.Fatal("Default retained old Normal affiliation")
+	}
+	if _, err := store.FindCurrentUserOrganization(ctx, userID); !errors.Is(err, organization.ErrNotFound) {
+		t.Fatalf("Default operational affiliation lookup = %v", err)
 	}
 }
 

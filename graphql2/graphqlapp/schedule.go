@@ -14,10 +14,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
+	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/label"
 	"github.com/target/goalert/oncall"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rule"
@@ -143,10 +145,50 @@ func (s *Schedule) OnCallNotificationRules(ctx context.Context, raw *schedule.Sc
 	if err != nil {
 		return nil, err
 	}
-	return s.ScheduleStore.OnCallNotificationRules(ctx, nil, id)
+	rules, err := s.ScheduleStore.OnCallNotificationRules(ctx, nil, id)
+	if err != nil {
+		return nil, err
+	}
+	if ec, err := executioncontext.CheckHumanAuthority(ctx); err == nil && len(rules) > 0 {
+		home, _ := ec.HomeOrganizationID()
+		if raw.OrganizationID != home {
+			return nil, permission.NewAccessDenied("Foreign Schedule destination/channel ownership policy is not defined")
+		}
+	}
+	return rules, nil
+}
+
+func (s *Schedule) validateReadTarget(ctx context.Context, raw *schedule.Schedule, target assignment.RawTarget) error {
+	if _, err := executioncontext.CheckHumanAuthority(ctx); err != nil {
+		return nil
+	}
+	switch target.Type {
+	case assignment.TargetTypeUser:
+		id, err := uuid.Parse(target.ID)
+		if err != nil {
+			return permission.NewAccessDenied("Schedule target is unavailable")
+		}
+		if err := organization.NewStore(s.DB).ValidateUserOrganizationTx(ctx, nil, id, raw.OrganizationID); err != nil {
+			return permission.NewAccessDenied("Schedule target relationship is unavailable")
+		}
+	case assignment.TargetTypeRotation:
+		rot, err := (*App)(s).FindOneRotation(ctx, target.ID)
+		if err != nil {
+			return err
+		}
+		if rot == nil || rot.OrganizationID != raw.OrganizationID {
+			return permission.NewAccessDenied("Schedule target relationship is unavailable")
+		}
+	default:
+		return permission.NewAccessDenied("Schedule target type is unavailable")
+	}
+	return nil
 }
 
 func (s *Schedule) Target(ctx context.Context, raw *schedule.Schedule, input assignment.RawTarget) (*graphql2.ScheduleTarget, error) {
+	if err := s.validateReadTarget(ctx, raw, input); err != nil {
+		return nil, err
+	}
 	rules, err := s.RuleStore.FindByTargetTx(ctx, nil, raw.ID, input)
 	if err != nil {
 		return nil, err
@@ -168,6 +210,9 @@ func (s *Schedule) Targets(ctx context.Context, raw *schedule.Schedule) ([]graph
 	m := make(map[assignment.RawTarget][]rule.Rule)
 	for _, r := range rules {
 		tgt := assignment.RawTarget{ID: r.Target.TargetID(), Type: r.Target.TargetType()}
+		if err := s.validateReadTarget(ctx, raw, tgt); err != nil {
+			return nil, err
+		}
 		m[tgt] = append(m[tgt], r)
 	}
 
@@ -185,7 +230,7 @@ func (s *Schedule) Targets(ctx context.Context, raw *schedule.Schedule) ([]graph
 }
 
 func (s *Schedule) AssignedTo(ctx context.Context, raw *schedule.Schedule) ([]assignment.RawTarget, error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	organizationID, err := (*App)(s).rootReadScope(ctx, assignment.TargetTypeSchedule, raw.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -308,11 +353,13 @@ func (m *Mutation) UpdateSchedule(ctx context.Context, input graphql2.UpdateSche
 }
 
 func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateScheduleInput) (sched *schedule.Schedule, err error) {
+	plan := newRootCreatePlan(ctx, m.DB, "schedule")
+	defer func() { err = plan.finish(err) }()
 	if config.LabelsDisabled() && len(input.Labels) != 0 {
 		return nil, label.ErrDisabled
 	}
 
-	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementCreate)
+	organizationID, err := plan.scope(input.TargetOrganizationID, input.Favorite)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +401,7 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 		return nil, validation.NewFieldError("timeZone", err.Error())
 	}
 
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = plan.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		s := &schedule.Schedule{
 			OrganizationID: *organizationID,
 			Name:           input.Name,
@@ -387,6 +434,9 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 		}
 
 		for i, r := range input.Targets {
+			if err := validateNestedParent("scheduleID", r.ScheduleID, sched.ID); err != nil {
+				return err
+			}
 			r.ScheduleID = &sched.ID
 			_, err = m.UpdateScheduleTarget(ctx, r)
 			if err != nil {
@@ -395,6 +445,9 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 		}
 
 		for i, override := range input.NewUserOverrides {
+			if err := validateNestedParent("scheduleID", override.ScheduleID, sched.ID); err != nil {
+				return err
+			}
 			override.ScheduleID = &sched.ID
 			_, err = m.CreateUserOverride(ctx, override)
 			if err != nil {
@@ -411,7 +464,7 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 		}
 
 		return nil
-	})
+	}, func() string { return sched.ID })
 
 	return sched, err
 }
@@ -421,7 +474,11 @@ func (r *Schedule) TimeZone(ctx context.Context, data *schedule.Schedule) (strin
 }
 
 func (q *Query) Schedules(ctx context.Context, opts *graphql2.ScheduleSearchOptions) (conn *graphql2.ScheduleConnection, err error) {
-	organizationID, err := rootStoreOrganizationID(ctx)
+	var target *string
+	if opts != nil {
+		target = opts.TargetOrganizationID
+	}
+	organizationID, err := (*App)(q).rootListScope(ctx, target)
 	if err != nil {
 		return nil, err
 	}

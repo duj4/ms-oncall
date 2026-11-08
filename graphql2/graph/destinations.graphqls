@@ -77,6 +77,7 @@ notifications.
 scalar DestinationType
 
 input DestinationFieldSearchInput {
+  targetOrganizationID: ID
   """
   the type of destination to search for
   """

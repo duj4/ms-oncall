@@ -1,4 +1,10 @@
 type Query {
+  currentOrganizationContext: CurrentOrganizationContext!
+  manageableOrganizations(
+    first: Int = 25
+    after: String
+    search: String
+  ): OrganizationDirectoryConnection!
   phoneNumberInfo(number: String!): PhoneNumberInfo
 
   experimentalFlags: [ID!]!

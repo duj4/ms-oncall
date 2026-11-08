@@ -50,15 +50,17 @@ func CheckCMNRMutationAuthority(ctx context.Context) (CMNRMutationAuthority, err
 		return CMNRMutationAuthority{valid: true, owner: owner}, nil
 	}
 	if requester == nil || value == nil || source == nil ||
-		value.PrincipalKind() != PrincipalKindHuman || value.AuthorityMode() != AuthorityModeOrganizationScoped ||
+		value.PrincipalKind() != PrincipalKindHuman ||
 		requester.UserID() != owner || value.PrincipalID() != owner.String() || value.ActualActorID() != owner.String() ||
 		source.Type != permission.SourceTypeAuthProvider || source.ID != requester.SessionID().String() ||
 		value.AuthenticationSource().Type() != source.Type.String() || value.AuthenticationSource().ID() != source.ID ||
 		value.Privileges().PlatformAdmin() != permission.Admin(ctx) {
 		return zero, permission.NewAccessDenied("")
 	}
-	home, ok := value.EffectiveOrganizationID()
-	if !ok || !EligibleForOrganizationBusinessScope(value, home) {
+	home, ok := value.HomeOrganizationID()
+	defaultPA := value.AuthorityMode() == AuthorityModePlatformGlobal && value.Privileges().PlatformAdmin() &&
+		home.String() == organization.DefaultOrganizationID && value.Privileges().OrganizationRole() == organization.OrganizationRoleNone
+	if !ok || (!EligibleForOrganizationBusinessScope(value, home) && !defaultPA) {
 		return zero, permission.NewAccessDenied("")
 	}
 	return CMNRMutationAuthority{valid: true, owner: owner, home: home, platformAdmin: value.Privileges().PlatformAdmin()}, nil
