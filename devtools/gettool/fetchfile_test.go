@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log"
 	"net/http"
@@ -517,5 +518,204 @@ func TestFetchFileDefaultWrapper(t *testing.T) {
 	b, err := io.ReadAll(fd)
 	if err != nil || n != 8 || string(b) != "complete" {
 		t.Fatalf("contents=%q size=%d error=%v", b, n, err)
+	}
+}
+
+type zipCRCMember struct {
+	name       string
+	body       []byte
+	crc        uint32
+	descriptor bool
+}
+
+// CreateRaw preserves the supplied CRC even when it is zero or incorrect.
+// CreateHeader would calculate it and normally add a data descriptor instead.
+func zipCRCFixture(t *testing.T, members ...zipCRCMember) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	for _, m := range members {
+		var flags uint16
+		if m.descriptor {
+			flags = 8
+		}
+		f, err := w.CreateRaw(&zip.FileHeader{
+			Name: m.name, Method: zip.Store, Flags: flags, CRC32: m.crc,
+			CompressedSize64: uint64(len(m.body)), UncompressedSize64: uint64(len(m.body)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(m.body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	z, err := zip.NewReader(bytes.NewReader(b.Bytes()), int64(b.Len()))
+	if err != nil || len(z.File) != len(members) {
+		t.Fatalf("fixture members: %v error=%v", z, err)
+	}
+	for i, m := range members {
+		f := z.File[i]
+		if f.Name != m.name || f.CRC32 != m.crc || (f.Flags&8 != 0) != m.descriptor {
+			t.Fatalf("fixture member %d: %+v", i, f.FileHeader)
+		}
+		t.Logf("member=%s descriptor=%t declared=%08x actual=%08x", m.name, m.descriptor, m.crc, crc32.ChecksumIEEE(m.body))
+	}
+	return b.Bytes()
+}
+
+func requireZIPCache(t *testing.T, u string, want []byte) {
+	t.Helper()
+	name := hash256(u) + ".data"
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != name {
+		t.Fatalf("cache entries=%v error=%v", entries, err)
+	}
+	b, err := os.ReadFile(filepath.Join(cacheDir, name))
+	if err != nil || !bytes.Equal(b, want) {
+		t.Fatalf("cache bytes differ: size=%d error=%v", len(b), err)
+	}
+}
+
+func TestFetchZIPMemberCRC(t *testing.T) {
+	payload := []byte("synthetic binary with nonzero CRC") // Exact CI2-R1 F01 payload.
+	actual := crc32.ChecksumIEEE(payload)
+	zero := []byte{0x9d, 0x0a, 0xd9, 0x6d} // Nonempty content with IEEE CRC32 zero.
+	if actual != 0x963db763 || crc32.ChecksumIEEE(zero) != 0 {
+		t.Fatal("unexpected fixture CRC")
+	}
+	good := zipCRCMember{"first", payload, actual, false}
+	bad := zipCRCMember{"later", payload, 0, false}
+	for _, tc := range []struct {
+		name    string
+		members []zipCRCMember
+		bad     bool
+	}{
+		{"zero-declared-nonzero-actual", []zipCRCMember{bad}, true},
+		{"zero-declared-zero-actual", []zipCRCMember{{"zero", zero, 0, false}}, false},
+		{"empty-zero-crc", []zipCRCMember{{"empty", nil, 0, false}}, false},
+		{"nonzero-wrong-crc", []zipCRCMember{{"wrong", payload, actual ^ 1, false}}, true},
+		{"descriptor-wrong-crc", []zipCRCMember{{"descriptor", payload, actual ^ 1, true}}, true},
+		{"later-member-zero-crc", []zipCRCMember{good, bad}, true},
+		{"all-members-correct", []zipCRCMember{good, {"zero", zero, 0, false}, {"descriptor", payload, actual, true}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fetchTestCache(t)
+			body := zipCRCFixture(t, tc.members...)
+			u := "https://example.invalid/" + tc.name + ".zip"
+			requests := 0
+			var bodies []*trackedBody
+			f := testFetcher(&http.Client{Transport: fetchRoundTrip(func(r *http.Request) (*http.Response, error) {
+				requests++
+				b := &trackedBody{Reader: bytes.NewReader(body)}
+				bodies = append(bodies, b)
+				return &http.Response{StatusCode: 200, Body: b, ContentLength: int64(len(body)), Header: make(http.Header)}, nil
+			})})
+			if tc.bad {
+				fd, n, err := f.fetch(context.Background(), u)
+				if fd != nil {
+					fd.Close()
+				}
+				if fd != nil || n != 0 || !errors.Is(err, zip.ErrChecksum) || requests != 1 {
+					t.Fatalf("fd=%v size=%d error=%v requests=%d", fd, n, err, requests)
+				}
+				requireCacheEmpty(t) // Neither .data nor staging may remain.
+				// A subsequent correct response must work for the very same URL.
+				body = zipCRCFixture(t, good)
+			}
+			fetchContents(t, f, context.Background(), u, string(body))
+			wantRequests := 1
+			if tc.bad {
+				wantRequests = 2
+			}
+			if requests != wantRequests {
+				t.Fatalf("download requests=%d want=%d", requests, wantRequests)
+			}
+			requireZIPCache(t, u, body)
+			fetchContents(t, f, context.Background(), u, string(body))
+			if requests != wantRequests {
+				t.Fatalf("cache hit requested HTTP: %d", requests)
+			}
+			for _, b := range bodies {
+				if !b.closed {
+					t.Fatal("response body left open")
+				}
+			}
+		})
+	}
+}
+
+func TestFetchZIPCRCDoesNotReplaceCache(t *testing.T) {
+	payload := []byte("synthetic binary with nonzero CRC")
+	for _, winner := range []bool{false, true} {
+		t.Run(fmt.Sprintf("concurrent-winner=%t", winner), func(t *testing.T) {
+			fetchTestCache(t)
+			good := zipCRCFixture(t, zipCRCMember{"tool", payload, crc32.ChecksumIEEE(payload), false})
+			bad := zipCRCFixture(t, zipCRCMember{"tool", payload, 0, false})
+			u := "https://example.invalid/cache-preserved.zip"
+			target := filepath.Join(cacheDir, hash256(u)+".data")
+			publish := func() {
+				t.Helper()
+				if err := os.WriteFile(target, good, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			requests := 0
+			f := testFetcher(&http.Client{Transport: fetchRoundTrip(func(r *http.Request) (*http.Response, error) {
+				requests++
+				publish() // Another downloader has published since the cache miss.
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(bad)), ContentLength: int64(len(bad))}, nil
+			})})
+			if winner {
+				fd, n, err := f.fetch(context.Background(), u)
+				if fd != nil {
+					fd.Close()
+				}
+				if fd != nil || n != 0 || !errors.Is(err, zip.ErrChecksum) || requests != 1 {
+					t.Fatalf("corrupt download: fd=%v size=%d error=%v requests=%d", fd, n, err, requests)
+				}
+			} else {
+				publish()
+			}
+			fetchContents(t, f, context.Background(), u, string(good))
+			requireZIPCache(t, u, good)
+			wantRequests := 0
+			if winner {
+				wantRequests = 1
+			}
+			if requests != wantRequests {
+				t.Fatalf("requests=%d want=%d", requests, wantRequests)
+			}
+		})
+	}
+}
+
+func TestFetchZIPCRCNoCache(t *testing.T) {
+	fetchTestCache(t)
+	cacheDir = ""
+	before, err := filepath.Glob(filepath.Join(os.TempDir(), "gettool-*.download"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := zipCRCFixture(t, zipCRCMember{"tool", []byte("synthetic binary with nonzero CRC"), 0, false})
+	requests := 0
+	body := &trackedBody{Reader: bytes.NewReader(bad)}
+	f := testFetcher(&http.Client{Transport: fetchRoundTrip(func(r *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: 200, Body: body, ContentLength: int64(len(bad))}, nil
+	})})
+	fd, n, err := f.fetch(context.Background(), "https://example.invalid/no-cache.zip")
+	if fd != nil {
+		fd.Close()
+	}
+	if fd != nil || n != 0 || !errors.Is(err, zip.ErrChecksum) || requests != 1 || !body.closed {
+		t.Fatalf("fd=%v size=%d error=%v requests=%d closed=%t", fd, n, err, requests, body.closed)
+	}
+	after, err := filepath.Glob(filepath.Join(os.TempDir(), "gettool-*.download"))
+	if err != nil || strings.Join(before, "\n") != strings.Join(after, "\n") {
+		t.Fatalf("temporary download leaked: before=%v after=%v error=%v", before, after, err)
 	}
 }

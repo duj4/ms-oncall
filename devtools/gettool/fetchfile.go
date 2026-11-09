@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log"
 	"net"
@@ -236,8 +237,9 @@ func (f fileFetcher) download(ctx context.Context, rawURL string) (result *os.Fi
 	return result, size, false, nil
 }
 
-// Archive checks run before cache publication. Reading to EOF checks ZIP CRCs
-// and gzip trailers; this is integrity checking, not authenticity verification.
+// Archive checks run before cache publication. ZIP CRCs are compared explicitly,
+// including zero declarations; reading to EOF checks lengths and gzip trailers.
+// This is integrity checking, not authenticity verification.
 func validateDownload(ctx context.Context, u *url.URL, fd *os.File, n int64) error {
 	if strings.HasSuffix(u.Path, ".zip") {
 		z, err := zip.NewReader(fd, n)
@@ -249,13 +251,17 @@ func validateDownload(ctx context.Context, u *url.URL, fd *os.File, n int64) err
 			if err != nil {
 				return err
 			}
-			_, err = io.Copy(io.Discard, contextReader{ctx, r})
+			checksum := crc32.NewIEEE()
+			_, err = io.Copy(checksum, contextReader{ctx, r})
 			closeErr := r.Close()
 			if err != nil {
 				return err
 			}
 			if closeErr != nil {
 				return closeErr
+			}
+			if checksum.Sum32() != entry.CRC32 {
+				return zip.ErrChecksum
 			}
 		}
 	} else if strings.HasSuffix(u.Path, ".tar.gz") {
