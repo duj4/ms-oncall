@@ -42,7 +42,7 @@ func TestPostgresExistingRootGlobalAuditUpgrade(t *testing.T) {
 	// independently checked before applying the two A12 forward migrations.
 	n, err = Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 2, n)
+	require.Equal(t, len(Names())-292, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	require.NoError(t, VerifyIsLatest(ctx, uri))
 	for _, role := range []string{"ORG_MEMBER", "ORG_ADMIN"} {
