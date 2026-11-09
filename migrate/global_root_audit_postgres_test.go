@@ -18,7 +18,7 @@ import (
 func TestGlobalRootAuditCanonicalAppendOnlyPrefix(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 294)
+	require.GreaterOrEqual(t, len(h.entries), 294)
 	marker := []byte(",\n    {\n      \"id\": \"ms-oncall-default-pa-update-audit-d02-s3-a12\",")
 	i := bytes.Index(h.manifest, marker)
 	require.Positive(t, i)
@@ -48,8 +48,8 @@ func TestPostgresGlobalRootAuditUpgradeAndHistory(t *testing.T) {
 	}
 	n, err := Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 2, n)
-	queries[1] = `SELECT jsonb_agg(to_jsonb(e) ORDER BY id)::text FROM gorp_migrations e WHERE id NOT IN ('20261108090912-default-pa-update-audit.sql','20261108090913-global-root-create-audit.sql')`
+	require.Equal(t, len(Names())-292, n)
+	queries[1] = `SELECT jsonb_agg(to_jsonb(e) ORDER BY id)::text FROM gorp_migrations e WHERE id IN (SELECT migration_id FROM ms_oncall_migration_provenance WHERE canonical_position<=292)`
 	queries[2] = `SELECT jsonb_agg(to_jsonb(e) ORDER BY canonical_position)::text FROM ms_oncall_migration_provenance e WHERE canonical_position<=292`
 	for i, q := range queries {
 		var after string

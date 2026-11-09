@@ -699,7 +699,7 @@ func TestPostgresBoundedAuditDedupeAndConstraints(t *testing.T) {
 func TestBoundedAuditCanonicalTail(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 294)
+	require.GreaterOrEqual(t, len(h.entries), 294)
 	e := h.entries[290]
 	require.EqualValues(t, 291, e.Position)
 	require.Equal(t, "ms-oncall-schedule-rotation-update-audit-d09-c4", e.BundleID)

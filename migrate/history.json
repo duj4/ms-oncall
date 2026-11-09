@@ -1817,6 +1817,35 @@
           "sha256": "c0159d26a26787d49daff82510ed71543d0501a74509a4ad81dcbef6cb8a79d9"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-service-delete-audit-d09-sd1",
+      "first_position": 295,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD1 direct bounded local implementation; Project baseline is policy context, not implementation acceptance",
+        "base_commit": "94360610d85d4bfbaf647276f07e4385c54760ae",
+        "base_tree": "3483ca6ea17d979dd136fe434d0ae2aa80e68fa7",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "48eefdae896f94a5fa22a0160480e5c3cccf55ae",
+        "authorization_tree": "7d7334348b78d1134a0c8db5d6b9425e537184fd"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-global-root-create-audit-d02-s3-a12",
+        "migration_id": "20261108090913-global-root-create-audit.sql",
+        "sha256": "c0159d26a26787d49daff82510ed71543d0501a74509a4ad81dcbef6cb8a79d9",
+        "evidence": "DIRECT_D09_SD1_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_294"
+      },
+      "adaptation_evidence": "EXPLICIT_SERVICE_DELETEALL_TARGETS_ONLY_ATOMIC_AUDIT_WITNESS_NO_AUTHORITY_EXPANSION_OR_HISTORICAL_SQL_REWRITE",
+      "entries": [
+        {
+          "id": "20261109081541-service-delete-audit.sql",
+          "original_id": "20261109081541-service-delete-audit.sql",
+          "sha256": "062dd95cde1a2880178074c2f5884c1cdd1a4da69f00090662dcd81dd917509f"
+        }
+      ]
     }
   ]
 }

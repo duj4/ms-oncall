@@ -3,9 +3,14 @@ package smoke
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -47,6 +52,112 @@ func serviceDeleteF1SecondRequest(t *testing.T, ctx context.Context, h *harness.
 		done <- result
 	}()
 	return done
+}
+
+// Evidence failures are diagnostic only: keep the original require failure and
+// print a second copy even when the optional artifact destination cannot write.
+func serviceDeleteF1SaveEvidence(t *testing.T, name string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Logf("F1 EVIDENCE FAILURE (%s): %v", name, err)
+		return
+	}
+	t.Logf("F1 EVIDENCE %s: %s", name, data)
+	if dir := os.Getenv("SERVICE_MANAGEMENT_EVIDENCE"); dir != "" {
+		if err := os.WriteFile(filepath.Join(dir, name+".json"), append(data, '\n'), 0600); err != nil {
+			t.Logf("F1 EVIDENCE FAILURE (%s): %v", name, err)
+		}
+	}
+}
+
+func serviceDeleteF1HTTPReceipt(result lc1HTTPResult) map[string]any {
+	receipt := map[string]any{"http_status": result.status, "http_response_observed": result.status != 0,
+		"graphql": result.response, "transport_error": nil, "decode_error": nil}
+	if result.err != nil {
+		field := "decode_error"
+		if result.status == 0 {
+			field = "transport_error"
+		}
+		receipt[field] = result.err.Error()
+	}
+	return receipt
+}
+
+// Each read has its own bounded, read-only transaction and does not share the
+// request context, connections or business transaction. No fatal assertions.
+func serviceDeleteF1ReadEvidence(db *sql.DB, query string) map[string]any {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result := map[string]any{"status": "NOT VERIFIED"}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			result["rollback_error"] = err.Error()
+		}
+	}()
+	// A Base database must not fail merely because the SD1 table is absent.
+	if query == "audit" {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT to_regclass('service_delete_audit_events') IS NOT NULL`).Scan(&exists); err != nil {
+			result["error"] = err.Error()
+			return result
+		}
+		if !exists {
+			result["status"] = "N/A — Base has no SD1 table"
+			return result
+		}
+		query = `SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY occurred_at,event_id),'[]'::jsonb)::text FROM service_delete_audit_events e`
+	}
+	var rows string
+	if err := tx.QueryRowContext(ctx, query).Scan(&rows); err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	result["status"], result["rows"] = "CAPTURED", json.RawMessage(rows)
+	return result
+}
+
+func serviceDeleteF1TerminalEvidence(t *testing.T, h *harness.Harness, before map[string]string, t3Reached bool, insertedEvidence <-chan error) {
+	t.Helper()
+	t3 := map[string]any{"status": "NOT VERIFIED", "reason": "original T3 receive/assertion point was not reached"}
+	if t3Reached {
+		select {
+		case err := <-insertedEvidence:
+			t3 = map[string]any{"status": "CAPTURED", "error": nil, "sqlstate": nil}
+			if err != nil {
+				t3["error"] = err.Error()
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) {
+					t3["sqlstate"], t3["constraint"] = pgErr.Code, pgErr.ConstraintName
+				}
+			}
+		default:
+			t3["reason"] = "T3 result copy unavailable; no additional wait or receive"
+		}
+	}
+	// Use exactly the existing business snapshot's table set. These names come
+	// from test helpers, never HTTP input; quote both SQL literals and identifiers.
+	tables := make([]string, 0, len(before))
+	for table := range before {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+	var fields []string
+	for _, table := range tables {
+		fields = append(fields, "'"+strings.ReplaceAll(table, "'", "''")+"', (SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb) FROM \""+strings.ReplaceAll(table, `"`, `""`)+"\" r)")
+	}
+	fields = append(fields, `'service_fk_constraints', (SELECT coalesce(jsonb_agg(jsonb_build_object('name',conname,'validated',convalidated,'definition',pg_get_constraintdef(oid)) ORDER BY conname),'[]'::jsonb) FROM pg_constraint WHERE contype='f' AND (conrelid='services'::regclass OR confrelid='services'::regclass))`)
+	serviceDeleteF1SaveEvidence(t, "f1-concurrent-terminal", map[string]any{
+		"test": t.Name(), "test_failed_at_capture": t.Failed(), "before": before,
+		"business": serviceDeleteF1ReadEvidence(h.App().DB(), "SELECT jsonb_build_object("+strings.Join(fields, ",")+")::text"),
+		"audit":    serviceDeleteF1ReadEvidence(h.App().DB(), "audit"), "T3": t3,
+		"fixture_ids": map[string]string{"service_a": h.UUID("service-a"), "service_b": h.UUID("service-b"), "late_heartbeat": h.UUID("late-heartbeat")},
+	})
 }
 
 // F1 exercises signed Human sessions through the real HTTP admission and
@@ -369,10 +480,13 @@ func TestGraphQLServiceDeleteF1ConcurrentDeleteAndCascade(t *testing.T) {
 	inserterPID := int(inserter.PgConn().PID())
 	heartbeatID, serviceID := h.UUID("late-heartbeat"), h.UUID("service-b")
 	inserted := make(chan error, 1)
+	insertedEvidence := make(chan error, 1)
 	requests.Add(1)
 	go func() {
 		defer requests.Done()
 		_, e := inserter.Exec(ctx, `INSERT INTO heartbeat_monitors(id,service_id,name,heartbeat_interval) VALUES($1,$2,'F1 concurrent FK',interval '5 minutes')`, heartbeatID, serviceID)
+		// One buffered copy cannot block the original T3 result delivery.
+		insertedEvidence <- e
 		inserted <- e
 	}()
 	// The FK writer can queue behind either the first transaction or the
@@ -391,11 +505,19 @@ func TestGraphQLServiceDeleteF1ConcurrentDeleteAndCascade(t *testing.T) {
 	before := serviceManagementSnapshot(t, h)
 	require.NoError(t, gate.Rollback(ctx))
 	r1, r2 := <-first, <-second
+	t3Reached := false
+	// Runs on FailNow too, before the original request cleanup and h cleanup.
+	defer func() { serviceDeleteF1TerminalEvidence(t, h, before, t3Reached, insertedEvidence) }()
+	serviceDeleteF1SaveEvidence(t, "f1-concurrent-http", map[string]any{
+		"T1": serviceDeleteF1HTTPReceipt(r1), "T2": serviceDeleteF1HTTPReceipt(r2),
+		"first_pid": firstPID, "second_pid": secondPID, "inserter_pid": inserterPID, "gate_pid": writer.PgConn().PID(),
+	})
 	require.NoError(t, r1.err)
 	require.NoError(t, r2.err)
 	require.Empty(t, r1.response.Errors)
 	require.NotEmpty(t, r2.response.Errors)
 	wait()
+	t3Reached = true
 	require.ErrorAs(t, <-inserted, &pgErr)
 	require.Equal(t, "23503", pgErr.Code, "late cascade dependent cannot enter after deletion")
 	require.Zero(t, serviceManagementCount(t, h, "services", h.UUID("service-b")))

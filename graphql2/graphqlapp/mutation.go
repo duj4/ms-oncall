@@ -360,7 +360,14 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 	return true, nil
 }
 
-func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
+func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (ok bool, err error) {
+	audit := newServiceDeleteAudit(ctx, a.DB, input)
+	defer func() {
+		// Admission failures have no business transaction or trusted target.
+		if audit != nil && !audit.started && err != nil {
+			err = audit.nextAttempt().finish(err)
+		}
+	}()
 	isDefault, err := isDefaultHuman(ctx)
 	if err != nil {
 		return false, err
@@ -436,7 +443,11 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 	// Retry because deleting frequently can cause a deadlock
 	// under heavy load.
 	err = retry.DoTemporaryError(func(int) error {
-		return a.tryDeleteAll(ctx, input, homeOrganizationID)
+		var attempt *serviceDeleteAttempt
+		if audit != nil {
+			attempt = audit.nextAttempt()
+		}
+		return a.tryDeleteAll(ctx, input, homeOrganizationID, attempt)
 	},
 		retry.Log(ctx),
 		retry.Limit(5),
@@ -446,16 +457,26 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 	return err == nil, err
 }
 
-func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, homeOrganizationID *uuid.UUID) error {
+func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, homeOrganizationID *uuid.UUID, audit *serviceDeleteAttempt) (err error) {
+	if audit != nil {
+		defer func() { err = audit.finish(err) }()
+	}
 	isDefault, err := isDefaultHuman(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := a.DB.BeginTx(ctx, nil)
+	var tx *sql.Tx
+	if audit == nil {
+		tx, err = a.DB.BeginTx(ctx, nil)
+	} else {
+		tx, err = audit.begin(ctx)
+	}
 	if err != nil {
 		return err
 	}
-	defer sqlutil.Rollback(ctx, "graphql: delete all", tx)
+	if audit == nil {
+		defer sqlutil.Rollback(ctx, "graphql: delete all", tx)
+	}
 
 	m := make(map[assignment.TargetType][]string)
 	for _, tgt := range input {
@@ -528,8 +549,14 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			// must not grant its Organization to Schedule/Rotation/EP deletion.
 			var serviceOrg *uuid.UUID
 			serviceOrg, err = serviceDeleteTargetOrganization(ctx, tx, ids)
+			if err == nil && audit != nil {
+				err = audit.capture(ctx, ids, serviceOrg)
+			}
 			if err == nil {
 				err = a.ServiceStore.DeleteManyTx(ctx, tx, ids, serviceOrg)
+			}
+			if err == nil && audit != nil {
+				err = audit.witness(ctx)
 			}
 			err = errors.Wrap(err, "delete services")
 		case assignment.TargetTypeEscalationPolicy:
@@ -563,6 +590,9 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		}
 	}
 
+	if audit != nil {
+		return audit.commit(ctx)
+	}
 	err = tx.Commit()
 	if err != nil {
 		return err
