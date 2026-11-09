@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +22,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 func fetchTestCache(t *testing.T) {
@@ -173,9 +177,10 @@ func TestFetchCancellation(t *testing.T) {
 			var attempts atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				attempts.Add(1)
-				if phase == "backoff" {
+				switch phase {
+				case "backoff":
 					w.WriteHeader(504)
-				} else if phase == "body" {
+				case "body":
 					w.Header().Set("Content-Length", "100")
 					_, _ = io.WriteString(w, "part")
 					w.(http.Flusher).Flush()
@@ -440,16 +445,248 @@ func TestFetchRedirectAndNoCache(t *testing.T) {
 	_ = os.Remove(name) // Required on platforms without open-file unlink.
 }
 
+func fetchSocketError(errno syscall.Errno) error {
+	// Go's TCP dial path wraps a failed socket(2) in these two layers.
+	return &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("socket", errno)}
+}
+
 func TestRetryTransportClassification(t *testing.T) {
-	for _, err := range []error{context.Canceled, os.ErrPermission, &os.PathError{Op: "write", Path: "synthetic", Err: syscall.ECONNRESET}} {
-		if retryTransport(err) {
-			t.Fatalf("local/permanent error retried: %v", err)
-		}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"canceled", context.Canceled, false},
+		{"permission", os.ErrPermission, false},
+		{"local-reset", &os.PathError{Op: "write", Path: "synthetic", Err: syscall.ECONNRESET}, false},
+		{"local-timeout", &os.PathError{Op: "write", Path: "synthetic", Err: context.DeadlineExceeded}, false},
+		{"eof", io.EOF, true},
+		{"unexpected-eof", io.ErrUnexpectedEOF, true},
+		{"connection-reset", syscall.ECONNRESET, true},
+		{"deadline", context.DeadlineExceeded, true},
+		{"dns-timeout", &net.DNSError{Err: "synthetic timeout", IsTimeout: true}, true},
+		{"dns-permanent", &net.DNSError{Err: "synthetic not found", IsNotFound: true}, false},
+		{"dns-temporary-only", &net.DNSError{Err: "synthetic temporary failure", IsTemporary: true}, true},
+		{"dial-emfile", fetchSocketError(syscall.EMFILE), true},
+		{"dial-enfile", fetchSocketError(syscall.ENFILE), true},
+		{"local-emfile", &os.PathError{Op: "open", Path: "synthetic", Err: syscall.EMFILE}, false},
+		{"local-enfile", &os.PathError{Op: "open", Path: "synthetic", Err: syscall.ENFILE}, false},
+		{"bare-emfile", syscall.EMFILE, false},
+		{"bare-enfile", syscall.ENFILE, false},
+		{"socket-without-dial", os.NewSyscallError("socket", syscall.EMFILE), false},
+		{"dial-without-socket", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EMFILE}, false},
+		{"dial-file-open", &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("open", syscall.ENFILE)}, false},
+		{"read-resource", &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("socket", syscall.EMFILE)}, false},
+		{"connection-refused", &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, false},
+		{"interrupted", fetchSocketError(syscall.EINTR), false},
+		{"unknown", errors.New("synthetic unknown error"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, err := range []error{tc.err, fmt.Errorf("wrapped: %w", tc.err), &url.Error{Op: "Get", URL: "http://example.invalid", Err: tc.err}} {
+				if got := retryTransport(err); got != tc.want {
+					t.Fatalf("retryTransport(%v)=%t want=%t", err, got, tc.want)
+				}
+				if retryTransport(errors.Join(err, context.Canceled)) {
+					t.Fatalf("cancellation lost precedence: %v", err)
+				}
+				if retryTransport(&os.PathError{Op: "write", Path: "synthetic", Err: err}) {
+					t.Fatalf("local failure lost precedence: %v", err)
+				}
+			}
+		})
 	}
-	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET, context.DeadlineExceeded} {
-		if !retryTransport(err) {
-			t.Fatalf("temporary transport error not retried: %v", err)
+}
+
+// The Go resolver exchanges real DNS messages over an in-memory TCP stream.
+// No packet is sent to the configured DNS servers, even on resolver retries.
+func fetchDNSConn(t *testing.T, rcode dnsmessage.RCode, queries *atomic.Int32) net.Conn {
+	t.Helper()
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		defer server.Close()
+		if err := server.SetDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Error(err)
+			return
 		}
+		var length [2]byte
+		if _, err := io.ReadFull(server, length[:]); err != nil {
+			t.Error(err)
+			return
+		}
+		wire := make([]byte, binary.BigEndian.Uint16(length[:]))
+		if _, err := io.ReadFull(server, wire); err != nil {
+			t.Error(err)
+			return
+		}
+		var query dnsmessage.Message
+		if err := query.Unpack(wire); err != nil {
+			t.Error(err)
+			return
+		}
+		if len(query.Questions) != 1 || query.Questions[0].Type != dnsmessage.TypeA {
+			t.Errorf("unexpected DNS questions: %v", query.Questions)
+			return
+		}
+		queries.Add(1)
+		response := dnsmessage.Message{
+			Header:    dnsmessage.Header{ID: query.ID, Response: true, RecursionDesired: true, RecursionAvailable: true, RCode: rcode},
+			Questions: query.Questions,
+		}
+		if rcode == dnsmessage.RCodeSuccess {
+			response.Answers = []dnsmessage.Resource{{
+				Header: dnsmessage.ResourceHeader{Name: query.Questions[0].Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 1},
+				Body:   &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}},
+			}}
+		}
+		wire, err := response.Pack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		binary.BigEndian.PutUint16(length[:], uint16(len(wire)))
+		if _, err := server.Write(append(length[:], wire...)); err != nil {
+			t.Error(err)
+		}
+	}()
+	return client
+}
+
+func TestFetchNetworkRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fault    string
+		failures int32
+		wantDial int32
+	}{
+		{"dns-servfail-recovers", "servfail", 1, 2},
+		{"dns-servfail-exhausted", "servfail", 3, 3},
+		{"dns-nxdomain", "nxdomain", 1, 1},
+		{"emfile-recovers", "emfile", 1, 2},
+		{"emfile-exhausted", "emfile", 3, 3},
+		{"enfile-recovers", "enfile", 1, 2},
+		{"enfile-exhausted", "enfile", 3, 3},
+		{"local-emfile", "local-emfile", 1, 1},
+		{"local-enfile", "local-enfile", 1, 1},
+		{"connection-refused", "refused", 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fetchTestCache(t)
+			var dials, requests, queries, dnsFailures atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				_, _ = io.WriteString(w, "synthetic tool")
+			}))
+			defer srv.Close()
+			transport := http.DefaultTransport.(*http.Transport).Clone()
+			defer transport.CloseIdleConnections()
+			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				attempt := dials.Add(1)
+				// Even a previous partial cache publication is forbidden on retry.
+				entries, err := os.ReadDir(cacheDir)
+				if err != nil || len(entries) != 0 {
+					t.Errorf("cache during retry: entries=%v error=%v", entries, err)
+					return nil, errors.New("cache was published before recovery")
+				}
+				if tc.fault == "servfail" || tc.fault == "nxdomain" {
+					rcode := dnsmessage.RCodeSuccess
+					if attempt <= tc.failures {
+						rcode = dnsmessage.RCodeServerFailure
+						if tc.fault == "nxdomain" {
+							rcode = dnsmessage.RCodeNameError
+						}
+					}
+					resolver := &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+						return fetchDNSConn(t, rcode, &queries), nil
+					}}
+					_, port, err := net.SplitHostPort(address)
+					if err != nil {
+						return nil, err
+					}
+					// Keep the HTTP URL loopback, preserving ProxyFromEnvironment's
+					// normal bypass. Only this isolated dial target uses the resolver.
+					dialer := &net.Dialer{Resolver: resolver}
+					conn, err := dialer.DialContext(ctx, "tcp4", net.JoinHostPort("gettool.retry.invalid.", port))
+					if attempt <= tc.failures {
+						var dnsErr *net.DNSError
+						var opErr *net.OpError
+						if !errors.As(err, &dnsErr) || !errors.As(err, &opErr) || opErr.Op != "dial" {
+							t.Errorf("expected actual resolver/dial error: %v", err)
+						} else {
+							wantTemporary := tc.fault == "servfail"
+							if dnsErr.IsTemporary != wantTemporary || dnsErr.IsTimeout || dnsErr.IsNotFound == wantTemporary {
+								t.Errorf("unexpected resolver flags: %+v", dnsErr)
+							}
+							if dnsErr.IsTemporary && !dnsErr.IsTimeout {
+								dnsFailures.Add(1)
+							}
+						}
+					}
+					return conn, err
+				}
+				if attempt <= tc.failures {
+					errno := syscall.EMFILE
+					if tc.fault == "enfile" || tc.fault == "local-enfile" {
+						errno = syscall.ENFILE
+					}
+					switch tc.fault {
+					case "local-emfile", "local-enfile":
+						return nil, &os.PathError{Op: "open", Path: "synthetic", Err: errno}
+					case "refused":
+						return nil, &net.OpError{Op: "dial", Net: network, Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
+					default:
+						return nil, fmt.Errorf("wrapped socket failure: %w", fetchSocketError(errno))
+					}
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, address)
+			}
+			f := testFetcher(&http.Client{Transport: transport})
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			fd, n, err := f.fetch(ctx, srv.URL)
+			wantSuccess := tc.wantDial > tc.failures
+			if wantSuccess {
+				if err != nil || fd == nil {
+					t.Fatalf("recovery failed: %v", err)
+				}
+				body, readErr := io.ReadAll(fd)
+				fd.Close()
+				if readErr != nil || string(body) != "synthetic tool" || n != int64(len(body)) {
+					t.Fatalf("incomplete download: %q size=%d error=%v", body, n, readErr)
+				}
+				requireZIPCache(t, srv.URL, body)
+				// A cache hit needs neither DNS nor another dial/request.
+				fetchContents(t, f, ctx, srv.URL, "synthetic tool")
+			} else {
+				if err == nil || fd != nil || n != 0 {
+					t.Fatalf("fd=%v size=%d error=%v", fd, n, err)
+				}
+				if !strings.Contains(err.Error(), fmt.Sprintf("attempt %d/3", tc.wantDial)) {
+					t.Fatalf("unexpected attempt limit: %v", err)
+				}
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					t.Fatalf("test deadline masked failure: %v", err)
+				}
+				requireCacheEmpty(t)
+			}
+			wantRequests := int32(0)
+			if wantSuccess {
+				wantRequests = 1
+			}
+			if dials.Load() != tc.wantDial || requests.Load() != wantRequests {
+				t.Fatalf("dials=%d requests=%d", dials.Load(), requests.Load())
+			}
+			if tc.fault == "servfail" && (dnsFailures.Load() != tc.failures || queries.Load() <= tc.failures) {
+				t.Fatalf("DNS failures=%d queries=%d", dnsFailures.Load(), queries.Load())
+			}
+			t.Logf("dials=%d HTTP requests=%d DNS queries=%d temporary-only DNS failures=%d recovered=%t", dials.Load(), requests.Load(), queries.Load(), dnsFailures.Load(), wantSuccess)
+		})
 	}
 }
 

@@ -134,9 +134,22 @@ func retryTransport(err error) bool {
 		return false // A local write failure is not a temporary transport error.
 	}
 	var netErr net.Error
-	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) ||
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) ||
 		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, context.DeadlineExceeded) ||
-		(errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()))
+		(errors.As(err, &netErr) && netErr.Timeout()) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsTemporary {
+		return true
+	}
+	// Dialing wraps socket creation failures in OpError and SyscallError.
+	// Restrict resource retries to that source, not arbitrary file operations.
+	var opErr *net.OpError
+	var syscallErr *os.SyscallError
+	return errors.As(err, &opErr) && opErr.Op == "dial" &&
+		errors.As(opErr.Err, &syscallErr) && syscallErr.Syscall == "socket" &&
+		(errors.Is(syscallErr.Err, syscall.EMFILE) || errors.Is(syscallErr.Err, syscall.ENFILE))
 }
 
 func (f fileFetcher) download(ctx context.Context, rawURL string) (result *os.File, size int64, retry bool, err error) {
