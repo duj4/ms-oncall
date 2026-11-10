@@ -169,7 +169,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	s.insert = p(`INSERT INTO services (id,organization_id,name,description,escalation_policy_id) VALUES ($1,$2,$3,$4,$5)`)
 	s.update = p(`UPDATE services SET name = $2, description = $3, escalation_policy_id = $4, maintenance_expires_at = $5 WHERE id = $1`)
 	s.updateOrg = p(`UPDATE services SET name = $2, description = $3, escalation_policy_id = $4, maintenance_expires_at = $5 WHERE id = $1 AND organization_id = $6`)
-	s.delete = p(`DELETE FROM services WHERE id = any($1)`)
+	s.delete = p(`DELETE FROM services WHERE id = any($1) RETURNING id,organization_id`)
 	s.deleteOrg = p(`
 		DELETE FROM services s
 		WHERE s.id = any($1)
@@ -186,7 +186,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 				WHERE matched.id = any($1)
 					AND matched.organization_id = $2
 			)
-	`)
+	RETURNING s.id,s.organization_id`)
 
 	return s, prep.Err
 }
@@ -288,16 +288,27 @@ func (s *Store) CreateServiceTx(ctx context.Context, tx *sql.Tx, svc *Service) (
 }
 
 func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) error {
+	_, err := s.DeleteManyForAuditTx(ctx, tx, ids, organizationID)
+	return err
+}
+
+// DeletedService is a safe receipt from the actual root DELETE. A snapshot or
+// a row count cannot substitute for these returned identities.
+type DeletedService struct{ ID, OrganizationID uuid.UUID }
+
+// DeleteManyForAuditTx shares the original permissions, full-set predicate and
+// input limit. Transaction finalization remains exclusively caller-owned.
+func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []string, organizationID *uuid.UUID) ([]DeletedService, error) {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	parsedIDs, err := validate.ParseManyUUID("ServiceID", ids, 50)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
 	for _, id := range parsedIDs {
@@ -307,7 +318,7 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 	args := []any{sqlutil.UUIDArray(ids)}
 	if organizationID != nil {
 		if *organizationID == uuid.Nil {
-			return validation.NewFieldError("OrganizationID", "must be specified")
+			return nil, validation.NewFieldError("OrganizationID", "must be specified")
 		}
 		stmt = s.deleteOrg
 		args = append(args, *organizationID)
@@ -315,18 +326,26 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 	if tx != nil {
 		stmt = tx.StmtContext(ctx, stmt)
 	}
-	result, err := stmt.ExecContext(ctx, args...)
-	if err != nil || organizationID == nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
+	rows, err := stmt.QueryContext(ctx, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if rows != int64(len(want)) {
-		return sql.ErrNoRows
+	defer rows.Close()
+	var result []DeletedService
+	for rows.Next() {
+		var r DeletedService
+		if err := rows.Scan(&r.ID, &r.OrganizationID); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
 	}
-	return nil
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if organizationID != nil && len(result) != len(want) {
+		return nil, sql.ErrNoRows
+	}
+	return result, nil
 }
 
 func wrap(tx *sql.Tx, s *sql.Stmt) *sql.Stmt {

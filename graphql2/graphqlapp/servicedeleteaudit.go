@@ -16,19 +16,21 @@ import (
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
+	"github.com/target/goalert/service"
 	"github.com/target/goalert/service/deleteaudit"
 	"github.com/target/goalert/util/errutil"
 	"github.com/target/goalert/util/log"
 	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation"
-	"github.com/target/goalert/validation/validate"
 )
 
 type serviceDeleteAudit struct {
-	ctx      context.Context
-	db       *sql.DB
-	identity deleteaudit.Event
-	started  bool
+	ctx          context.Context
+	db           *sql.DB
+	identity     deleteaudit.Event
+	started      bool
+	explicitKeys []uuid.UUID // Request credentials remain in memory only.
+	serviceIDs   map[uuid.UUID]bool
 }
 
 func newServiceDeleteAudit(ctx context.Context, db *sql.DB, input []assignment.RawTarget) *serviceDeleteAudit {
@@ -39,7 +41,7 @@ func newServiceDeleteAudit(ctx context.Context, db *sql.DB, input []assignment.R
 	if !hasService {
 		return nil
 	}
-	e := deleteaudit.Event{RequestID: uuid.New(), ActorKind: "unknown", AuthoritySource: "unknown", AuthorityRole: "unknown", OrganizationRole: "unknown"}
+	e := deleteaudit.Event{RequestID: uuid.New(), ExecutionID: uuid.New(), EffectsVersion: 1, ActorKind: "unknown", AuthoritySource: "unknown", AuthorityRole: "unknown", OrganizationRole: "unknown"}
 	if ctx != nil {
 		if id, err := uuid.Parse(log.RequestID(ctx)); err == nil && id != uuid.Nil {
 			e.RequestID = id
@@ -64,7 +66,20 @@ func newServiceDeleteAudit(ctx context.Context, db *sql.DB, input []assignment.R
 			e.ActorKind, e.AuthoritySource, e.AuthorityRole = "internal_system", "trusted_internal_system", "internal_system"
 		}
 	}
-	return &serviceDeleteAudit{ctx: ctx, db: db, identity: e}
+	p := &serviceDeleteAudit{ctx: ctx, db: db, identity: e, serviceIDs: map[uuid.UUID]bool{}}
+	for _, t := range input {
+		id, err := uuid.Parse(t.TargetID())
+		if err != nil {
+			continue
+		}
+		if t.TargetType() == assignment.TargetTypeIntegrationKey {
+			p.explicitKeys = append(p.explicitKeys, id)
+		}
+		if t.TargetType() == assignment.TargetTypeService {
+			p.serviceIDs[id] = true
+		}
+	}
+	return p
 }
 
 type serviceDeleteAttempt struct {
@@ -75,6 +90,10 @@ type serviceDeleteAttempt struct {
 	targets                               []deleteaudit.Event
 	commitAttempted, finalized, committed bool
 	beginFailed, auditFailed              bool
+	children                              []serviceChild
+	keyReceipts                           []serviceKeyReceipt
+	deletedRoots                          []service.DeletedService
+	successes                             []deleteaudit.Event
 }
 
 func (p *serviceDeleteAudit) nextAttempt() *serviceDeleteAttempt {
@@ -96,61 +115,6 @@ func (a *serviceDeleteAttempt) begin(ctx context.Context) (*sql.Tx, error) {
 		a.beginFailed = false
 	}
 	return a.tx, err
-}
-
-// This read is confined to the Service group's existing position and authorized
-// scope. It grants no scope, changes no parent lock order and reads no fields
-// beyond immutable audit attribution. The Store still validates the full set.
-func (a *serviceDeleteAttempt) capture(ctx context.Context, ids []string, scope *uuid.UUID) error {
-	if _, err := validate.ParseManyUUID("ServiceID", ids, 50); err != nil {
-		return err
-	}
-	query := `SELECT id, organization_id FROM services WHERE id=ANY($1)`
-	args := []any{sqlutil.UUIDArray(ids)}
-	if scope != nil {
-		query += ` AND organization_id=$2`
-		args = append(args, *scope)
-	}
-	query += ` ORDER BY id FOR UPDATE`
-	rows, err := a.tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	var targets []deleteaudit.Event
-	for rows.Next() {
-		e := a.event
-		if err := rows.Scan(&e.ServiceID, &e.TargetOrganizationID); err != nil {
-			return err
-		}
-		e.EventID = uuid.New()
-		targets = append(targets, e)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	a.targets = targets
-	return nil
-}
-
-func (a *serviceDeleteAttempt) witness(ctx context.Context) error {
-	for _, e := range a.targets {
-		// The trusted System Store preserves missing/no-op semantics. Never
-		// manufacture a deletion event for a row a trigger left in place.
-		var exists bool
-		if err := a.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT FROM services WHERE id=$1)`, e.ServiceID).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			continue
-		}
-		e.Outcome, e.Reason, e.OccurredAt = "committed", "deleted", time.Now()
-		if err := deleteaudit.Append(ctx, a.tx, e); err != nil {
-			a.auditFailed = true
-			return err
-		}
-	}
-	return nil
 }
 
 func (a *serviceDeleteAttempt) commit(ctx context.Context) error {
@@ -247,6 +211,7 @@ func (a *serviceDeleteAttempt) finish(operationErr error) error {
 	for i := range events {
 		events[i].EventID = uuid.New()
 		events[i].Outcome, events[i].Reason, events[i].OccurredAt = outcome, reason, time.Now()
+		events[i].Effects = nil
 	}
 	a.event.EventID = events[0].EventID
 	if !released {

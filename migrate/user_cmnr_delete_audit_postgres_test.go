@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	pgdump "github.com/target/goalert/devtools/pgdump-lite"
-	"github.com/target/goalert/service/deleteaudit"
 	audit "github.com/target/goalert/user/cmnrdeleteaudit"
 )
 
@@ -28,7 +27,7 @@ func cmnrDBEvent() audit.Event {
 func TestCMNRDeleteAuditCanonicalPrefix(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 296)
+	require.Len(t, h.entries, 297)
 	marker := []byte(",\n    {\n      \"id\": \"ms-oncall-user-cmnr-delete-audit-d09-sd2\",")
 	i := bytes.Index(h.manifest, marker)
 	require.Positive(t, i)
@@ -52,18 +51,20 @@ func TestPostgresCMNRDeleteAuditUpgradeReplayAndStrictSQL(t *testing.T) {
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	// The accepted SD1 table and historical values must survive 296 unchanged.
-	require.NoError(t, deleteaudit.Append(ctx, tx, old))
+	require.NoError(t, appendLegacyServiceDelete(ctx, tx, old))
 	require.NoError(t, tx.Commit())
 	var before string
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_jsonb(e)::text FROM service_delete_audit_events e`).Scan(&before))
 	n, err = Up(ctx, uri, "user-cmnr-delete-audit")
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	require.NoError(t, VerifyAll(ctx, uri))
-	require.NoError(t, VerifyIsLatest(ctx, uri))
 	var after string
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_jsonb(e)::text FROM service_delete_audit_events e`).Scan(&after))
 	require.Equal(t, before, after)
+	_, err = Up(ctx, uri, "")
+	require.NoError(t, err)
+	require.NoError(t, VerifyAll(ctx, uri))
+	require.NoError(t, VerifyIsLatest(ctx, uri))
 	e := cmnrDBEvent()
 	numeric := int64(9223372036854775807)
 	e.Effects = []audit.Effect{{EffectID: uuid.New(), ResourceType: "auth_subject", ResourceNumericID: &numeric, OwnerUserID: uuid.New(), OrgResolution: "unknown", Relation: "contact_method.auth_subject", Change: "deleted", Provenance: "IMPLICIT_FK_CASCADE"}}

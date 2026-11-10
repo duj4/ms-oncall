@@ -410,6 +410,7 @@ func TestServiceDeleteAuditSimulatedAcknowledgementsOverRealPostgres(t *testing.
 			if mode == "rollback_unconfirmed" {
 				id = h.UUID("missing")
 			}
+			_, safe := sd3Key(t, h, h.UUID("service-b"))
 			ok, err := a.Mutation().DeleteAll(servicePlatformAdminContext(t, h), []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: id}})
 			require.Error(t, err)
 			require.False(t, ok)
@@ -418,6 +419,9 @@ func TestServiceDeleteAuditSimulatedAcknowledgementsOverRealPostgres(t *testing.
 			if committed {
 				require.Zero(t, serviceManagementCount(t, h, "services", h.UUID("service-b")))
 				require.Equal(t, 1, sd1Count(t, h, "committed"))
+				effects := sd3Effects(t, h, h.UUID("service-b"))
+				require.Len(t, effects, 1)
+				require.Equal(t, safe, *effects[0].ResourceUUID)
 			} else {
 				require.Equal(t, 1, serviceManagementCount(t, h, "services", h.UUID("service-b")))
 				require.Zero(t, sd1Count(t, h, "committed"))

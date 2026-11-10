@@ -1875,6 +1875,35 @@
           "sha256": "5cb15dbf9926f185cad5393adc42a38a0c2a24cc85be5665551f606f968e230b"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-service-cascade-b2-effects-d09-sd3",
+      "first_position": 297,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD3-IMPL1 direct Owner-authorized local implementation of D09-SD3-SPEC1-R1; no publication or production authorization",
+        "base_commit": "ab291a79c677f09d9d8ab0583ac7e42bc09c3d95",
+        "base_tree": "b74afa76bfc044134c84a769296ff9cd61ef9f24",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "4c996304e307ff775231a12a33f35792e924f2d0",
+        "authorization_tree": "f0d97130630d1a254fad020b93fca51ac8ebb27b"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-user-cmnr-delete-audit-d09-sd2",
+        "migration_id": "20261110115605-user-cmnr-delete-audit.sql",
+        "sha256": "5cb15dbf9926f185cad5393adc42a38a0c2a24cc85be5665551f606f968e230b",
+        "evidence": "DIRECT_D09_SD3_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_296"
+      },
+      "adaptation_evidence": "SERVICE_ROOT_COMPLETE_TYPED_B2_SAFE_KEY_SURROGATE_NO_AUTHORITY_OR_TRANSACTION_OWNERSHIP_CHANGE",
+      "entries": [
+        {
+          "id": "20261110172342-service-cascade-b2-effects.sql",
+          "original_id": "20261110172342-service-cascade-b2-effects.sql",
+          "sha256": "799a5b2fed05fc1827d1aa2a91d7b1546952761f66114676a617c24ac97757b1"
+        }
+      ]
     }
   ]
 }

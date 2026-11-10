@@ -5,6 +5,7 @@ package deleteaudit
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -29,6 +30,9 @@ type Event struct {
 	ServiceID, TargetOrganizationID                  uuid.UUID
 	Outcome, Reason                                  string
 	OccurredAt                                       time.Time
+	ExecutionID                                      uuid.UUID
+	EffectsVersion                                   int16
+	Effects                                          []Effect
 }
 
 func (e Event) valid() bool {
@@ -92,16 +96,21 @@ func nullable(id uuid.UUID) any {
 // is idempotent; different content under the same ID is an explicit conflict.
 // A successful INSERT is not proof that the owning transaction committed.
 func Append(ctx context.Context, tx *sql.Tx, e Event) error {
-	if !e.valid() {
-		return ErrInvalid
+	if err := e.Validate(); err != nil {
+		return err
 	}
 	if tx == nil {
 		return ErrUnavailable
 	}
-	args := []any{e.EventID, e.AttemptID, e.RequestID, e.ActorKind, nullable(e.ActorID), nullable(e.HomeOrganizationID), e.AuthoritySource, e.AuthorityRole, e.OrganizationRole, nullable(e.ServiceID), nullable(e.TargetOrganizationID), e.Outcome, e.Reason, e.OccurredAt.UTC().Truncate(time.Microsecond)}
+	e = e.Canonical()
+	raw, err := json.Marshal(e.Effects)
+	if err != nil {
+		return ErrInvalid
+	}
+	args := []any{e.EventID, e.AttemptID, e.RequestID, e.ActorKind, nullable(e.ActorID), nullable(e.HomeOrganizationID), e.AuthoritySource, e.AuthorityRole, e.OrganizationRole, nullable(e.ServiceID), nullable(e.TargetOrganizationID), e.Outcome, e.Reason, e.OccurredAt, e.ExecutionID, e.EffectsVersion, string(raw)}
 	r, err := tx.ExecContext(ctx, `INSERT INTO service_delete_audit_events
-	 (event_id,attempt_id,request_id,actor_kind,actor_id,home_organization_id,authority_source,authority_role,organization_role,service_id,target_organization_id,outcome,reason_code,occurred_at)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(event_id) DO NOTHING`, args...)
+	 (event_id,attempt_id,request_id,actor_kind,actor_id,home_organization_id,authority_source,authority_role,organization_role,service_id,target_organization_id,outcome,reason_code,occurred_at,execution_id,effects_version,effects)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb) ON CONFLICT(event_id) DO NOTHING`, args...)
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -117,7 +126,8 @@ func Append(ctx context.Context, tx *sql.Tx, e Event) error {
 	 AND attempt_id=$2 AND request_id=$3 AND actor_kind=$4 AND actor_id IS NOT DISTINCT FROM $5::uuid
 	 AND home_organization_id IS NOT DISTINCT FROM $6::uuid AND authority_source=$7 AND authority_role=$8 AND organization_role=$9
 	 AND service_id IS NOT DISTINCT FROM $10::uuid AND target_organization_id IS NOT DISTINCT FROM $11::uuid
-	 AND outcome=$12 AND reason_code=$13 AND occurred_at=$14)`, args...).Scan(&same)
+	 AND outcome=$12 AND reason_code=$13 AND occurred_at=$14 AND execution_id=$15 AND effects_version=$16 AND effects=$17::jsonb
+	 AND schema_version=1 AND operation='service.delete')`, args...).Scan(&same)
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -134,7 +144,7 @@ func RecordFailures(db *sql.DB, events []Event) (resultErr error) {
 		return ErrUnavailable
 	}
 	for _, e := range events {
-		if e.Outcome == "committed" || !e.valid() {
+		if e.Outcome == "committed" || e.Validate() != nil {
 			return ErrInvalid
 		}
 	}
