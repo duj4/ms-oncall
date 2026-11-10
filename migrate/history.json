@@ -1846,6 +1846,35 @@
           "sha256": "062dd95cde1a2880178074c2f5884c1cdd1a4da69f00090662dcd81dd917509f"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-user-cmnr-delete-audit-d09-sd2",
+      "first_position": 296,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD2-IMPL1 direct Owner-authorized bounded isolated implementation; Project baseline is policy context, not implementation acceptance",
+        "base_commit": "c6e662a4ed29d1d80e1580f28fa9a83fd96a0a8d",
+        "base_tree": "6209b257fa066d8bd50eda11a074c270c3d89f39",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "41b6abddd65ace9bd347d7fdef01ef7c49d17671",
+        "authorization_tree": "0f63f72a53dc171ea0523c6e3b09d86a35e8a50d"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-service-delete-audit-d09-sd1",
+        "migration_id": "20261109081541-service-delete-audit.sql",
+        "sha256": "062dd95cde1a2880178074c2f5884c1cdd1a4da69f00090662dcd81dd917509f",
+        "evidence": "DIRECT_D09_SD2_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_295"
+      },
+      "adaptation_evidence": "EXPLICIT_CM_NR_DELETEALL_B2_TYPED_EFFECTS_ATOMIC_WITNESSES_NO_NEW_AUTHORITY_NO_SERVICE_HISTORY_REWRITE",
+      "entries": [
+        {
+          "id": "20261110115605-user-cmnr-delete-audit.sql",
+          "original_id": "20261110115605-user-cmnr-delete-audit.sql",
+          "sha256": "5cb15dbf9926f185cad5393adc42a38a0c2a24cc85be5665551f606f968e230b"
+        }
+      ]
     }
   ]
 }

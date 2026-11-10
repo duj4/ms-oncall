@@ -66,16 +66,25 @@ func CheckCMNRMutationAuthority(ctx context.Context) (CMNRMutationAuthority, err
 	return CMNRMutationAuthority{valid: true, owner: owner, home: home, platformAdmin: value.Privileges().PlatformAdmin()}, nil
 }
 
-// AuthorizeUser validates a locked target owner's current Normal relationship.
-// Callers hold the CM/NR locks until the same transaction's write completes.
-// The predicates deliberately match organization.FindCurrentUserOrganization:
-// no membership, provenance, mapping timestamp or lifecycle policy is invented.
-// FOR SHARE (not KEY SHARE) also fences non-key assignment/role updates. All
-// callers visit distinct owners in UUID order. System retains its pre-existing
-// internal authority without requiring a Human Normal Home assignment.
+// CMNROrganizationSnapshot is a historical safe projection, not a capability.
+type CMNROrganizationSnapshot struct {
+	ID         uuid.UUID
+	Resolution string
+}
+
+// AuthorizeUser preserves the existing authority-only API and predicates.
 func (a CMNRMutationAuthority) AuthorizeUser(ctx context.Context, tx *sql.Tx, owner uuid.UUID) error {
+	_, err := a.AuthorizeUserSnapshot(ctx, tx, owner)
+	return err
+}
+
+// AuthorizeUserSnapshot returns the Organization from the original locked
+// authorization JOIN. Callers retain CM/NR locks and visit owners in UUID order.
+// FOR SHARE fences assignment changes. Trusted System keeps its existing
+// authority without acquiring a Human Normal Home requirement.
+func (a CMNRMutationAuthority) AuthorizeUserSnapshot(ctx context.Context, tx *sql.Tx, owner uuid.UUID) (CMNROrganizationSnapshot, error) {
 	if !a.valid || tx == nil || owner == uuid.Nil || (!a.system && !a.platformAdmin && a.owner != owner) {
-		return permission.NewAccessDenied("")
+		return CMNROrganizationSnapshot{}, permission.NewAccessDenied("")
 	}
 	if a.system {
 		// Internal execution does not acquire Human Organization authority,
@@ -83,9 +92,9 @@ func (a CMNRMutationAuthority) AuthorizeUser(ctx context.Context, tx *sql.Tx, ow
 		var id uuid.UUID
 		err := tx.QueryRowContext(ctx, `SELECT id FROM public.users WHERE id=$1 FOR KEY SHARE`, owner).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
-			return permission.NewAccessDenied("")
+			return CMNROrganizationSnapshot{}, permission.NewAccessDenied("")
 		}
-		return err
+		return CMNROrganizationSnapshot{Resolution: "unknown"}, err
 	}
 	// Lock stable identity keys before resolving the mutable Organization JOIN.
 	// After a concurrent Assignment update, READ COMMITTED gives the separate
@@ -97,10 +106,10 @@ func (a CMNRMutationAuthority) AuthorizeUser(ctx context.Context, tx *sql.Tx, ow
 		WHERE u.id=$1
 		FOR SHARE OF u,a`, owner).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return permission.NewAccessDenied("")
+		return CMNROrganizationSnapshot{}, permission.NewAccessDenied("")
 	}
 	if err != nil {
-		return err
+		return CMNROrganizationSnapshot{}, err
 	}
 	var organizationID uuid.UUID
 	err = tx.QueryRowContext(ctx, `SELECT a.effective_organization_id
@@ -120,13 +129,58 @@ func (a CMNRMutationAuthority) AuthorizeUser(ctx context.Context, tx *sql.Tx, ow
 			AND o.classification='NORMAL' AND n.organization_classification='NORMAL'
 		FOR SHARE OF u,a,o,n`, owner, organization.DefaultOrganizationID).Scan(&organizationID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return permission.NewAccessDenied("")
+		return CMNROrganizationSnapshot{}, permission.NewAccessDenied("")
 	}
 	if err != nil {
-		return err
+		return CMNROrganizationSnapshot{}, err
 	}
 	if !a.platformAdmin && a.home != uuid.Nil && a.home != organizationID {
-		return permission.NewAccessDenied("")
+		return CMNROrganizationSnapshot{}, permission.NewAccessDenied("")
 	}
-	return nil
+	return CMNROrganizationSnapshot{ID: organizationID, Resolution: "known_normal"}, nil
+}
+
+// SnapshotCMNROrganization resolves additional effect owners without performing
+// actor/owner authorization or inventing a new permission condition. Missing or
+// inconsistent assignments are explicitly unknown; SQL failure remains fatal.
+// Callers already hold the affected business row locks, visit owners in UUID
+// order, and retain these locks until the original transaction ends.
+func SnapshotCMNROrganization(ctx context.Context, tx *sql.Tx, owner uuid.UUID) (CMNROrganizationSnapshot, error) {
+	unknown := CMNROrganizationSnapshot{Resolution: "unknown"}
+	var id uuid.UUID
+	err := tx.QueryRowContext(ctx, `SELECT a.user_id FROM public.users u
+	 JOIN public.user_organization_assignments a ON a.user_id=u.id
+	 WHERE u.id=$1 FOR SHARE OF u,a`, owner).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return unknown, nil
+	}
+	if err != nil {
+		return unknown, err
+	}
+	var resolution string
+	err = tx.QueryRowContext(ctx, `SELECT o.id, CASE WHEN o.classification='NORMAL' THEN 'known_normal' ELSE 'known_default' END
+	 FROM public.users u JOIN public.user_organization_assignments a ON a.user_id=u.id
+	 JOIN public.organizations o ON o.id=a.effective_organization_id AND o.classification=a.effective_organization_classification
+	 WHERE u.id=$1 AND u.role IN ('user','admin') AND (
+	 (o.classification='NORMAL' AND o.id<>$2 AND a.mapping_outcome='EXACTLY_ONE' AND a.matched_count=1
+	 AND a.effective_normal_organization_id=o.id AND a.organization_role IN ('ORG_MEMBER','ORG_ADMIN'))
+	 OR (o.classification='DEFAULT' AND o.id=$2 AND a.effective_normal_organization_id IS NULL AND a.organization_role='NONE'))
+	 FOR SHARE OF u,a,o`, owner, organization.DefaultOrganizationID).Scan(&id, &resolution)
+	if errors.Is(err, sql.ErrNoRows) {
+		return unknown, nil
+	}
+	if err != nil {
+		return unknown, err
+	}
+	if resolution == "known_normal" {
+		var normal uuid.UUID
+		err = tx.QueryRowContext(ctx, `SELECT organization_id FROM public.normal_organizations WHERE organization_id=$1 AND organization_classification='NORMAL' FOR SHARE`, id).Scan(&normal)
+		if errors.Is(err, sql.ErrNoRows) {
+			return unknown, nil
+		}
+		if err != nil {
+			return unknown, err
+		}
+	}
+	return CMNROrganizationSnapshot{ID: id, Resolution: resolution}, nil
 }

@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/target/goalert/executioncontext"
-	"github.com/target/goalert/permission"
 )
 
 // LockCMNRContactMethods locks existing CM rows in UUID order for CM Delete
@@ -50,42 +49,6 @@ func AuthorizeCMNROwners(ctx context.Context, tx *sql.Tx, authority executioncon
 }
 
 func deleteCMNRTargets(ctx context.Context, tx *sql.Tx, authority executioncontext.CMNRMutationAuthority, ids []uuid.UUID) error {
-	cms, err := LockCMNRContactMethods(ctx, tx, ids)
-	if err != nil {
-		return err
-	}
-	lockedIDs := make([]uuid.UUID, 0, len(cms))
-	for id := range cms {
-		lockedIDs = append(lockedIDs, id)
-	}
-	// Validate the complete cascade before deleting anything. CM locks fence
-	// new references; NR locks fence concurrent child owner/parent changes.
-	rows, err := tx.QueryContext(ctx, `SELECT user_id,contact_method_id FROM user_notification_rules
-		WHERE contact_method_id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`, pq.Array(lockedIDs))
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var owner, cm uuid.UUID
-		if err := rows.Scan(&owner, &cm); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if cms[cm] != owner {
-			_ = rows.Close()
-			return permission.NewAccessDenied("")
-		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	if err := AuthorizeCMNROwners(ctx, tx, authority, cms); err != nil {
-		return err
-	}
-	// Delete only locked existing rows, never an ID first inserted after the
-	// locking read. Missing IDs retain their S0A no-op behavior.
-	_, err = tx.ExecContext(ctx, `DELETE FROM user_contact_methods WHERE id=ANY($1::uuid[])`, pq.Array(lockedIDs))
+	_, err := deleteCMNRTargetsResult(ctx, tx, authority, ids, false)
 	return err
 }
