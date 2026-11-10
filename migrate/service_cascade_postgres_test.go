@@ -18,7 +18,7 @@ import (
 func TestServiceCascade297CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 297)
+	require.Len(t, h.entries, 298)
 	e := h.entries[296]
 	require.EqualValues(t, 297, e.Position)
 	require.Equal(t, "20261110172342-service-cascade-b2-effects.sql", e.ID)
@@ -62,7 +62,7 @@ func TestPostgresServiceCascadePG17HistoryAndPG19KeyIdentity(t *testing.T) {
 			require.NoError(t, db.QueryRowContext(ctx, `SELECT to_jsonb(e)::text FROM user_cmnr_delete_audit_events e`).Scan(&cmBefore))
 			n, err := Up(ctx, uri, "")
 			require.NoError(t, err)
-			require.Equal(t, 1, n)
+			require.Equal(t, len(Names())-296, n)
 			require.NoError(t, VerifyAll(ctx, uri))
 			require.NoError(t, VerifyIsLatest(ctx, uri))
 			var after, cmAfter string

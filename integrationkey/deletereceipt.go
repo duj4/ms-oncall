@@ -16,7 +16,7 @@ type DeleteReceipt struct{ ResourceID, ServiceID uuid.UUID }
 
 // DeleteManyForAuditTx uses the existing delete predicates and a safe explicit
 // RETURNING projection. The caller locks/authorizes the keys and their parents,
-// and owns the transaction. There is no independent Key audit event.
+// and owns the transaction. The controller partitions these receipts into independent Key roots or SD3 effects.
 func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []string, org *uuid.UUID) ([]DeleteReceipt, error) {
 	if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
 		return nil, err

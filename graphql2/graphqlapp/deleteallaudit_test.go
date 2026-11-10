@@ -91,6 +91,9 @@ func (c *sd2Conn) ExecContext(_ context.Context, q string, args []driver.NamedVa
 		}
 		execution = args[14].Value.(string)
 		request, attempt = args[2].Value.(string), args[1].Value.(string)
+	} else if strings.Contains(q, "INSERT INTO integration_key_delete_audit_events") {
+		success = args[5].Value == "success_witness"
+		request, execution, attempt = args[2].Value.(string), args[3].Value.(string), args[4].Value.(string)
 	} else {
 		return nil, errors.New("unexpected write")
 	}
@@ -361,10 +364,10 @@ func TestDeleteAllAuditAtomicFailureBatchCapacity(t *testing.T) {
 			a.targets = append(a.targets, a.target(target, typ))
 		}
 	}
-	services, events := a.failureEvents("tx_failed", "write_failed")
+	services, events, keys := a.failureEvents("tx_failed", "write_failed")
 	require.Len(t, services, 50)
 	require.Len(t, events, 100)
-	persisted, released := recordDeleteAllFailureBatch(p.db, services, events)
+	persisted, released := recordDeleteAllFailureBatch(p.db, services, events, keys)
 	require.True(t, persisted)
 	require.True(t, released)
 	require.Equal(t, 1, s.begins)

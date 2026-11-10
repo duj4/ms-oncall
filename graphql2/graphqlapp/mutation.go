@@ -578,16 +578,7 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			}
 			err = errors.Wrap(err, "delete escalation policies")
 		case assignment.TargetTypeIntegrationKey:
-			var serviceAudit *serviceDeleteAttempt
-			if audit != nil {
-				serviceAudit = audit.service
-			}
-			if serviceAudit == nil {
-				err = a.deleteIntegrationKeys(ctx, tx, ids)
-			} else {
-				err = a.deleteIntegrationKeysWithAudit(ctx, tx, ids, serviceAudit)
-			}
-			err = errors.Wrap(err, "delete integration keys")
+			err = errors.Wrap(a.deleteIntegrationKeysWithAudit(ctx, tx, ids, audit), "delete integration keys")
 		case assignment.TargetTypeSchedule:
 			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ]), "delete schedules")
 		case assignment.TargetTypeCalendarSubscription:
