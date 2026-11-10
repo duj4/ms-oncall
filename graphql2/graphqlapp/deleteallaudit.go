@@ -97,7 +97,7 @@ func (p *deleteAllAudit) nextAttempt() *deleteAllAttempt {
 	a := &deleteAllAttempt{plan: p, event: e}
 	if p.service != nil {
 		a.service = p.service.nextAttempt()
-		a.service.event.RequestID, a.service.event.AttemptID = e.RequestID, e.AttemptID
+		a.service.event.RequestID, a.service.event.AttemptID, a.service.event.ExecutionID, a.service.event.EffectsVersion = e.RequestID, e.AttemptID, e.ExecutionID, 1
 	}
 	return a
 }
@@ -126,12 +126,25 @@ func (a *deleteAllAttempt) begin(ctx context.Context) (*sql.Tx, error) {
 	}
 	if a.service != nil {
 		a.service.tx = a.tx
+		if err == nil {
+			var isolation string
+			err = a.tx.QueryRowContext(ctx, `SHOW transaction_isolation`).Scan(&isolation)
+			if err == nil && isolation != "read committed" {
+				err = deleteaudit.ErrInvalid
+			}
+			if err != nil {
+				err = a.service.captureError(err)
+				a.auditFailed = a.auditFailed || a.service.auditFailed
+			}
+		}
 	}
 	return a.tx, err
 }
 
 func (a *deleteAllAttempt) capture(ctx context.Context, ids []string, scope *uuid.UUID) error {
-	return a.service.capture(ctx, ids, scope)
+	err := a.service.capture(ctx, ids, scope)
+	a.auditFailed = a.auditFailed || a.service.auditFailed
+	return err
 }
 func (a *deleteAllAttempt) witness(ctx context.Context) error {
 	err := a.service.witness(ctx)
@@ -215,6 +228,12 @@ func (a *deleteAllAttempt) commit(ctx context.Context) error {
 	if a.commitAttempted || a.finished {
 		return errors.New("deleteAll duplicate Commit refused")
 	}
+	if a.service != nil {
+		if err := a.service.verifyBudget(ctx); err != nil {
+			a.auditFailed = a.auditFailed || a.service.auditFailed
+			return err
+		}
+	}
 	if err := a.appendCMNR(ctx); err != nil {
 		return err
 	}
@@ -263,6 +282,7 @@ func (a *deleteAllAttempt) failureEvents(outcome, reason string) ([]deleteaudit.
 		for i := range services {
 			services[i].EventID = uuid.New()
 			services[i].Outcome, services[i].Reason, services[i].OccurredAt = outcome, reason, time.Now()
+			services[i].Effects = nil // Non-assertive observation, even after an unknown Commit.
 		}
 	}
 	var events []audit.Event
@@ -366,6 +386,9 @@ func writeDeleteAllFailureBatch(ctx context.Context, db *sql.DB, services []dele
 
 // finish is the single finalization and retry gate for the shared attempt.
 func (a *deleteAllAttempt) finish(operationErr error) error {
+	if a.service != nil {
+		a.auditFailed = a.auditFailed || a.service.auditFailed
+	}
 	if a.finished {
 		return errors.New("deleteAll duplicate finalization refused")
 	}

@@ -1109,6 +1109,27 @@ type EscalationPolicyStep struct {
 	StepNumber         int32
 }
 
+type GlobalRootCreateAuditEvent struct {
+	ActorID              uuid.UUID
+	ActorKind            string
+	AttemptID            uuid.UUID
+	AuthorityRole        string
+	AuthoritySource      string
+	EventID              uuid.UUID
+	HomeOrganizationID   uuid.UUID
+	OccurredAt           time.Time
+	Operation            sql.NullString
+	OrganizationRole     string
+	Outcome              string
+	ReasonCode           string
+	RecordedAt           time.Time
+	RequestID            uuid.UUID
+	RootID               uuid.NullUUID
+	RootType             string
+	SchemaVersion        int16
+	TargetOrganizationID uuid.NullUUID
+}
+
 type GorpMigration struct {
 	AppliedAt sql.NullTime
 	ID        string
@@ -1148,6 +1169,7 @@ type HeartbeatMonitor struct {
 }
 
 type IntegrationKey struct {
+	AuditResourceID    uuid.UUID
 	ExternalSystemName sql.NullString
 	ID                 uuid.UUID
 	Name               string
@@ -1402,6 +1424,48 @@ type ScheduleOnCallUser struct {
 	UserID     uuid.UUID
 }
 
+type ScheduleRotationUpdateAuditEvent struct {
+	ActorID                  uuid.NullUUID
+	ActorKind                string
+	AfterParticipantCount    sql.NullInt32
+	AfterParticipantIds      []uuid.UUID
+	AfterPositions           []int32
+	AfterShiftStart          sql.NullTime
+	AfterStateID             sql.NullInt64
+	AfterStateParticipantID  uuid.NullUUID
+	AfterStatePosition       sql.NullInt32
+	AfterStateVersion        sql.NullInt32
+	AfterUserIds             []uuid.UUID
+	AttemptID                uuid.UUID
+	AuthorityRole            string
+	AuthoritySource          string
+	BeforeParticipantCount   sql.NullInt32
+	BeforeParticipantIds     []uuid.UUID
+	BeforePositions          []int32
+	BeforeShiftStart         sql.NullTime
+	BeforeStateID            sql.NullInt64
+	BeforeStateParticipantID uuid.NullUUID
+	BeforeStatePosition      sql.NullInt32
+	BeforeStateVersion       sql.NullInt32
+	BeforeUserIds            []uuid.UUID
+	EventID                  uuid.UUID
+	HomeOrganizationID       uuid.NullUUID
+	OccurredAt               time.Time
+	Operation                string
+	OrganizationRole         string
+	Outcome                  string
+	ReasonCode               string
+	RecordedAt               time.Time
+	RequestID                uuid.UUID
+	RequestedFields          int16
+	RotationRowWritten       bool
+	ScheduleRowWritten       bool
+	SchemaVersion            int16
+	TargetID                 uuid.NullUUID
+	TargetOrganizationID     uuid.NullUUID
+	TargetType               string
+}
+
 type ScheduleRule struct {
 	CreatedAt     time.Time
 	EndTime       timeutil.Clock
@@ -1427,6 +1491,50 @@ type Service struct {
 	MaintenanceExpiresAt sql.NullTime
 	Name                 string
 	OrganizationID       uuid.UUID
+}
+
+type ServiceDeleteAuditEvent struct {
+	ActorID              uuid.NullUUID
+	ActorKind            string
+	AttemptID            uuid.UUID
+	AuthorityRole        string
+	AuthoritySource      string
+	Effects              pqtype.NullRawMessage
+	EffectsVersion       sql.NullInt16
+	EventID              uuid.UUID
+	ExecutionID          uuid.NullUUID
+	HomeOrganizationID   uuid.NullUUID
+	OccurredAt           time.Time
+	Operation            string
+	OrganizationRole     string
+	Outcome              string
+	ReasonCode           string
+	RecordedAt           time.Time
+	RequestID            uuid.UUID
+	SchemaVersion        int16
+	ServiceID            uuid.NullUUID
+	TargetOrganizationID uuid.NullUUID
+}
+
+type ServiceUpdateAuditEvent struct {
+	ActorID              uuid.NullUUID
+	ActorKind            string
+	AttemptID            uuid.UUID
+	AuthorityRole        string
+	AuthoritySource      string
+	EventID              uuid.UUID
+	HomeOrganizationID   uuid.NullUUID
+	OccurredAt           time.Time
+	Operation            string
+	OrganizationRole     string
+	Outcome              string
+	ReasonCode           string
+	RecordedAt           time.Time
+	RequestID            uuid.UUID
+	RequestedFields      int16
+	SchemaVersion        int16
+	ServiceID            uuid.NullUUID
+	TargetOrganizationID uuid.NullUUID
 }
 
 type SwitchoverLog struct {
@@ -1496,6 +1604,38 @@ type UserCalendarSubscription struct {
 	Name       string
 	ScheduleID uuid.UUID
 	UserID     uuid.UUID
+}
+
+type UserCmnrDeleteAuditEvent struct {
+	ActorID               uuid.NullUUID
+	ActorKind             string
+	AttemptID             uuid.UUID
+	AuthorityRole         string
+	AuthoritySource       string
+	CauseEventID          uuid.NullUUID
+	DeletionMechanism     sql.NullString
+	Effects               json.RawMessage
+	EventID               uuid.UUID
+	ExecutionID           uuid.UUID
+	HomeOrganizationID    uuid.NullUUID
+	OccurredAt            time.Time
+	Operation             string
+	OrganizationRole      string
+	Outcome               string
+	ParentCmID            uuid.NullUUID
+	Provenance            sql.NullString
+	ReasonCode            string
+	RecordKind            string
+	RecordedAt            time.Time
+	RelatedExplicitEvents json.RawMessage
+	RepresentedHumanID    uuid.NullUUID
+	RequestID             uuid.UUID
+	RootID                uuid.NullUUID
+	RootOwnerUserID       uuid.NullUUID
+	RootType              sql.NullString
+	SchemaVersion         int16
+	TargetOrgResolution   string
+	TargetOrganizationID  uuid.NullUUID
 }
 
 type UserContactMethod struct {

@@ -2,7 +2,9 @@ package migrate
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -42,7 +44,7 @@ func TestServiceDeleteAuditCanonicalPrefix(t *testing.T) {
 
 func serviceDeleteDBEvent() deleteaudit.Event {
 	home := uuid.New()
-	return deleteaudit.Event{EventID: uuid.New(), AttemptID: uuid.New(), RequestID: uuid.New(), ActorKind: "human", ActorID: uuid.New(), HomeOrganizationID: home, AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "org_admin", OrganizationRole: "ORG_ADMIN", ServiceID: uuid.New(), TargetOrganizationID: home, Outcome: "committed", Reason: "deleted", OccurredAt: time.Now()}
+	return deleteaudit.Event{EventID: uuid.New(), AttemptID: uuid.New(), RequestID: uuid.New(), ExecutionID: uuid.New(), EffectsVersion: 1, ActorKind: "human", ActorID: uuid.New(), HomeOrganizationID: home, AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "org_admin", OrganizationRole: "ORG_ADMIN", ServiceID: uuid.New(), TargetOrganizationID: home, Outcome: "committed", Reason: "deleted", OccurredAt: time.Now()}
 }
 
 func TestPostgresServiceDeleteAuditUpgradeAndIntegrity(t *testing.T) {
@@ -77,11 +79,11 @@ func TestPostgresServiceDeleteAuditUpgradeAndIntegrity(t *testing.T) {
 	e := serviceDeleteDBEvent()
 	tx, err = db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	require.NoError(t, deleteaudit.Append(ctx, tx, e))
-	require.NoError(t, deleteaudit.Append(ctx, tx, e), "identical EventID replay is idempotent")
+	require.NoError(t, appendLegacyServiceDelete(ctx, tx, e))
+	require.NoError(t, appendLegacyServiceDelete(ctx, tx, e), "identical EventID replay is idempotent")
 	conflict := e
 	conflict.OccurredAt = e.OccurredAt.Add(time.Second)
-	require.ErrorIs(t, deleteaudit.Append(ctx, tx, conflict), deleteaudit.ErrConflict)
+	require.ErrorIs(t, appendLegacyServiceDelete(ctx, tx, conflict), deleteaudit.ErrConflict)
 	require.NoError(t, tx.Commit())
 	var count int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM service_delete_audit_events`).Scan(&count))
@@ -175,4 +177,45 @@ func TestPostgresServiceDeleteAuditFreshAndInvalidEvents(t *testing.T) {
 	var count int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM service_delete_audit_events`).Scan(&count))
 	require.Equal(t, 3, count)
+}
+
+// Test-only pre-297 writer for immutable historical fixture assertions.
+func appendLegacyServiceDelete(ctx context.Context, tx *sql.Tx, e deleteaudit.Event) error {
+	if tx == nil {
+		return deleteaudit.ErrUnavailable
+	}
+	args := []any{e.EventID, e.AttemptID, e.RequestID, e.ActorKind, legacyDeleteNullable(e.ActorID), legacyDeleteNullable(e.HomeOrganizationID), e.AuthoritySource, e.AuthorityRole, e.OrganizationRole, legacyDeleteNullable(e.ServiceID), legacyDeleteNullable(e.TargetOrganizationID), e.Outcome, e.Reason, e.OccurredAt.UTC().Truncate(time.Microsecond)}
+	r, err := tx.ExecContext(ctx, `INSERT INTO service_delete_audit_events
+	 (event_id,attempt_id,request_id,actor_kind,actor_id,home_organization_id,authority_source,authority_role,organization_role,service_id,target_organization_id,outcome,reason_code,occurred_at)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(event_id) DO NOTHING`, args...)
+	if err != nil {
+		return deleteaudit.ErrUnavailable
+	}
+	n, err := r.RowsAffected()
+	if err != nil {
+		return deleteaudit.ErrUnavailable
+	}
+	if n == 1 {
+		return nil
+	}
+	var same bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT FROM service_delete_audit_events WHERE event_id=$1
+	 AND attempt_id=$2 AND request_id=$3 AND actor_kind=$4 AND actor_id IS NOT DISTINCT FROM $5::uuid
+	 AND home_organization_id IS NOT DISTINCT FROM $6::uuid AND authority_source=$7 AND authority_role=$8 AND organization_role=$9
+	 AND service_id IS NOT DISTINCT FROM $10::uuid AND target_organization_id IS NOT DISTINCT FROM $11::uuid
+	 AND outcome=$12 AND reason_code=$13 AND occurred_at=$14)`, args...).Scan(&same)
+	if err != nil {
+		return deleteaudit.ErrUnavailable
+	}
+	if !same {
+		return deleteaudit.ErrConflict
+	}
+	return nil
+}
+
+func legacyDeleteNullable(id uuid.UUID) any {
+	if id == uuid.Nil {
+		return nil
+	}
+	return id
 }

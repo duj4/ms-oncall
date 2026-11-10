@@ -169,7 +169,7 @@ func sd1TestPlan(t *testing.T, state *sd1DriverState) *serviceDeleteAudit {
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	home := uuid.New()
-	return &serviceDeleteAudit{ctx: t.Context(), db: db, identity: deleteaudit.Event{RequestID: uuid.New(), ActorKind: "human", ActorID: uuid.New(), HomeOrganizationID: home, AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "org_admin", OrganizationRole: "ORG_ADMIN"}}
+	return &serviceDeleteAudit{ctx: t.Context(), db: db, identity: deleteaudit.Event{RequestID: uuid.New(), ExecutionID: uuid.New(), EffectsVersion: 1, ActorKind: "human", ActorID: uuid.New(), HomeOrganizationID: home, AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "org_admin", OrganizationRole: "ORG_ADMIN"}}
 }
 func sd1TestAttempt(t *testing.T, p *serviceDeleteAudit) error {
 	t.Helper()

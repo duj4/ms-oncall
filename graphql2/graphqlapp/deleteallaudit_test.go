@@ -31,6 +31,7 @@ type sd2State struct {
 	witnesses, observations  int
 	correlations             [][3]string
 	gate, completed          chan struct{}
+	cascadeRoot, cascadeOrg  uuid.UUID
 }
 type sd2Connector struct{ state *sd2State }
 
@@ -55,6 +56,9 @@ func (c *sd2Conn) Begin() (driver.Tx, error) {
 	c.s.mu.Unlock()
 	if c.s.mode == "failure_begin" && n == 2 {
 		return nil, errors.New("SYNTHETIC_BEGIN_SECRET")
+	}
+	if strings.HasPrefix(c.s.mode, "failure_begin_pg:") && n == 2 {
+		return nil, &pgconn.PgError{Code: strings.TrimPrefix(c.s.mode, "failure_begin_pg:"), Message: "SYNTHETIC_SECRET"}
 	}
 	if c.s.mode == "failure_begin_gated" && n == 2 {
 		close(c.s.completed)
@@ -82,12 +86,22 @@ func (c *sd2Conn) ExecContext(_ context.Context, q string, args []driver.NamedVa
 		request, execution, attempt = args[1].Value.(string), args[2].Value.(string), args[3].Value.(string)
 	} else if strings.Contains(q, "INSERT INTO service_delete_audit_events") {
 		success = args[11].Value == "committed"
+		if success {
+			c.tx.services++
+		}
+		execution = args[14].Value.(string)
 		request, attempt = args[2].Value.(string), args[1].Value.(string)
 	} else {
 		return nil, errors.New("unexpected write")
 	}
 	if success && c.s.mode == "audit_failed" || !success && c.s.mode == "failure_append" {
 		return nil, errors.New("SYNTHETIC_AUDIT_SECRET")
+	}
+	if success && strings.HasPrefix(c.s.mode, "cascade:append:") {
+		return nil, &pgconn.PgError{Code: strings.Split(c.s.mode, ":")[2], Message: "SYNTHETIC_AUDIT_SECRET"}
+	}
+	if !success && strings.HasPrefix(c.s.mode, "failure_append_pg:") {
+		return nil, &pgconn.PgError{Code: strings.TrimPrefix(c.s.mode, "failure_append_pg:"), Message: "SYNTHETIC_SECRET"}
 	}
 	if !success && c.s.mode == "failure_append_gated" {
 		select {
@@ -117,6 +131,7 @@ type sd2Tx struct {
 	s                       *sd2State
 	business                bool
 	witnesses, observations int
+	services                int
 	ids                     [][3]string
 }
 
@@ -134,6 +149,9 @@ func (tx *sd2Tx) Commit() error {
 	}
 	if !tx.business && mode == "failure_commit" {
 		return errors.New("SYNTHETIC_FAILURE_ACK_SECRET")
+	}
+	if !tx.business && strings.HasPrefix(mode, "failure_commit_pg:") {
+		return &pgconn.PgError{Code: strings.TrimPrefix(mode, "failure_commit_pg:"), Message: "SYNTHETIC_SECRET"}
 	}
 	if tx.business && mode == "gated" {
 		<-tx.s.gate
@@ -200,6 +218,7 @@ func sd2Attempt(t *testing.T, p *deleteAllAudit) error {
 			e := a.service.event
 			e.ServiceID, e.TargetOrganizationID, e.Outcome, e.Reason = uuid.New(), uuid.New(), "committed", "deleted"
 			a.service.targets = []deleteaudit.Event{e}
+			a.service.successes = []deleteaudit.Event{e}
 			err = deleteaudit.Append(t.Context(), tx, e)
 		}
 	}

@@ -12,7 +12,7 @@ import (
 
 func validEvent() Event {
 	home := uuid.New()
-	return Event{EventID: uuid.New(), AttemptID: uuid.New(), RequestID: uuid.New(), ActorKind: "human", ActorID: uuid.New(), HomeOrganizationID: home, AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "org_admin", OrganizationRole: "ORG_ADMIN", ServiceID: uuid.New(), TargetOrganizationID: home, Outcome: "committed", Reason: "deleted", OccurredAt: time.Now()}
+	return Event{EventID: uuid.New(), AttemptID: uuid.New(), RequestID: uuid.New(), ExecutionID: uuid.New(), EffectsVersion: 1, ActorKind: "human", ActorID: uuid.New(), HomeOrganizationID: home, AuthoritySource: "current_local_user_organization_at_admission", AuthorityRole: "org_admin", OrganizationRole: "ORG_ADMIN", ServiceID: uuid.New(), TargetOrganizationID: home, Outcome: "committed", Reason: "deleted", OccurredAt: time.Now()}
 }
 
 func TestEventAttributionAndOutcomeContract(t *testing.T) {
