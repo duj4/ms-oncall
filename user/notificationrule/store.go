@@ -9,6 +9,7 @@ import (
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/permission"
+	audit "github.com/target/goalert/user/cmnrdeleteaudit"
 	"github.com/target/goalert/user/contactmethod"
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/validation/validate"
@@ -118,35 +119,61 @@ func (s *Store) DeleteTx(ctx context.Context, tx *sql.Tx, ids ...string) error {
 }
 
 func deleteCMNRTargets(ctx context.Context, tx *sql.Tx, authority executioncontext.CMNRMutationAuthority, ids []uuid.UUID) error {
+	_, err := deleteCMNRTargetsResult(ctx, tx, authority, ids, false)
+	return err
+}
+
+// DeleteForAuditTx captures locked identities and actual deleted IDs only.
+// It never finalizes the supplied transaction or persists audit itself.
+func (s *Store) DeleteForAuditTx(ctx context.Context, tx *sql.Tx, ids ...string) (audit.DeleteResult, error) {
+	var result audit.DeleteResult
+	authority, err := executioncontext.CheckCMNRMutationAuthority(ctx)
+	if err != nil {
+		return result, err
+	}
+	if tx == nil {
+		return result, audit.ErrUnavailable
+	}
+	if len(ids) == 0 {
+		return result, nil
+	}
+	uids, err := validate.ParseManyUUID("NotificationRuleID", ids, 50)
+	if err != nil {
+		return result, err
+	}
+	return deleteCMNRTargetsResult(ctx, tx, authority, uids, true)
+}
+
+func deleteCMNRTargetsResult(ctx context.Context, tx *sql.Tx, authority executioncontext.CMNRMutationAuthority, ids []uuid.UUID, capture bool) (result audit.DeleteResult, err error) {
 	// Discover parents only to establish CM-before-NR lock order. Discovery is
 	// never an authorization result. Re-read every NR under its own row lock,
 	// then reject a changed/missing parent outside the locked CM set.
 	rows, err := tx.QueryContext(ctx, `SELECT contact_method_id FROM user_notification_rules WHERE id=ANY($1::uuid[])`, pq.Array(ids))
 	if err != nil {
-		return err
+		return result, err
 	}
 	var cmIDs []uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
 			_ = rows.Close()
-			return err
+			return result, err
 		}
 		cmIDs = append(cmIDs, id)
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return err
+		return result, err
 	}
 	cms, err := contactmethod.LockCMNRContactMethods(ctx, tx, cmIDs)
 	if err != nil {
-		return err
+		return result, err
 	}
 	rows, err = tx.QueryContext(ctx, `SELECT id,user_id,contact_method_id FROM user_notification_rules
 		WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`, pq.Array(ids))
 	if err != nil {
-		return err
+		return result, err
 	}
 	lockedIDs := make([]uuid.UUID, 0, len(ids))
 	owners := make(map[uuid.UUID]uuid.UUID)
@@ -154,25 +181,62 @@ func deleteCMNRTargets(ctx context.Context, tx *sql.Tx, authority executionconte
 		var id, owner, cm uuid.UUID
 		if err := rows.Scan(&id, &owner, &cm); err != nil {
 			_ = rows.Close()
-			return err
+			return result, err
 		}
 		if owner == uuid.Nil || cms[cm] != owner {
 			_ = rows.Close()
-			return permission.NewAccessDenied("")
+			return result, permission.NewAccessDenied("")
 		}
 		lockedIDs = append(lockedIDs, id)
+		if capture {
+			result.Targets = append(result.Targets, audit.Target{ID: id, OwnerID: owner, ParentCMID: cm, OrgResolution: "unknown"})
+		}
 		owners[cm] = owner
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return err
+		return result, err
 	}
-	if err := contactmethod.AuthorizeCMNROwners(ctx, tx, authority, owners); err != nil {
-		return err
+	if !capture {
+		if err := contactmethod.AuthorizeCMNROwners(ctx, tx, authority, owners); err != nil {
+			return result, err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM user_notification_rules WHERE id=ANY($1::uuid[])`, pq.Array(lockedIDs))
+		return result, err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM user_notification_rules WHERE id=ANY($1::uuid[])`, pq.Array(lockedIDs))
-	return err
+	orgs, err := contactmethod.AuthorizeCMNROwnerSnapshots(ctx, tx, authority, owners)
+	for i := range result.Targets {
+		if o, ok := orgs[result.Targets[i].OwnerID]; ok {
+			result.Targets[i].OrganizationID, result.Targets[i].OrgResolution = o.ID, o.Resolution
+		}
+	}
+	if err != nil {
+		return result, err
+	}
+	rows, err = tx.QueryContext(ctx, `DELETE FROM user_notification_rules WHERE id=ANY($1::uuid[]) RETURNING id`, pq.Array(lockedIDs))
+	if err != nil {
+		return result, err
+	}
+	deleted := map[uuid.UUID]bool{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		deleted[id] = true
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil {
+		return result, err
+	}
+	for i := range result.Targets {
+		result.Targets[i].Deleted = deleted[result.Targets[i].ID]
+	}
+	return result, nil
 }
 
 // FindAll implements the NotificationRuleStore interface.

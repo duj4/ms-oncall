@@ -71,7 +71,9 @@ func TestPostgresServiceDeleteAuditUpgradeAndIntegrity(t *testing.T) {
 		require.NoError(t, db.QueryRowContext(ctx, q).Scan(&after))
 		require.Equal(t, before[i], after)
 	}
-	require.NoError(t, VerifyAll(ctx, uri))
+	// Keep the SD1 upgrade/downgrade assertions at exactly 295. The newer
+	// forward migration is deliberately absent until those guards are tested.
+	require.Error(t, VerifyAll(ctx, uri))
 	e := serviceDeleteDBEvent()
 	tx, err = db.BeginTx(ctx, nil)
 	require.NoError(t, err)
@@ -93,6 +95,9 @@ func TestPostgresServiceDeleteAuditUpgradeAndIntegrity(t *testing.T) {
 	n, err = Down(ctx, uri, "global-root-create-audit")
 	require.Error(t, err)
 	require.Zero(t, n)
+	n, err = Up(ctx, uri, "")
+	require.NoError(t, err)
+	require.Equal(t, len(Names())-295, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM service_delete_audit_events`).Scan(&count))
 	require.Equal(t, 1, count)

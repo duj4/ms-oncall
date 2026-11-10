@@ -361,7 +361,7 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 }
 
 func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (ok bool, err error) {
-	audit := newServiceDeleteAudit(ctx, a.DB, input)
+	audit := newDeleteAllAudit(ctx, a.DB, input)
 	defer func() {
 		// Admission failures have no business transaction or trusted target.
 		if audit != nil && !audit.started && err != nil {
@@ -442,14 +442,18 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 
 	// Retry because deleting frequently can cause a deadlock
 	// under heavy load.
+	retryLogger := retry.Log(ctx)
+	if audit != nil {
+		retryLogger = retry.Log(audit.retryContext())
+	}
 	err = retry.DoTemporaryError(func(int) error {
-		var attempt *serviceDeleteAttempt
+		var attempt *deleteAllAttempt
 		if audit != nil {
 			attempt = audit.nextAttempt()
 		}
 		return a.tryDeleteAll(ctx, input, homeOrganizationID, attempt)
 	},
-		retry.Log(ctx),
+		retryLogger,
 		retry.Limit(5),
 		retry.FibBackoff(time.Second),
 	)
@@ -457,7 +461,7 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 	return err == nil, err
 }
 
-func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, homeOrganizationID *uuid.UUID, audit *serviceDeleteAttempt) (err error) {
+func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, homeOrganizationID *uuid.UUID, audit *deleteAllAttempt) (err error) {
 	if audit != nil {
 		defer func() { err = audit.finish(err) }()
 	}
@@ -534,6 +538,9 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		assignment.TargetTypeUserSession,
 	}
 
+	if audit != nil {
+		audit.groupsStarted = true
+	}
 	for _, typ := range order {
 		ids := m[typ]
 		if len(ids) == 0 {
@@ -575,9 +582,23 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeRotation:
 			err = errors.Wrap(a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ]), "delete rotations")
 		case assignment.TargetTypeContactMethod:
-			err = errors.Wrap(a.CMStore.Delete(ctx, tx, ids...), "delete contact methods")
+			if audit == nil {
+				err = a.CMStore.Delete(ctx, tx, ids...)
+			} else {
+				result, deleteErr := a.CMStore.DeleteForAuditTx(ctx, tx, ids...)
+				audit.collect(result, "contact_method")
+				err = deleteErr
+			}
+			err = errors.Wrap(err, "delete contact methods")
 		case assignment.TargetTypeNotificationRule:
-			err = errors.Wrap(a.NRStore.DeleteTx(ctx, tx, ids...), "delete notification rules")
+			if audit == nil {
+				err = a.NRStore.DeleteTx(ctx, tx, ids...)
+			} else {
+				result, deleteErr := a.NRStore.DeleteForAuditTx(ctx, tx, ids...)
+				audit.collect(result, "notification_rule")
+				err = deleteErr
+			}
+			err = errors.Wrap(err, "delete notification rules")
 		case assignment.TargetTypeHeartbeatMonitor:
 			err = errors.Wrap(a.HeartbeatStore.DeleteTx(ctx, tx, ids...), "delete heartbeat monitors")
 		case assignment.TargetTypeUserSession:
