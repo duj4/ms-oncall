@@ -50,10 +50,15 @@ func (*sd2Conn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("u
 func (*sd2Conn) Close() error                        { return nil }
 func (c *sd2Conn) Begin() (driver.Tx, error) {
 	c.s.mu.Lock()
-	defer c.s.mu.Unlock()
 	c.s.begins++
-	if c.s.mode == "failure_begin" && c.s.begins == 2 {
+	n := c.s.begins
+	c.s.mu.Unlock()
+	if c.s.mode == "failure_begin" && n == 2 {
 		return nil, errors.New("SYNTHETIC_BEGIN_SECRET")
+	}
+	if c.s.mode == "failure_begin_gated" && n == 2 {
+		close(c.s.completed)
+		<-c.s.gate
 	}
 	c.tx = &sd2Tx{s: c.s}
 	return c.tx, nil
@@ -84,6 +89,14 @@ func (c *sd2Conn) ExecContext(_ context.Context, q string, args []driver.NamedVa
 	if success && c.s.mode == "audit_failed" || !success && c.s.mode == "failure_append" {
 		return nil, errors.New("SYNTHETIC_AUDIT_SECRET")
 	}
+	if !success && c.s.mode == "failure_append_gated" {
+		select {
+		case <-c.s.completed:
+		default:
+			close(c.s.completed)
+		}
+		<-c.s.gate
+	}
 	if success {
 		c.tx.witnesses++
 	} else {
@@ -109,6 +122,10 @@ type sd2Tx struct {
 
 func (tx *sd2Tx) Commit() error {
 	mode := tx.s.mode
+	if !tx.business && mode == "failure_commit_gated" {
+		close(tx.s.completed)
+		<-tx.s.gate
+	}
 	if tx.business && strings.HasPrefix(mode, "reject:") {
 		return &pgconn.PgError{Code: strings.TrimPrefix(mode, "reject:")}
 	}
@@ -272,6 +289,38 @@ func TestDeleteAllAuditFailureReleaseAndErrTxDoneGates(t *testing.T) {
 		require.Error(t, a.finish(err))
 		require.Equal(t, n, s.observations, "duplicate finish cannot append another failure")
 	})
+}
+
+func TestDeleteAllAuditFailureNativeCallsIgnoringCancellation(t *testing.T) {
+	for _, mode := range []string{"failure_begin_gated", "failure_append_gated", "failure_commit_gated"} {
+		t.Run(mode, func(t *testing.T) {
+			s := &sd2State{mode: mode, gate: make(chan struct{}), completed: make(chan struct{})}
+			p := sd2Plan(t, s, true)
+			start := time.Now()
+			err := sd2Attempt(t, p)
+			elapsed := time.Since(start)
+			// Release and join cleanup before any assertion can terminate the test.
+			select {
+			case <-s.completed:
+			default:
+				close(s.gate)
+				t.Fatal("native failure-writer gate was not reached")
+			}
+			close(s.gate)
+			require.Eventually(t, func() bool { return p.db.Stats().InUse == 0 }, 3*time.Second, 10*time.Millisecond)
+			require.Error(t, err)
+			require.False(t, retry.IsTemporaryError(err))
+			require.Less(t, elapsed, 3*time.Second)
+			require.Contains(t, err.Error(), "audit persistence unavailable")
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			require.Equal(t, 2, s.begins)
+			require.Equal(t, 1, s.deletes)
+			if mode == "failure_commit_gated" {
+				require.Greater(t, s.observations, 0, "a late native Commit can persist observations after an unavailable response")
+			}
+		})
+	}
 }
 
 func TestDeleteAllAuditAtomicFailureBatchCapacity(t *testing.T) {

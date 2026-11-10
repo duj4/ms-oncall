@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -312,6 +313,29 @@ func recordDeleteAllFailureBatch(db *sql.DB, services []deleteaudit.Event, event
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	// A faulty driver may ignore the context in Connect/Begin/Append as well
+	// as Commit. One worker retains ownership until its native call completes;
+	// the caller returns at the deadline without starting a replacement writer
+	// or replaying business. A late append/Commit is never claimed absent.
+	type result struct{ persisted, released bool }
+	done := make(chan result, 1)
+	var confirmed atomic.Bool
+	go func() {
+		persisted, released := writeDeleteAllFailureBatch(ctx, db, services, events, &confirmed)
+		done <- result{persisted, released}
+	}()
+	select {
+	case r := <-done:
+		return r.persisted, r.released
+	case <-ctx.Done():
+		return confirmed.Load(), false
+	}
+}
+
+// The worker owns every native operation and its single explicit cleanup.
+// confirmed distinguishes durable observations from unconfirmed connection
+// release even when the caller's bounded wait has already ended.
+func writeDeleteAllFailureBatch(ctx context.Context, db *sql.DB, services []deleteaudit.Event, events []audit.Event, confirmed *atomic.Bool) (persisted, released bool) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return false, true
@@ -334,6 +358,9 @@ func recordDeleteAllFailureBatch(db *sql.DB, services []deleteaudit.Event, event
 		}
 	}
 	err, finalized = commitServiceUpdate(ctx, tx)
+	if err == nil {
+		confirmed.Store(true)
+	}
 	return err == nil, false
 }
 
