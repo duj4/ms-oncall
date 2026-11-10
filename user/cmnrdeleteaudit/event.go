@@ -196,7 +196,7 @@ func (e Event) Validate() error {
 			if e.OrganizationRole != "NONE" || (e.AuthorityRole != "platform_admin" && e.AuthorityRole != "none") {
 				return ErrInvalid
 			}
-		} else if (e.OrganizationRole != "ORG_ADMIN" && e.OrganizationRole != "ORG_MEMBER") || !(e.AuthorityRole == "platform_admin" || e.AuthorityRole == "org_admin" && e.OrganizationRole == "ORG_ADMIN" || e.AuthorityRole == "org_member" && e.OrganizationRole == "ORG_MEMBER") {
+		} else if (e.OrganizationRole != "ORG_ADMIN" && e.OrganizationRole != "ORG_MEMBER") || (e.AuthorityRole != "platform_admin" && (e.AuthorityRole != "org_admin" || e.OrganizationRole != "ORG_ADMIN") && (e.AuthorityRole != "org_member" || e.OrganizationRole != "ORG_MEMBER")) {
 			return ErrInvalid
 		}
 		if success && (e.TargetOrgResolution != "known_normal" || e.AuthorityRole != "platform_admin" && (e.ActorID != e.RootOwnerUserID || e.HomeOrganizationID != e.TargetOrganizationID || e.AuthorityRole == "none")) {

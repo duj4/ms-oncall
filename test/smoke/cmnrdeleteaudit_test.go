@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -217,7 +218,11 @@ func TestCMNRDeleteAuditLateExplicitCascade(t *testing.T) {
 	defer cancel()
 	blocker, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer blocker.Rollback()
+	defer func() {
+		if err := blocker.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error("blocker transaction cleanup failed")
+		}
+	}()
 	var pid int
 	require.NoError(t, blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
 	_, err = blocker.ExecContext(ctx, `SELECT id FROM user_contact_methods WHERE id=$1 FOR UPDATE`, f.cm[0])
@@ -476,7 +481,11 @@ func TestCMNRDeleteAuditWitnessVisibility(t *testing.T) {
 	defer cancel()
 	blocker, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer blocker.Rollback()
+	defer func() {
+		if err := blocker.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error("blocker transaction cleanup failed")
+		}
+	}()
 	var pid int
 	require.NoError(t, blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
 	_, err = blocker.ExecContext(ctx, `LOCK TABLE user_cmnr_delete_audit_events IN SHARE MODE`)
