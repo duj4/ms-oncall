@@ -1904,6 +1904,35 @@
           "sha256": "799a5b2fed05fc1827d1aa2a91d7b1546952761f66114676a617c24ac97757b1"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-integration-key-delete-audit-d09-sd4",
+      "first_position": 298,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD4-IMPL1 direct Owner-authorized local implementation of accepted D09-SD4-GAP1; no publication or production authorization",
+        "base_commit": "b24feaf423ad3207f03999dd50263fb398ddb24b",
+        "base_tree": "844c68e63816c3ce642c15082828911ef6436e61",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "412eed3c0b6b7f3bb3bc62f89ac16050760068b5",
+        "authorization_tree": "07519421ce3ec7b64de3b388830afe948e45d707"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-service-cascade-b2-effects-d09-sd3",
+        "migration_id": "20261110172342-service-cascade-b2-effects.sql",
+        "sha256": "799a5b2fed05fc1827d1aa2a91d7b1546952761f66114676a617c24ac97757b1",
+        "evidence": "DIRECT_D09_SD4_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_297"
+      },
+      "adaptation_evidence": "INDEPENDENT_EXPLICIT_KEY_TYPED_AUDIT_REUSING_297_NON_CREDENTIAL_IDENTITY_AND_SHARED_DELETEALL_CONTROLLER",
+      "entries": [
+        {
+          "id": "20261111004634-integration-key-delete-audit.sql",
+          "original_id": "20261111004634-integration-key-delete-audit.sql",
+          "sha256": "bde581debd98824a80a0cef4f646b89a51e1b13b05d36a2442dc9fbf11a81f5a"
+        }
+      ]
     }
   ]
 }

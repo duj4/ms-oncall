@@ -177,7 +177,7 @@ func TestServiceCascadePG04MultipleRootsAndPG21UnattachedKey(t *testing.T) {
 	ok, err = sd3App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())})
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, before, sd1Rows(t, h), "Key-only has no independent audit")
+	require.Equal(t, before, sd1Rows(t, h), "Key-only does not mint a Service root")
 }
 
 func TestServiceCascadePG08SuppressionAndPG21NoActualRoot(t *testing.T) {
