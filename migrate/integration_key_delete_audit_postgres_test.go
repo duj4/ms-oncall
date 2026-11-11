@@ -17,7 +17,7 @@ import (
 func TestIntegrationKeyDeleteAudit298CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 298)
+	require.Len(t, h.entries, 299)
 	e := h.entries[297]
 	require.Equal(t, "20261111004634-integration-key-delete-audit.sql", e.ID)
 	require.Equal(t, h.entries[296].ID, e.PredecessorID)
@@ -47,7 +47,7 @@ func integrationKeyDeleteAuditSchemaAndReplay(t *testing.T, start int) {
 	require.NoError(t, db.QueryRowContext(ctx, `INSERT INTO integration_keys(id,service_id,name,type) VALUES($1,$2,'SYNTHETIC_NAME_SECRET','generic') RETURNING audit_resource_id`, credential, svc).Scan(&safe))
 	n, err := Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 298-start, n)
+	require.Equal(t, len(Names())-start, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	require.NoError(t, VerifyIsLatest(ctx, uri))
 	var unchanged uuid.UUID

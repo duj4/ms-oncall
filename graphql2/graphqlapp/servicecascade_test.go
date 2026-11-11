@@ -38,6 +38,9 @@ func (c *sd2Conn) QueryContext(_ context.Context, q string, _ []driver.NamedValu
 	if strings.HasPrefix(q, "SELECT EXISTS(SELECT FROM integration_keys WHERE audit_resource_id=") {
 		return &sd3Rows{[]string{"exists"}, [][]driver.Value{{false}}}, nil
 	}
+	if strings.Contains(q, "FROM escalation_policy_delete_audit_events") {
+		return &sd3Rows{[]string{"roots", "effects", "bytes"}, [][]driver.Value{{int64(c.tx.eps), int64(0), int64(c.tx.eps * 2)}}}, nil
+	}
 	if strings.Contains(q, "sum(jsonb_array_length(effects))") {
 		return &sd3Rows{[]string{"roots", "effects", "bytes"}, [][]driver.Value{{int64(c.tx.services), int64(0), int64(c.tx.services * 2)}}}, nil
 	}

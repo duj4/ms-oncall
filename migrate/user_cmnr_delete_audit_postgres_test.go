@@ -27,7 +27,7 @@ func cmnrDBEvent() audit.Event {
 func TestCMNRDeleteAuditCanonicalPrefix(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 298)
+	require.Len(t, h.entries, 299)
 	marker := []byte(",\n    {\n      \"id\": \"ms-oncall-user-cmnr-delete-audit-d09-sd2\",")
 	i := bytes.Index(h.manifest, marker)
 	require.Positive(t, i)

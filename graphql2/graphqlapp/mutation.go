@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/target/goalert/escalation"
 )
 
 type Mutation App
@@ -573,8 +574,22 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeEscalationPolicy:
 			var policyOrg *uuid.UUID
 			policyOrg, err = existingRootDeleteTargetOrganization(ctx, tx, typ, ids)
+			if err == nil && audit != nil {
+				err = audit.captureEP(ctx, ids, policyOrg)
+			}
 			if err == nil {
-				err = a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, policyOrg)
+				if audit == nil {
+					err = a.PolicyStore.DeleteManyPoliciesTx(ctx, tx, ids, policyOrg)
+				} else {
+					var receipts []escalation.DeleteReceipt
+					receipts, err = a.PolicyStore.DeleteManyPoliciesForAuditTx(ctx, tx, ids, policyOrg)
+					if err != nil {
+						pg := sqlutil.MapError(err)
+						audit.epInUse = pg != nil && pg.Code == "23503" && pg.ConstraintName == "services_escalation_policy_id_fkey"
+					} else {
+						err = audit.witnessEP(ctx, receipts)
+					}
+				}
 			}
 			err = errors.Wrap(err, "delete escalation policies")
 		case assignment.TargetTypeIntegrationKey:
