@@ -18,7 +18,7 @@ import (
 func TestServiceCascade297CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 298)
+	require.Len(t, h.entries, 299)
 	e := h.entries[296]
 	require.EqualValues(t, 297, e.Position)
 	require.Equal(t, "20261110172342-service-cascade-b2-effects.sql", e.ID)

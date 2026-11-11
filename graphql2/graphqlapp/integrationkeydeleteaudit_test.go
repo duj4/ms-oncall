@@ -155,10 +155,10 @@ func TestIntegrationKeyDeleteStickyIntegrityAndRouting(t *testing.T) {
 	require.Error(t, a.keyCaptureError(keyaudit.ErrInvalid))
 	require.Error(t, a.keyCaptureError(&pgconn.PgError{Code: "40001"}))
 	require.True(t, a.auditFailed)
-	for _, typ := range []assignment.TargetType{assignment.TargetTypeIntegrationKey, assignment.TargetTypeService, assignment.TargetTypeContactMethod, assignment.TargetTypeNotificationRule} {
+	for _, typ := range []assignment.TargetType{assignment.TargetTypeEscalationPolicy, assignment.TargetTypeIntegrationKey, assignment.TargetTypeService, assignment.TargetTypeContactMethod, assignment.TargetTypeNotificationRule} {
 		require.NotNil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: typ}}))
 	}
-	for _, typ := range []assignment.TargetType{assignment.TargetTypeEscalationPolicy, assignment.TargetTypeSchedule, assignment.TargetTypeRotation, assignment.TargetTypeUser, assignment.TargetTypeUserSession} {
+	for _, typ := range []assignment.TargetType{assignment.TargetTypeSchedule, assignment.TargetTypeRotation, assignment.TargetTypeUser, assignment.TargetTypeUserSession} {
 		require.Nil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: typ}}))
 		require.NotNil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: typ}, {Type: assignment.TargetTypeIntegrationKey}}))
 	}
@@ -187,10 +187,10 @@ func TestIntegrationKeyDeleteFailureCapacity(t *testing.T) {
 		}
 	}
 	a.groupsStarted = true
-	services, cmnr, keys := a.failureEvents("tx_failed", "write_failed")
+	services, cmnr, keys, eps := a.failureEvents("tx_failed", "write_failed")
 	require.Len(t, keys, 50)
 	require.Len(t, cmnr, 100)
-	persisted, released := recordDeleteAllFailureBatch(p.db, services, cmnr, keys)
+	persisted, released := recordDeleteAllFailureBatch(p.db, services, cmnr, keys, eps)
 	require.True(t, persisted)
 	require.True(t, released)
 	require.Equal(t, 200, s.observations)
@@ -205,7 +205,7 @@ func TestIntegrationKeyDeleteFailureCapacity(t *testing.T) {
 		for len(ks) < sizes[2] {
 			ks = append(ks, keys[0])
 		}
-		persisted, released = recordDeleteAllFailureBatch(p.db, sv, cm, ks)
+		persisted, released = recordDeleteAllFailureBatch(p.db, sv, cm, ks, nil)
 		require.False(t, persisted)
 		require.True(t, released)
 		require.Equal(t, 200, s.observations)

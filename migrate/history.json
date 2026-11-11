@@ -1933,6 +1933,35 @@
           "sha256": "bde581debd98824a80a0cef4f646b89a51e1b13b05d36a2442dc9fbf11a81f5a"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-escalation-policy-delete-audit-d09-sd5",
+      "first_position": 299,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD5-IMPL1 direct Owner-authorized local implementation of accepted D09-SD5-GAP1; no publication or production authorization",
+        "base_commit": "194e95586be81d9c59bdd1abe1ad6d6777f15f3a",
+        "base_tree": "9c21119c9f836e1de66f6cf8585ad01968822d3f",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "946ab1196e1dd52caf75c8a0f61a74fbe2be6c09",
+        "authorization_tree": "4708246fb541f6eb983c337ac40606759f8e0525"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-integration-key-delete-audit-d09-sd4",
+        "migration_id": "20261111004634-integration-key-delete-audit.sql",
+        "sha256": "bde581debd98824a80a0cef4f646b89a51e1b13b05d36a2442dc9fbf11a81f5a",
+        "evidence": "DIRECT_D09_SD5_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_298"
+      },
+      "adaptation_evidence": "TYPED_EP_EXPLICIT_DELETE_B2_EFFECTS_AND_EXISTING_DELETEALL_CONTROLLER",
+      "entries": [
+        {
+          "id": "20261111121850-escalation-policy-delete-audit.sql",
+          "original_id": "20261111121850-escalation-policy-delete-audit.sql",
+          "sha256": "895f3c63116e786ddf449c4880c2e54a6429a2ac10c230f56b1b34602ab8ab9a"
+        }
+      ]
     }
   ]
 }
