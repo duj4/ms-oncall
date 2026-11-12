@@ -1962,6 +1962,35 @@
           "sha256": "895f3c63116e786ddf449c4880c2e54a6429a2ac10c230f56b1b34602ab8ab9a"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-schedule-rotation-delete-audit-d09-sd6",
+      "first_position": 300,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD6-IMPL1 direct Owner-authorized implementation of accepted GAP1; local candidate only",
+        "base_commit": "c83a1b26998b3e4e288e064eb460186ee4ded956",
+        "base_tree": "5ebc47d419cd2e2fdf9b1f55717a814df249e0e9",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "4671eda33d3d399ffb4e42ca14aa1170d2fd52d5",
+        "authorization_tree": "0696f13a91556ead59cbc8f64dab7d33e8723deb"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-escalation-policy-delete-audit-d09-sd5",
+        "migration_id": "20261111121850-escalation-policy-delete-audit.sql",
+        "sha256": "895f3c63116e786ddf449c4880c2e54a6429a2ac10c230f56b1b34602ab8ab9a",
+        "evidence": "DIRECT_D09_SD6_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_299"
+      },
+      "adaptation_evidence": "TYPED_SR_EXPLICIT_DELETE_B2_SHARED_CONTROLLER_RECEIPTS_AND_EVENT_TIME_JSON_IDENTITIES",
+      "entries": [
+        {
+          "id": "20261112095242-schedule-rotation-delete-audit.sql",
+          "original_id": "20261112095242-schedule-rotation-delete-audit.sql",
+          "sha256": "0cde6b1b37899cef834c50b302b1560322aad79e77b37c8650409698fb447b96"
+        }
+      ]
     }
   ]
 }

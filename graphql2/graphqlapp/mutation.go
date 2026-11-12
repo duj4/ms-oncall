@@ -14,6 +14,7 @@ import (
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
 	"github.com/target/goalert/schedule"
+	sraudit "github.com/target/goalert/schedule/deleteaudit"
 	"github.com/target/goalert/user"
 	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation"
@@ -595,11 +596,35 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeIntegrationKey:
 			err = errors.Wrap(a.deleteIntegrationKeysWithAudit(ctx, tx, ids, audit), "delete integration keys")
 		case assignment.TargetTypeSchedule:
-			err = errors.Wrap(a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ]), "delete schedules")
+			if audit == nil {
+				err = a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
+			} else {
+				err = audit.captureSR(ctx, sraudit.Schedule, ids, rootScopes[typ])
+				if err == nil {
+					var receipts []sraudit.Receipt
+					receipts, err = a.ScheduleStore.DeleteManyForAuditTx(ctx, tx, ids, rootScopes[typ])
+					if err == nil {
+						err = audit.witnessSR(ctx, sraudit.Schedule, receipts)
+					}
+				}
+			}
+			err = errors.Wrap(err, "delete schedules")
 		case assignment.TargetTypeCalendarSubscription:
 			err = errors.Wrap(a.CalSubStore.DeleteTx(ctx, tx, permission.UserID(ctx), ids...), "delete calendar subscriptions")
 		case assignment.TargetTypeRotation:
-			err = errors.Wrap(a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ]), "delete rotations")
+			if audit == nil {
+				err = a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
+			} else {
+				err = audit.captureSR(ctx, sraudit.Rotation, ids, rootScopes[typ])
+				if err == nil {
+					var receipts []sraudit.Receipt
+					receipts, err = a.RotationStore.DeleteManyForAuditTx(ctx, tx, ids, rootScopes[typ])
+					if err == nil {
+						err = audit.witnessSR(ctx, sraudit.Rotation, receipts)
+					}
+				}
+			}
+			err = errors.Wrap(err, "delete rotations")
 		case assignment.TargetTypeContactMethod:
 			if audit == nil {
 				err = a.CMStore.Delete(ctx, tx, ids...)

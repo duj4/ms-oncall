@@ -175,10 +175,10 @@ func TestEscalationPolicyDeleteFailureCapacity250(t *testing.T) {
 	require.Equal(t, 250, s.observations)
 }
 func TestEscalationPolicyDeleteStrictSystemAndRoutes(t *testing.T) {
-	for _, typ := range []assignment.TargetType{assignment.TargetTypeEscalationPolicy, assignment.TargetTypeService, assignment.TargetTypeIntegrationKey, assignment.TargetTypeContactMethod, assignment.TargetTypeNotificationRule} {
+	for _, typ := range []assignment.TargetType{assignment.TargetTypeEscalationPolicy, assignment.TargetTypeService, assignment.TargetTypeIntegrationKey, assignment.TargetTypeContactMethod, assignment.TargetTypeNotificationRule, assignment.TargetTypeSchedule, assignment.TargetTypeRotation} {
 		require.NotNil(t, newDeleteAllAudit(context.Background(), nil, []assignment.RawTarget{{Type: typ}}))
 	}
-	for _, typ := range []assignment.TargetType{assignment.TargetTypeSchedule, assignment.TargetTypeRotation, assignment.TargetTypeUserSession} {
+	for _, typ := range []assignment.TargetType{assignment.TargetTypeUserSession} {
 		require.Nil(t, newDeleteAllAudit(context.Background(), nil, []assignment.RawTarget{{Type: typ}}))
 	}
 	e := sd5Plan(t, &sd2State{}).nextAttempt().epEvent
