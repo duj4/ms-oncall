@@ -25,7 +25,7 @@ func sd6SchemaParticipant(e sraudit.Event) sraudit.Effect {
 func TestSRDeleteAudit300CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 301)
+	require.Len(t, h.entries, 302)
 	e := h.entries[299]
 	require.Equal(t, "20261112095242-schedule-rotation-delete-audit.sql", e.ID)
 	require.Equal(t, h.entries[298].ID, e.PredecessorID)
@@ -43,9 +43,9 @@ func TestPostgresSRDeleteSchemaReplayAndAtomicity(t *testing.T) {
 			n, err := Up(ctx, uri, "schedule-rotation-delete-audit")
 			require.NoError(t, err)
 			require.Equal(t, 300-start, n)
-			require.NoError(t, VerifyAll(ctx, uri))
 			_, err = Up(ctx, uri, "")
 			require.NoError(t, err)
+			require.NoError(t, VerifyAll(ctx, uri))
 			require.NoError(t, VerifyIsLatest(ctx, uri))
 			n, err = Up(ctx, uri, "")
 			require.NoError(t, err)

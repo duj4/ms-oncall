@@ -32,6 +32,9 @@ func (r *sd3Rows) Next(out []driver.Value) error {
 	return nil
 }
 func (c *sd2Conn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
+	if strings.Contains(q, "FROM pg_temp.sd8_user_delete_witness") {
+		return &sd3Rows{[]string{"type", "key", "payload", "bytes"}, nil}, nil
+	}
 	if q == "SHOW transaction_isolation" {
 		return &sd3Rows{[]string{"isolation"}, [][]driver.Value{{"read committed"}}}, nil
 	}

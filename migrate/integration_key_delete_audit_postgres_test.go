@@ -17,7 +17,7 @@ import (
 func TestIntegrationKeyDeleteAudit298CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 301)
+	require.Len(t, h.entries, 302)
 	e := h.entries[297]
 	require.Equal(t, "20261111004634-integration-key-delete-audit.sql", e.ID)
 	require.Equal(t, h.entries[296].ID, e.PredecessorID)

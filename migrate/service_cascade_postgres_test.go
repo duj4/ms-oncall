@@ -18,7 +18,7 @@ import (
 func TestServiceCascade297CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 301)
+	require.Len(t, h.entries, 302)
 	e := h.entries[296]
 	require.EqualValues(t, 297, e.Position)
 	require.Equal(t, "20261110172342-service-cascade-b2-effects.sql", e.ID)
@@ -70,7 +70,9 @@ func TestPostgresServiceCascadePG17HistoryAndPG19KeyIdentity(t *testing.T) {
 			require.NoError(t, db.QueryRowContext(ctx, `SELECT (to_jsonb(e)-ARRAY['effects_version','execution_id','effects'])::text,effects_version IS NULL AND execution_id IS NULL AND effects IS NULL FROM service_delete_audit_events e`).Scan(&after, &historical))
 			require.JSONEq(t, before, after)
 			require.True(t, historical)
-			require.NoError(t, db.QueryRowContext(ctx, `SELECT to_jsonb(e)::text FROM user_cmnr_delete_audit_events e`).Scan(&cmAfter))
+			// 302 adds cause columns with empty defaults; every original v1 field
+			// remains byte-for-byte equal to the historical row projection.
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT (to_jsonb(e)-ARRAY['cause_root_type','cause_root_id','user_cause_witness'])::text FROM user_cmnr_delete_audit_events e`).Scan(&cmAfter))
 			require.Equal(t, cmBefore, cmAfter)
 			var safe uuid.UUID
 			require.NoError(t, db.QueryRowContext(ctx, `SELECT audit_resource_id FROM integration_keys WHERE id=$1`, key).Scan(&safe))

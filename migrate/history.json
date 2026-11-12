@@ -2020,6 +2020,35 @@
           "sha256": "c2ce6e579defaf6347f5bc16aa2b7c7e7eb4bfb660c1987dfe336ff239305767"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-user-delete-audit-d09-sd8",
+      "first_position": 302,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD8-USER-IMPL1 accepted SPEC1; local candidate only",
+        "base_commit": "0de764cb3f684936a4118535a304f0730548f76b",
+        "base_tree": "fa349bb1b88d2976027857651e4d538363fe4bc5",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "ddf3b898c6da12bb444f9c4a78c2e0c5714ea3af",
+        "authorization_tree": "b854565f375c5fe383f49ea5bd7b30febac6fde5"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-user-override-delete-audit-d09-sd7",
+        "migration_id": "20261112140817-user-override-delete-audit.sql",
+        "sha256": "c2ce6e579defaf6347f5bc16aa2b7c7e7eb4bfb660c1987dfe336ff239305767",
+        "evidence": "DIRECT_D09_SD8_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_301"
+      },
+      "adaptation_evidence": "TYPED_USER_EXPLICIT_DELETE_PAGED_B2_COMPLETE_MANIFEST_CMNR_V2_USER_CAUSE_SHARED_CONTROLLER",
+      "entries": [
+        {
+          "id": "20261112174428-user-delete-audit.sql",
+          "original_id": "20261112174428-user-delete-audit.sql",
+          "sha256": "8831408d62e94ef7fda2a4d3dc568c8b41d9472d304fd93b591d67c81de44e0a"
+        }
+      ]
     }
   ]
 }
