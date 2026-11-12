@@ -140,7 +140,7 @@ func TestPostgresEscalationPolicyDeleteEffectsBudgets(t *testing.T) {
 func TestEscalationPolicyDeleteAudit299CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 300)
+	require.Len(t, h.entries, 301)
 	e := h.entries[298]
 	require.Equal(t, "20261111121850-escalation-policy-delete-audit.sql", e.ID)
 	require.Equal(t, h.entries[297].ID, e.PredecessorID)

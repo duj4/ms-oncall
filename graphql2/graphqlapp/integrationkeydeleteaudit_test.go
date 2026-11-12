@@ -158,7 +158,10 @@ func TestIntegrationKeyDeleteStickyIntegrityAndRouting(t *testing.T) {
 	for _, typ := range []assignment.TargetType{assignment.TargetTypeEscalationPolicy, assignment.TargetTypeIntegrationKey, assignment.TargetTypeService, assignment.TargetTypeContactMethod, assignment.TargetTypeNotificationRule} {
 		require.NotNil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: typ}}))
 	}
-	for _, typ := range []assignment.TargetType{assignment.TargetTypeSchedule, assignment.TargetTypeRotation, assignment.TargetTypeUser, assignment.TargetTypeUserSession} {
+	for _, typ := range []assignment.TargetType{assignment.TargetTypeSchedule, assignment.TargetTypeRotation, assignment.TargetTypeUserOverride} {
+		require.NotNil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: typ}}))
+	}
+	for _, typ := range []assignment.TargetType{assignment.TargetTypeUser, assignment.TargetTypeUserSession} {
 		require.Nil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: typ}}))
 		require.NotNil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: typ}, {Type: assignment.TargetTypeIntegrationKey}}))
 	}
