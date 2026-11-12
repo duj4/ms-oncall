@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -68,6 +69,9 @@ func (c *sd2Conn) Begin() (driver.Tx, error) {
 	return c.tx, nil
 }
 func (c *sd2Conn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	if q == `SELECT pg_advisory_xact_lock(1297305411::integer,1396979713::integer)` || strings.HasPrefix(q, "LOCK TABLE ") {
+		return driver.RowsAffected(0), nil
+	}
 	if q == "SD2 synthetic delete" {
 		c.s.mu.Lock()
 		c.s.deletes++
@@ -81,7 +85,19 @@ func (c *sd2Conn) ExecContext(_ context.Context, q string, args []driver.NamedVa
 	}
 	success := false
 	var request, attempt, execution string
-	if strings.Contains(q, "INSERT INTO user_cmnr_delete_audit_events") {
+	if strings.Contains(q, "INSERT INTO user_delete_audit_events") {
+		var event struct {
+			RecordKind  string `json:"record_kind"`
+			RequestID   string `json:"request_id"`
+			ExecutionID string `json:"execution_id"`
+			AttemptID   string `json:"attempt_id"`
+		}
+		if json.Unmarshal([]byte(args[0].Value.(string)), &event) != nil {
+			return nil, errors.New("invalid synthetic user header")
+		}
+		success = event.RecordKind == "success_witness"
+		request, execution, attempt = event.RequestID, event.ExecutionID, event.AttemptID
+	} else if strings.Contains(q, "INSERT INTO user_cmnr_delete_audit_events") {
 		success = args[4].Value == "success_witness"
 		request, execution, attempt = args[1].Value.(string), args[2].Value.(string), args[3].Value.(string)
 	} else if strings.Contains(q, "INSERT INTO service_delete_audit_events") {

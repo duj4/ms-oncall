@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/organization"
+	useraudit "github.com/target/goalert/user/deleteaudit"
 )
 
 const (
@@ -54,6 +55,10 @@ type RelatedExplicitEvent struct {
 }
 
 type Event struct {
+	SchemaVersion                                    int
+	CauseRootType                                    string
+	CauseRootID                                      uuid.UUID
+	UserCauseWitness                                 *useraudit.ExplicitWitness
 	EventID, RequestID, ExecutionID, AttemptID       uuid.UUID
 	RecordKind, Operation, RootType                  string
 	RootID, RootOwnerUserID, TargetOrganizationID    uuid.UUID
@@ -104,6 +109,9 @@ func effectKey(e Effect) string {
 
 // Canonical freezes order and microsecond time without generating new IDs.
 func (e Event) Canonical() Event {
+	if e.SchemaVersion == 0 {
+		e.SchemaVersion = 1
+	}
 	e.Effects = append([]Effect{}, e.Effects...)
 	e.RelatedExplicitEvents = append([]RelatedExplicitEvent{}, e.RelatedExplicitEvents...)
 	slices.SortFunc(e.Effects, func(a, b Effect) int {
@@ -121,6 +129,22 @@ func (e Event) Canonical() Event {
 }
 
 func (e Event) Validate() error {
+	version := e.SchemaVersion
+	if version == 0 {
+		version = 1
+	}
+	if version != 1 && version != 2 {
+		return ErrInvalid
+	}
+	if version == 1 && (e.CauseRootType != "" || e.CauseRootID != uuid.Nil || e.UserCauseWitness != nil) {
+		return ErrInvalid
+	}
+	if version == 2 {
+		w := e.UserCauseWitness
+		if e.RecordKind != "success_witness" || e.DeletionMechanism != "fk_cascade" || e.CauseRootType != "user" || e.CauseRootID == uuid.Nil || w == nil || w.Validate() != nil || e.CauseRootID != w.CauseUserID || e.CauseEventID != w.CauseEventID || e.EventID != w.EventID || e.RootType != w.ResourceType || e.RootID != w.ResourceID || e.RootOwnerUserID != w.OwnerID || e.ParentCMID != ptrID(w.ParentCMID) || e.TargetOrganizationID != ptrID(w.TargetOrganizationID) || e.TargetOrgResolution != w.TargetOrgResolution || e.RequestID != w.RequestID || e.ExecutionID != w.ExecutionID || e.AttemptID != w.AttemptID || len(e.Effects) != 0 || e.ActorKind == "human" && e.AuthorityRole != "platform_admin" {
+			return ErrInvalid
+		}
+	}
 	if e.EventID == uuid.Nil || e.RequestID == uuid.Nil || e.ExecutionID == uuid.Nil || e.AttemptID == uuid.Nil || e.OccurredAt.IsZero() || e.OccurredAt.Year() < 1 || e.OccurredAt.Year() > 9999 || e.RepresentedHumanID != uuid.Nil {
 		return ErrInvalid
 	}
@@ -160,7 +184,7 @@ func (e Event) Validate() error {
 			return ErrInvalid
 		}
 		if e.DeletionMechanism == "fk_cascade" {
-			if e.RootType != NotificationRule || e.CauseEventID == uuid.Nil || e.CauseEventID == e.EventID {
+			if version == 1 && e.RootType != NotificationRule || e.CauseEventID == uuid.Nil || e.CauseEventID == e.EventID {
 				return ErrInvalid
 			}
 		} else if e.DeletionMechanism != "explicit_sql" || e.CauseEventID != uuid.Nil {
@@ -199,7 +223,7 @@ func (e Event) Validate() error {
 		} else if (e.OrganizationRole != "ORG_ADMIN" && e.OrganizationRole != "ORG_MEMBER") || (e.AuthorityRole != "platform_admin" && (e.AuthorityRole != "org_admin" || e.OrganizationRole != "ORG_ADMIN") && (e.AuthorityRole != "org_member" || e.OrganizationRole != "ORG_MEMBER")) {
 			return ErrInvalid
 		}
-		if success && (e.TargetOrgResolution != "known_normal" || e.AuthorityRole != "platform_admin" && (e.ActorID != e.RootOwnerUserID || e.HomeOrganizationID != e.TargetOrganizationID || e.AuthorityRole == "none")) {
+		if success && version == 1 && (e.TargetOrgResolution != "known_normal" || e.AuthorityRole != "platform_admin" && (e.ActorID != e.RootOwnerUserID || e.HomeOrganizationID != e.TargetOrganizationID || e.AuthorityRole == "none")) {
 			return ErrInvalid
 		}
 	case "internal_system":
@@ -280,9 +304,17 @@ func Append(ctx context.Context, tx *sql.Tx, event Event) error {
 	}
 	effects, _ := json.Marshal(e.Effects)
 	related, _ := json.Marshal(e.RelatedExplicitEvents)
-	args := []any{e.EventID, e.RequestID, e.ExecutionID, e.AttemptID, e.RecordKind, e.Operation, nullableText(e.RootType), NullableID(e.RootID), NullableID(e.RootOwnerUserID), NullableID(e.TargetOrganizationID), e.TargetOrgResolution, NullableID(e.ParentCMID), nullableText(e.Provenance), nullableText(e.DeletionMechanism), NullableID(e.CauseEventID), e.ActorKind, NullableID(e.ActorID), NullableID(e.RepresentedHumanID), NullableID(e.HomeOrganizationID), e.AuthoritySource, e.AuthorityRole, e.OrganizationRole, string(effects), string(related), e.Outcome, e.Reason, e.OccurredAt}
-	const cols = `event_id,request_id,execution_id,attempt_id,record_kind,operation,root_type,root_id,root_owner_user_id,target_organization_id,target_org_resolution,parent_cm_id,provenance,deletion_mechanism,cause_event_id,actor_kind,actor_id,represented_human_id,home_organization_id,authority_source,authority_role,organization_role,effects,related_explicit_events,outcome,reason_code,occurred_at`
-	const vals = `$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24::jsonb,$25,$26,$27`
+	args := []any{e.EventID, e.RequestID, e.ExecutionID, e.AttemptID, e.RecordKind, e.Operation, nullableText(e.RootType), NullableID(e.RootID), NullableID(e.RootOwnerUserID), NullableID(e.TargetOrganizationID), e.TargetOrgResolution, NullableID(e.ParentCMID), nullableText(e.Provenance), nullableText(e.DeletionMechanism), NullableID(e.CauseEventID), e.ActorKind, NullableID(e.ActorID), NullableID(e.RepresentedHumanID), NullableID(e.HomeOrganizationID), e.AuthoritySource, e.AuthorityRole, e.OrganizationRole, string(effects), string(related), e.Outcome, e.Reason, e.OccurredAt, e.SchemaVersion}
+	cols := `event_id,request_id,execution_id,attempt_id,record_kind,operation,root_type,root_id,root_owner_user_id,target_organization_id,target_org_resolution,parent_cm_id,provenance,deletion_mechanism,cause_event_id,actor_kind,actor_id,represented_human_id,home_organization_id,authority_source,authority_role,organization_role,effects,related_explicit_events,outcome,reason_code,occurred_at,schema_version`
+	vals := `$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24::jsonb,$25,$26,$27,$28`
+	// v1 retains its original columns and works at its historical Schema too.
+	// The v1 validator forbids new cause fields; 302 supplies their NULL defaults.
+	if e.SchemaVersion == 2 {
+		witness, _ := json.Marshal(e.UserCauseWitness)
+		cols += `,cause_root_type,cause_root_id,user_cause_witness`
+		vals += `,$29,$30,$31::jsonb`
+		args = append(args, e.CauseRootType, NullableID(e.CauseRootID), string(witness))
+	}
 	r, err := tx.ExecContext(ctx, `INSERT INTO user_cmnr_delete_audit_events (`+cols+`) VALUES (`+vals+`) ON CONFLICT(event_id) DO NOTHING`, args...)
 	if err != nil {
 		return ErrUnavailable

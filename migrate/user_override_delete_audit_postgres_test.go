@@ -24,7 +24,7 @@ func uoSchemaEvent() uoaudit.Event {
 func TestUODeleteAudit301CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 301)
+	require.Len(t, h.entries, 302)
 	e := h.entries[300]
 	require.Equal(t, "20261112140817-user-override-delete-audit.sql", e.ID)
 	require.Equal(t, h.entries[299].ID, e.PredecessorID)
@@ -41,7 +41,7 @@ func TestPostgresUODeleteSchemaReplayAndAtomicity(t *testing.T) {
 			ctx, uri, db := boundedAuditDB(t, start)
 			n, err := Up(ctx, uri, "")
 			require.NoError(t, err)
-			require.Equal(t, 301-start, n)
+			require.Equal(t, 302-start, n)
 			require.NoError(t, VerifyAll(ctx, uri))
 			require.NoError(t, VerifyIsLatest(ctx, uri))
 			n, err = Up(ctx, uri, "")

@@ -559,7 +559,14 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			}
 			err = errors.Wrap(err, "delete user overrides")
 		case assignment.TargetTypeUser:
-			err = errors.Wrap(a.UserStore.DeleteManyTx(ctx, tx, ids), "delete users")
+			if audit == nil {
+				err = errors.Wrap(a.UserStore.DeleteManyTx(ctx, tx, ids), "delete users")
+			} else {
+				result, deleteErr := a.UserStore.DeleteManyForAuditTx(ctx, tx, ids, audit.userBase, audit.plan.userIntents)
+				audit.userTargets, audit.userReceipts = result.Targets, result.Receipts
+				err = deleteErr
+				err = errors.Wrap(audit.userCaptureError(err), "delete users")
+			}
 		case assignment.TargetTypeService:
 			// Resolve only this group's scope. In particular, a Foreign Service
 			// must not grant its Organization to Schedule/Rotation/EP deletion.

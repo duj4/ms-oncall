@@ -143,7 +143,8 @@ func TestUORoutesAndStrictIdentity(t *testing.T) {
 		require.NotNil(t, p)
 		require.True(t, p.hasUO)
 	}
-	require.Nil(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: assignment.TargetTypeUser}}))
+	// SD8 routes pure User deletion through the same controller.
+	require.True(t, newDeleteAllAudit(t.Context(), nil, []assignment.RawTarget{{Type: assignment.TargetTypeUser}}).hasUser)
 	a := sd7Plan(t, &sd2State{}).nextAttempt()
 	b := sd7Before()
 	a.collectUO(override.DeleteResult{Targets: []uoaudit.Before{b}})

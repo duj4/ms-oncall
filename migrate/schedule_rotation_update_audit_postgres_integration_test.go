@@ -143,7 +143,7 @@ func TestPostgresBoundedAuditUpgradePreservation(t *testing.T) {
 	}
 	n, err = Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 2, n)
+	require.Equal(t, len(Names())-292, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	require.NoError(t, VerifyIsLatest(ctx, uri))
 	n, err = Up(ctx, uri, "")
@@ -248,7 +248,7 @@ func TestPostgresBoundedAuditHistoryFailClosed(t *testing.T) {
 	require.Equal(t, 1, n)
 	n, err = Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 2, n)
+	require.Equal(t, len(Names())-292, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	boundedEvidence(t, db, "rejected-corruption-restored")
 }
