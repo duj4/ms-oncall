@@ -16,6 +16,7 @@ import (
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
+	sraudit "github.com/target/goalert/schedule/deleteaudit"
 	"github.com/target/goalert/service/deleteaudit"
 	audit "github.com/target/goalert/user/cmnrdeleteaudit"
 	"github.com/target/goalert/util/errutil"
@@ -24,7 +25,7 @@ import (
 )
 
 // deleteAllAudit is deliberately confined to DeleteAll requests that contain
-// explicit Service/CM/NR/IntegrationKey/EP inputs. Uncovered requests retain their old lifecycle.
+// explicit Service/CM/NR/IntegrationKey/EP/Schedule/Rotation inputs. Uncovered requests retain their old lifecycle.
 // Service's capture, witness and event contract stay in its existing adapter.
 type deleteAllAudit struct {
 	ctx                                  context.Context
@@ -33,12 +34,17 @@ type deleteAllAudit struct {
 	identity                             audit.Event
 	hasCM, hasNR, hasKey, hasEP, started bool
 	explicitNR                           map[uuid.UUID]bool
+	hasSchedule, hasRotation             bool
 }
 
 func newDeleteAllAudit(ctx context.Context, db *sql.DB, input []assignment.RawTarget) *deleteAllAudit {
 	p := &deleteAllAudit{ctx: ctx, db: db, service: newServiceDeleteAudit(ctx, db, input), explicitNR: map[uuid.UUID]bool{}}
 	for _, t := range input {
 		switch t.TargetType() {
+		case assignment.TargetTypeSchedule:
+			p.hasSchedule = true
+		case assignment.TargetTypeRotation:
+			p.hasRotation = true
 		case assignment.TargetTypeEscalationPolicy:
 			p.hasEP = true
 		case assignment.TargetTypeIntegrationKey:
@@ -52,7 +58,7 @@ func newDeleteAllAudit(ctx context.Context, db *sql.DB, input []assignment.RawTa
 			}
 		}
 	}
-	if p.service == nil && !p.hasCM && !p.hasNR && !p.hasKey && !p.hasEP {
+	if p.service == nil && !p.hasCM && !p.hasNR && !p.hasKey && !p.hasEP && !p.hasSchedule && !p.hasRotation {
 		return nil
 	}
 	e := audit.Event{RequestID: uuid.New(), ExecutionID: uuid.New(), ActorKind: "unknown", AuthoritySource: "unknown", AuthorityRole: "unknown", OrganizationRole: "unknown", TargetOrgResolution: "unknown"}
@@ -92,6 +98,8 @@ type deleteAllAttempt struct {
 	service                                                                                  *serviceDeleteAttempt
 	keyEvent                                                                                 keyaudit.Event
 	epEvent                                                                                  epaudit.Event
+	srBase                                                                                   map[string]sraudit.Event
+	srTargets, srSuccesses                                                                   []sraudit.Event
 	epTargets, epSuccesses                                                                   []epaudit.Event
 	epChildren                                                                               []epaudit.Effect
 	epBytes                                                                                  int
@@ -127,6 +135,20 @@ func (p *deleteAllAudit) nextAttempt() *deleteAllAttempt {
 				a.epEvent.ActorKind, a.epEvent.AuthoritySource, a.epEvent.AuthorityRole = "unknown", "unknown", "unknown"
 			}
 		}
+	}
+	a.srBase = map[string]sraudit.Event{}
+	for _, typ := range []string{sraudit.Schedule, sraudit.Rotation} {
+		if typ == sraudit.Schedule && !p.hasSchedule || typ == sraudit.Rotation && !p.hasRotation {
+			continue
+		}
+		ev := sraudit.Event{SchemaVersion: 1, EffectsVersion: 1, RootType: typ, Operation: typ + ".delete", EventID: uuid.New(), RequestID: e.RequestID, ExecutionID: e.ExecutionID, AttemptID: e.AttemptID, OccurredAt: e.OccurredAt, ActorKind: e.ActorKind, ActorID: e.ActorID, HomeOrganizationID: e.HomeOrganizationID, AuthoritySource: e.AuthoritySource, AuthorityRole: e.AuthorityRole, OrganizationRole: e.OrganizationRole, TargetOrgResolution: "unknown"}
+		if e.ActorKind == "internal_system" {
+			scope, err := epManagementAuthority(p.ctx, epManagementDelete)
+			if err != nil || scope != nil {
+				ev.ActorKind, ev.AuthoritySource, ev.AuthorityRole = "unknown", "unknown", "unknown"
+			}
+		}
+		a.srBase[typ] = ev
 	}
 	if p.service != nil {
 		a.service = p.service.nextAttempt()
@@ -170,6 +192,14 @@ func (a *deleteAllAttempt) begin(ctx context.Context) (*sql.Tx, error) {
 				a.auditFailed = a.auditFailed || a.service.auditFailed
 			}
 		}
+	}
+	if err == nil && (a.plan.hasSchedule || a.plan.hasRotation) {
+		var isolation string
+		err = a.tx.QueryRowContext(ctx, `SHOW transaction_isolation`).Scan(&isolation)
+		if err == nil && isolation != "read committed" {
+			err = sraudit.ErrInvalid
+		}
+		err = a.srCaptureError(err)
 	}
 	return a.tx, err
 }
@@ -278,6 +308,10 @@ func (a *deleteAllAttempt) commit(ctx context.Context) error {
 		a.auditFailed = true
 		return err
 	}
+	if err := a.appendSR(ctx); err != nil {
+		a.auditFailed = true
+		return err
+	}
 	a.commitAttempted = true
 	err, finalized := commitServiceUpdate(ctx, a.tx)
 	a.finalized, a.committed = finalized, err == nil
@@ -286,7 +320,7 @@ func (a *deleteAllAttempt) commit(ctx context.Context) error {
 
 func (a *deleteAllAttempt) safeError(err error) error {
 	safe := serviceDeleteSafeError(err)
-	if a.plan.hasCM || a.plan.hasNR || a.plan.hasKey || a.plan.hasEP {
+	if a.plan.hasCM || a.plan.hasNR || a.plan.hasKey || a.plan.hasEP || a.plan.hasSchedule || a.plan.hasRotation {
 		if safe.Error() == "service.delete transaction failed" {
 			return errors.New("deleteAll transaction failed")
 		}
@@ -300,7 +334,7 @@ func (a *deleteAllAttempt) fault(code string) {
 		clean = log.FromContext(a.plan.ctx).BackgroundContext()
 	}
 	op := "deleteAll"
-	if a.plan.service != nil && !a.plan.hasCM && !a.plan.hasNR && !a.plan.hasKey && !a.plan.hasEP {
+	if a.plan.service != nil && !a.plan.hasCM && !a.plan.hasNR && !a.plan.hasKey && !a.plan.hasEP && !a.plan.hasSchedule && !a.plan.hasRotation {
 		op = "service.delete"
 	}
 	clean = log.WithFields(clean, log.Fields{"AuditOperation": op, "AuditFault": code, "AuditRequestID": a.event.RequestID.String(), "AuditExecutionID": a.event.ExecutionID.String(), "AuditAttemptID": a.event.AttemptID.String()})
@@ -308,6 +342,8 @@ func (a *deleteAllAttempt) fault(code string) {
 		log.Log(clean, errors.New(op+" committed; resource release unconfirmed"))
 	} else if op == "service.delete" {
 		log.Log(clean, deleteaudit.ErrUnavailable)
+	} else if a.plan.hasSchedule || a.plan.hasRotation {
+		log.Log(clean, sraudit.ErrUnavailable)
 	} else if a.plan.hasEP {
 		log.Log(clean, epaudit.ErrUnavailable)
 	} else if a.plan.hasKey && !a.plan.hasCM && !a.plan.hasNR {
@@ -374,8 +410,20 @@ func (a *deleteAllAttempt) failureEvents(outcome, reason string) ([]deleteaudit.
 // recordDeleteAllFailureBatch owns a separate bounded connection/transaction.
 // All typed adapters commit together. Even confirmed persistence does not authorize
 // retry until its own release barrier has completed.
-func recordDeleteAllFailureBatch(db *sql.DB, services []deleteaudit.Event, events []audit.Event, keys []keyaudit.Event, eps []epaudit.Event) (persisted, released bool) {
-	if db == nil || !deleteAllFailureCapacity(len(services), len(events), len(keys), len(eps)) {
+func recordDeleteAllFailureBatch(db *sql.DB, services []deleteaudit.Event, events []audit.Event, keys []keyaudit.Event, eps []epaudit.Event, srBatches ...[]sraudit.Event) (persisted, released bool) {
+	sr, ok := deleteAllSRFailureBatch(srBatches)
+	schedules, rotations := 0, 0
+	for _, e := range sr {
+		switch e.RootType {
+		case sraudit.Schedule:
+			schedules++
+		case sraudit.Rotation:
+			rotations++
+		default:
+			ok = false
+		}
+	}
+	if db == nil || !ok || !deleteAllFailureCapacity(len(services), len(events), len(keys), len(eps), schedules, rotations) {
 		return false, true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -388,7 +436,7 @@ func recordDeleteAllFailureBatch(db *sql.DB, services []deleteaudit.Event, event
 	done := make(chan result, 1)
 	var confirmed atomic.Bool
 	go func() {
-		persisted, released := writeDeleteAllFailureBatch(ctx, db, services, events, keys, eps, &confirmed)
+		persisted, released := writeDeleteAllFailureBatch(ctx, db, services, events, keys, eps, &confirmed, sr)
 		done <- result{persisted, released}
 	}()
 	select {
@@ -402,7 +450,11 @@ func recordDeleteAllFailureBatch(db *sql.DB, services []deleteaudit.Event, event
 // The worker owns every native operation and its single explicit cleanup.
 // confirmed distinguishes durable observations from unconfirmed connection
 // release even when the caller's bounded wait has already ended.
-func writeDeleteAllFailureBatch(ctx context.Context, db *sql.DB, services []deleteaudit.Event, events []audit.Event, keys []keyaudit.Event, eps []epaudit.Event, confirmed *atomic.Bool) (persisted, released bool) {
+func writeDeleteAllFailureBatch(ctx context.Context, db *sql.DB, services []deleteaudit.Event, events []audit.Event, keys []keyaudit.Event, eps []epaudit.Event, confirmed *atomic.Bool, srBatches ...[]sraudit.Event) (persisted, released bool) {
+	sr, ok := deleteAllSRFailureBatch(srBatches)
+	if !ok {
+		return false, true
+	}
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return false, true
@@ -431,6 +483,11 @@ func writeDeleteAllFailureBatch(ctx context.Context, db *sql.DB, services []dele
 	}
 	for _, e := range eps {
 		if e.RecordKind != "attempt_observation" || epaudit.Append(ctx, tx, e) != nil {
+			return false, false
+		}
+	}
+	for _, e := range sr {
+		if e.RecordKind != "attempt_observation" || sraudit.Append(ctx, tx, e) != nil {
 			return false, false
 		}
 	}
@@ -481,7 +538,7 @@ func (a *deleteAllAttempt) finish(operationErr error) error {
 		safeRetry = a.tx != nil && rb == nil && released
 	}
 	op := "deleteAll"
-	if a.plan.service != nil && !a.plan.hasCM && !a.plan.hasNR && !a.plan.hasKey && !a.plan.hasEP {
+	if a.plan.service != nil && !a.plan.hasCM && !a.plan.hasNR && !a.plan.hasKey && !a.plan.hasEP && !a.plan.hasSchedule && !a.plan.hasRotation {
 		op = "service.delete"
 	}
 	if !released {
@@ -489,7 +546,7 @@ func (a *deleteAllAttempt) finish(operationErr error) error {
 		return fmt.Errorf("%w; %s audit persistence unavailable", safe, op)
 	}
 	services, events, keys, eps := a.failureEvents(outcome, reason)
-	persisted, failureReleased := recordDeleteAllFailureBatch(a.plan.db, services, events, keys, eps)
+	persisted, failureReleased := recordDeleteAllFailureBatch(a.plan.db, services, events, keys, eps, a.srFailureEvents(outcome, reason))
 	if !persisted || !failureReleased {
 		fault := "persistence_unavailable"
 		if persisted {
@@ -506,10 +563,28 @@ func (a *deleteAllAttempt) finish(operationErr error) error {
 
 // Validate each typed component and the aggregate independently before opening
 // the failure transaction. No truncation or partial batch is allowed.
-func deleteAllFailureCapacity(services, cmnr, keys, eps int) bool {
-	total := services + cmnr + keys + eps
-	if total <= 0 || total > 250 {
+func deleteAllFailureCapacity(services, cmnr, keys, eps int, sr ...int) bool {
+	schedules, rotations := 0, 0
+	if len(sr) != 0 {
+		if len(sr) != 2 {
+			return false
+		}
+		schedules, rotations = sr[0], sr[1]
+	}
+	total := services + cmnr + keys + eps + schedules + rotations
+	if schedules < 0 || schedules > 50 || rotations < 0 || rotations > 50 || total <= 0 || total > 350 {
 		return false
 	}
 	return services >= 0 && services <= 50 && cmnr >= 0 && cmnr <= 100 && keys >= 0 && keys <= 50 && eps >= 0 && eps <= 50
+}
+
+// A single optional typed SR batch keeps existing adapter callers compatible.
+func deleteAllSRFailureBatch(batches [][]sraudit.Event) ([]sraudit.Event, bool) {
+	if len(batches) > 1 {
+		return nil, false
+	}
+	if len(batches) == 0 {
+		return nil, true
+	}
+	return batches[0], true
 }
