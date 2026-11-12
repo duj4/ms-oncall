@@ -1991,6 +1991,35 @@
           "sha256": "0cde6b1b37899cef834c50b302b1560322aad79e77b37c8650409698fb447b96"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-user-override-delete-audit-d09-sd7",
+      "first_position": 301,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD7-UO-IMPL1 direct Owner-authorized implementation of accepted GAP1; local candidate only",
+        "base_commit": "468dfb65590b61178ef92336c2693baee3086389",
+        "base_tree": "bc441801dc85498592669b6c6c03d0f6c8dfd9ba",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "517dae4508463c866b3510de18fec59e206ce345",
+        "authorization_tree": "b6f065d6ee665c659c577eaf1e3310e0b3c79ca2"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-schedule-rotation-delete-audit-d09-sd6",
+        "migration_id": "20261112095242-schedule-rotation-delete-audit.sql",
+        "sha256": "0cde6b1b37899cef834c50b302b1560322aad79e77b37c8650409698fb447b96",
+        "evidence": "DIRECT_D09_SD7_UO_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_300"
+      },
+      "adaptation_evidence": "TYPED_USER_OVERRIDE_EXPLICIT_DELETE_BEFORE_CONTEXT_SHARED_CONTROLLER_AND_EXACT_RECEIPTS",
+      "entries": [
+        {
+          "id": "20261112140817-user-override-delete-audit.sql",
+          "original_id": "20261112140817-user-override-delete-audit.sql",
+          "sha256": "c2ce6e579defaf6347f5bc16aa2b7c7e7eb4bfb660c1987dfe336ff239305767"
+        }
+      ]
     }
   ]
 }

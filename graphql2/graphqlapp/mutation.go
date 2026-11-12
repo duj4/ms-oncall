@@ -550,7 +550,14 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		}
 		switch typ {
 		case assignment.TargetTypeUserOverride:
-			err = errors.Wrap(a.OverrideStore.DeleteUserOverrideTxScoped(ctx, tx, ids, homeOrganizationID), "delete user overrides")
+			if audit == nil {
+				err = a.OverrideStore.DeleteUserOverrideTxScoped(ctx, tx, ids, homeOrganizationID)
+			} else {
+				result, deleteErr := a.OverrideStore.DeleteUserOverrideForAuditTx(ctx, tx, ids, homeOrganizationID)
+				audit.collectUO(result)
+				err = audit.uoCaptureError(deleteErr)
+			}
+			err = errors.Wrap(err, "delete user overrides")
 		case assignment.TargetTypeUser:
 			err = errors.Wrap(a.UserStore.DeleteManyTx(ctx, tx, ids), "delete users")
 		case assignment.TargetTypeService:
