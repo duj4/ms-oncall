@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -24,6 +25,8 @@ import (
 	audit "github.com/target/goalert/user/authsubjectdeleteaudit"
 	"github.com/target/goalert/util/log"
 	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
+	"github.com/vektah/gqlparser/v2/parser"
 )
 
 // Controlled database/sql driver. Persistent counters model a transaction only;
@@ -410,6 +413,114 @@ func TestAuthSubjectDeleteDiagnosticProjection(t *testing.T) {
 	require.NotContains(t, out.String(), f.session.String())
 	require.Contains(t, out.String(), log.RequestID(ctx))
 	require.Equal(t, f.session.String(), permission.Source(ctx).ID)
+}
+
+func asOperationContext(t *testing.T, query, selected, field string) context.Context {
+	t.Helper()
+	doc, err := parser.ParseQuery(&ast.Source{Input: query})
+	require.NoError(t, err)
+	op := &graphql.OperationContext{Doc: doc, Operation: doc.Operations.ForName(selected)}
+	ctx := graphql.WithOperationContext(t.Context(), op)
+	if field != "" {
+		ctx = graphql.WithFieldContext(ctx, &graphql.FieldContext{Object: "Mutation", Field: graphql.CollectedField{Field: &ast.Field{Name: field, Alias: "SYNTHETIC_ERROR_ALIAS"}}})
+	}
+	return ctx
+}
+
+func TestAuthSubjectDeleteDiagnosticErrorSeparation(t *testing.T) {
+	for _, field := range []string{"deleteAuthSubject", "sendSignal"} {
+		t.Run(field, func(t *testing.T) {
+			ctx := asOperationContext(t, `mutation SYNTHETIC_OPERATION { a:deleteAuthSubject b:sendSignal }`, "SYNTHETIC_OPERATION", field)
+			var out bytes.Buffer
+			logger := log.NewLogger()
+			logger.EnableJSON()
+			logger.EnableStacks()
+			logger.SetOutput(&out)
+			logger.AddErrorMapper(func(ctx context.Context, err error) context.Context {
+				var pg *pgconn.PgError
+				if errors.As(err, &pg) {
+					return log.WithFields(ctx, log.Fields{"SQLDetail": pg.Detail, "SQLHint": pg.Hint})
+				}
+				return ctx
+			})
+			ctx = log.SetRequestID(log.WithLogger(ctx, logger))
+			ctx = log.WithField(ctx, "RawAuthentication", "SYNTHETIC_AUTHENTICATION")
+			original := &gqlerror.Error{Message: "SYNTHETIC_MESSAGE", Err: fmt.Errorf("SYNTHETIC_WRAP: %w", &pgconn.PgError{Code: "P0001", Message: "SYNTHETIC_SQL", Detail: "SYNTHETIC_DETAIL", Hint: "SYNTHETIC_HINT"}), Path: ast.Path{ast.PathName("SYNTHETIC_ERROR_ALIAS"), ast.PathIndex(7)}, Locations: []gqlerror.Location{{Line: 1, Column: 23}}, Extensions: map[string]any{"metadata": "SYNTHETIC_METADATA"}}
+			before, err := json.Marshal(original)
+			require.NoError(t, err)
+			diagnostic := authSubjectDeleteDiagnosticError(ctx, original)
+			require.NotSame(t, original, diagnostic)
+			require.Nil(t, errors.Unwrap(diagnostic), "the logger cannot recover a raw wrapped error")
+			log.Log(authSubjectDeleteDiagnosticContext(ctx), diagnostic)
+			if strings.Contains(out.String(), "SYNTHETIC") {
+				t.Fatal("diagnostic canary leaked; record withheld")
+			}
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(out.Bytes(), &record))
+			require.Equal(t, "error", record["level"])
+			require.Equal(t, "graphql_closed_projection", record["DiagnosticPolicy"])
+			require.Equal(t, log.RequestID(ctx), record["RequestID"])
+			require.Contains(t, record, "Source", "stacks remain observable without the original error chain")
+			require.NotContains(t, record, "SQLDetail")
+			require.NotContains(t, record, "SQLHint")
+			after, err := json.Marshal(original)
+			require.NoError(t, err)
+			require.Equal(t, string(before), string(after), "log projection must not mutate protocol error, path or metadata")
+		})
+	}
+}
+
+func TestAuthSubjectDeleteDiagnosticOperationSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, query, selected string
+		private               bool
+	}{
+		{"sibling_before", `mutation { sendSignal deleteAuthSubject }`, "", true},
+		{"fragment", `mutation { ...Private } fragment Private on Mutation { PRIVATE_ALIAS:deleteAuthSubject }`, "", true},
+		{"selected_sensitive", `mutation Ordinary { sendSignal } mutation Private { deleteAuthSubject }`, "Private", true},
+		{"unselected_sensitive", `mutation Ordinary { sendSignal } mutation Private { deleteAuthSubject }`, "Ordinary", false},
+		{"alias_is_not_schema_name", `mutation deleteAuthSubject { deleteAuthSubject:sendSignal }`, "deleteAuthSubject", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := asOperationContext(t, tc.query, tc.selected, "sendSignal")
+			err := &gqlerror.Error{Message: "SYNTHETIC_MESSAGE", Path: ast.Path{ast.PathName("SYNTHETIC_ALIAS")}}
+			projected := authSubjectDeleteDiagnosticError(ctx, err)
+			if tc.private {
+				require.EqualError(t, projected, "GraphQL operation failed")
+			} else {
+				require.Same(t, err, projected)
+			}
+		})
+	}
+	// A request rejected before field selection uses the existing fail-closed
+	// state, even when ErrorPresenter has no executable operation or field.
+	ctx, state := WithAuthSubjectDeleteLogState(t.Context())
+	state.Store(true)
+	require.EqualError(t, authSubjectDeleteDiagnosticError(ctx, errors.New("SYNTHETIC_PARSER")), "GraphQL operation failed")
+	ctx = graphql.WithOperationContext(t.Context(), &graphql.OperationContext{})
+	require.EqualError(t, authSubjectDeleteDiagnosticError(ctx, errors.New("SYNTHETIC_VALIDATION")), "GraphQL operation failed")
+}
+
+func TestAuthSubjectDeleteDiagnosticRequestIsolation(t *testing.T) {
+	private, state := WithAuthSubjectDeleteLogState(asOperationContext(t, `mutation { sendSignal deleteAuthSubject }`, "", "sendSignal"))
+	ordinary, other := WithAuthSubjectDeleteLogState(asOperationContext(t, `mutation { sendSignal }`, "", "sendSignal"))
+	var wg sync.WaitGroup
+	results := make(chan bool, 32)
+	for range 32 {
+		wg.Go(func() {
+			state.Store(true)
+			err := errors.New("SYNTHETIC_PRIVATE")
+			results <- authSubjectDeleteDiagnosticError(private, err).Error() == "GraphQL operation failed" && authSubjectDeleteDiagnosticError(ordinary, err) == err
+		})
+	}
+	wg.Wait()
+	close(results)
+	for ok := range results {
+		require.True(t, ok)
+	}
+	require.True(t, state.Load())
+	require.False(t, other.Load(), "a concurrent request must retain its own policy")
+	require.Nil(t, authSubjectDeleteDiagnosticError(private, nil))
 }
 
 func TestAuthSubjectDeleteLateNativeOwnerReleaseBarrier(t *testing.T) {

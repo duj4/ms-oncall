@@ -49,15 +49,33 @@ func authSubjectDeleteOperation(ctx context.Context) bool {
 	return false
 }
 
-func authSubjectDeleteDiagnosticContext(ctx context.Context) context.Context {
+func authSubjectDeleteDiagnosticsSelected(ctx context.Context) bool {
 	selected := authSubjectDeleteField(ctx) || authSubjectDeleteOperation(ctx)
 	if state, ok := ctx.Value(authSubjectDeleteLogKey{}).(*atomic.Bool); ok && state.Load() {
 		selected = true
 	}
-	if !selected {
+	return selected
+}
+
+// Keep the protocol error (including its path) separate from persistent
+// diagnostics. Clearing context fields alone cannot remove a gqlerror's alias,
+// message, wrapped SQL error, or logger error-mapper metadata.
+func authSubjectDeleteDiagnosticError(ctx context.Context, err error) error {
+	if err == nil || !authSubjectDeleteDiagnosticsSelected(ctx) {
+		return err
+	}
+	if authSubjectDeleteField(ctx) {
+		return authSubjectDeleteSafeError(err)
+	}
+	return errors.New("GraphQL operation failed")
+}
+
+func authSubjectDeleteDiagnosticContext(ctx context.Context) context.Context {
+	if !authSubjectDeleteDiagnosticsSelected(ctx) {
 		return ctx
 	}
 	clean := log.FromContext(ctx).BackgroundContext()
+	clean = log.WithField(clean, "DiagnosticPolicy", "graphql_closed_projection")
 	name := "graphql"
 	if f := graphql.GetFieldContext(ctx); f != nil {
 		name = f.Field.Name

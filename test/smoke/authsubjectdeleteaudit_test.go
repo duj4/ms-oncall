@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,6 +93,243 @@ func (w *asLogCanary) Write(p []byte) (int, error) {
 		w.complete.Store(true)
 	}
 	return w.next.Write(p)
+}
+
+// Capture the real application output before the harness renders its own safe
+// summaries. Records stay in memory; assertion failures never print them.
+type asDiagnosticLogs struct {
+	next    io.Writer
+	mu      sync.Mutex
+	records []map[string]any
+}
+
+func (w *asDiagnosticLogs) Write(p []byte) (int, error) {
+	var record map[string]any
+	if json.Unmarshal(p, &record) == nil {
+		w.mu.Lock()
+		w.records = append(w.records, record)
+		w.mu.Unlock()
+	}
+	return w.next.Write(p)
+}
+
+func (w *asDiagnosticLogs) snapshot() []map[string]any {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]map[string]any(nil), w.records...)
+}
+
+func asMixedRequest(t *testing.T, h *harness.Harness, token, query, operation string) map[string]json.RawMessage {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"query": query, "operationName": operation})
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.URL()+"/api/graphql?trace=1", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Referer", "https://synthetic.invalid/"+operation)
+	req.Header.Set("X-Synthetic-Diagnostic", operation)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	return result
+}
+
+func TestAuthSubjectDeleteSignedMixedErrorDiagnostics(t *testing.T) {
+	for _, mode := range []string{"sensitive_first", "sibling_first", "wrapped_sql"} {
+		t.Run(mode, func(t *testing.T) {
+			f := globalOrganizationFixture(t)
+			h := f.h
+			l := log.FromContext(h.App().Context(context.Background()))
+			original := l.Logrus().Out
+			capture := &asDiagnosticLogs{next: original}
+			l.EnableDebug()
+			l.EnableStacks()
+			l.SetOutput(capture)
+			defer l.SetOutput(original)
+			// Both variants are expected test errors, including on the vulnerable
+			// parent. Their presence and privacy are checked on actual records.
+			h.IgnoreErrorsWith("feature not enabled")
+			h.IgnoreErrorsWith("GraphQL operation failed")
+			h.IgnoreErrorsWith("SYNTHETIC_MIXED_SQL")
+			owner := h.UUID("b")
+			var id int64
+			require.NoError(t, h.App().DB().QueryRow(`INSERT INTO auth_subjects(user_id,provider_id,subject_id) VALUES($1,'SYNTHETIC_MIXED_PROVIDER','SYNTHETIC_MIXED_SUBJECT') RETURNING id`, owner).Scan(&id))
+			sensitive := `deleteAuthSubject(input:{userID:"` + owner + `",providerID:"SYNTHETIC_MIXED_PROVIDER",subjectID:"SYNTHETIC_MIXED_SUBJECT"})`
+			sibling := `SYNTHETIC_MIXED_ALIAS:sendSignal(input:{serviceID:"22222222-2222-4222-8222-222222222222",dest:{type:"synthetic-review",args:{}}})`
+			if mode == "wrapped_sql" {
+				sd8Exec(t, h, `CREATE FUNCTION as_mixed_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='SYNTHETIC_MIXED_SQL',DETAIL='SYNTHETIC_MIXED_DETAIL',HINT='SYNTHETIC_MIXED_HINT'; END $$`)
+				sd8Exec(t, h, `CREATE TRIGGER as_mixed_fault BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION as_mixed_fault()`)
+				sibling = `SYNTHETIC_MIXED_ALIAS:updateUser(input:{id:"` + owner + `",name:"Synthetic mixed update"})`
+			}
+			fields := sensitive + " " + sibling
+			if mode == "sibling_first" {
+				fields = sibling + " " + sensitive
+			}
+			r := asMixedRequest(t, h, f.tokens["pam"], `mutation SYNTHETIC_MIXED_OPERATION{`+fields+`}`, "SYNTHETIC_MIXED_OPERATION")
+			var gqlErrors []struct {
+				Message   string
+				Path      []string
+				Locations []json.RawMessage
+			}
+			require.NoError(t, json.Unmarshal(r["errors"], &gqlErrors))
+			require.Len(t, gqlErrors, 1)
+			require.Equal(t, "unexpected error", gqlErrors[0].Message)
+			require.Equal(t, []string{"SYNTHETIC_MIXED_ALIAS"}, gqlErrors[0].Path)
+			require.NotEmpty(t, gqlErrors[0].Locations)
+			require.JSONEq(t, `null`, string(r["data"]), "non-null sibling failure propagates to the operation")
+			require.NotContains(t, string(r["extensions"]), "tracing")
+			// This fixed gqlgen version executes the later mutation even when
+			// the earlier non-null sibling fails; the response data is still null.
+			require.Zero(t, asCount(t, h, id, "business"))
+			require.Equal(t, 1, asCount(t, h, id, "audit"), "each mutation retains its own transaction result")
+			require.Eventually(t, func() bool {
+				for _, record := range capture.snapshot() {
+					if record["msg"] == "request complete" {
+						return true
+					}
+				}
+				return false
+			}, time.Second, 10*time.Millisecond)
+			records := capture.snapshot()
+			var errorsSeen, completeSeen, mutationsSeen int
+			private := []string{"SYNTHETIC_MIXED", "AuthSource"}
+			for _, session := range f.sessions {
+				private = append(private, session)
+			}
+			for _, record := range records {
+				raw, err := json.Marshal(record)
+				require.NoError(t, err)
+				for _, value := range private {
+					if bytes.Contains(raw, []byte(value)) {
+						t.Error("mixed-operation log canary leaked; raw record withheld")
+					}
+				}
+				if record["level"] == "error" {
+					errorsSeen++
+					if record["error"] != "GraphQL operation failed" {
+						t.Error("sibling diagnostic retained the protocol error; raw record withheld")
+					}
+				}
+				if record["msg"] == "request complete" {
+					completeSeen++
+				}
+				if record["msg"] == "Mutation." {
+					mutationsSeen++
+				}
+			}
+			require.Equal(t, 1, errorsSeen, "the failing sibling must remain observable")
+			require.Equal(t, 1, completeSeen, "the real HTTP logger must remain observable")
+			require.Equal(t, 1, mutationsSeen)
+		})
+	}
+}
+
+func TestAuthSubjectDeleteSignedDiagnosticIsolation(t *testing.T) {
+	f := globalOrganizationFixture(t)
+	h := f.h
+	l := log.FromContext(h.App().Context(context.Background()))
+	original := l.Logrus().Out
+	capture := &asDiagnosticLogs{next: original}
+	l.EnableDebug()
+	l.SetOutput(capture)
+	defer l.SetOutput(original)
+	h.IgnoreErrorsWith("feature not enabled")
+	h.IgnoreErrorsWith("GraphQL operation failed")
+	sensitive := `deleteAuthSubject(input:` + asInput(h.UUID("b"), "SYNTHETIC_MIXED_SUBJECT") + `)`
+	signal := `sendSignal(input:{serviceID:"22222222-2222-4222-8222-222222222222",dest:{type:"synthetic-review",args:{}}})`
+	request := func(t *testing.T, private bool) {
+		t.Helper()
+		operation, alias := "ORDINARY_DIAGNOSTIC_OPERATION", "ORDINARY_DIAGNOSTIC_ALIAS"
+		query := `mutation ` + operation + `{` + alias + `:` + signal + `} mutation SYNTHETIC_MIXED_UNUSED{` + sensitive + `}`
+		if private {
+			operation, alias = "SYNTHETIC_MIXED_OPERATION", "SYNTHETIC_MIXED_ALIAS"
+			query = `mutation ` + operation + `{` + sensitive + ` ` + alias + `:` + signal + `}`
+		}
+		r := asMixedRequest(t, h, f.tokens["pam"], query, operation)
+		var errs []struct {
+			Message string
+			Path    []string
+		}
+		require.NoError(t, json.Unmarshal(r["errors"], &errs))
+		require.Len(t, errs, 1)
+		require.Equal(t, "unexpected error", errs[0].Message)
+		require.Equal(t, []string{alias}, errs[0].Path)
+		require.JSONEq(t, `null`, string(r["data"]))
+		if private {
+			require.NotContains(t, string(r["extensions"]), "tracing")
+		} else {
+			require.Contains(t, string(r["extensions"]), "tracing", "ordinary tracing must remain available")
+		}
+	}
+	request(t, false)
+	request(t, true)
+	request(t, false)
+	t.Run("concurrent", func(t *testing.T) {
+		for i := range 8 {
+			t.Run(fmt.Sprint(i), func(t *testing.T) { t.Parallel(); request(t, i%2 == 0) })
+		}
+	})
+	require.Eventually(t, func() bool {
+		n := 0
+		for _, r := range capture.snapshot() {
+			if r["msg"] == "request complete" {
+				n++
+			}
+		}
+		return n == 11
+	}, time.Second, 10*time.Millisecond)
+	records := capture.snapshot()
+	privateIDs := map[string]bool{}
+	ordinaryErrors := 0
+	for _, r := range records {
+		if r["level"] != "error" {
+			continue
+		}
+		if r["error"] == "GraphQL operation failed" {
+			id, ok := r["RequestID"].(string)
+			require.True(t, ok)
+			_, err := uuid.Parse(id)
+			require.NoError(t, err)
+			privateIDs[id] = true
+		} else if text, ok := r["error"].(string); ok && strings.Contains(text, "ORDINARY_DIAGNOSTIC_ALIAS") && strings.Contains(text, "feature not enabled") {
+			ordinaryErrors++
+		} else {
+			t.Error("unrecognized error diagnostic; raw record withheld")
+		}
+	}
+	require.Len(t, privateIDs, 5)
+	require.Equal(t, 6, ordinaryErrors, "ordinary errors retain their original alias and diagnostic")
+	private := []string{"SYNTHETIC_MIXED", "AuthSource"}
+	for _, session := range f.sessions {
+		private = append(private, session)
+	}
+	for id := range privateIDs {
+		completes, mutations := 0, 0
+		for _, r := range records {
+			if r["RequestID"] != id {
+				continue
+			}
+			raw, err := json.Marshal(r)
+			require.NoError(t, err)
+			for _, value := range private {
+				if bytes.Contains(raw, []byte(value)) {
+					t.Error("concurrent sensitive request leaked; raw record withheld")
+				}
+			}
+			if r["msg"] == "request complete" {
+				completes++
+			}
+			if r["msg"] == "Mutation." {
+				mutations++
+			}
+		}
+		require.Equal(t, 1, completes)
+		require.Equal(t, 1, mutations)
+	}
 }
 
 func TestAuthSubjectDeleteSignedHTTP(t *testing.T) {
@@ -214,6 +452,11 @@ func TestAuthSubjectDeleteSignedPrivacyAndAtomicFailure(t *testing.T) {
 	badInput := asHTTP(t, h, f.tokens["pam"], `mutation{SYNTHETIC_AUTH_ALIAS:deleteAuthSubject(input:{userID:"`+owner+`",providerID:"SYNTHETIC_AUTH_PROVIDER",subjectID:"SYNTHETIC_AUTH_SUBJECT",actorID:"forged"})}`, nil, true, http.StatusUnprocessableEntity)
 	require.NotEmpty(t, badInput["errors"])
 	require.False(t, canary.leaked.Load(), "pre-execution diagnostic canary leaked; sample withheld")
+	invalid := asHTTP(t, h, f.tokens["pam"], `mutation SYNTHETIC_AUTH_OPERATION{SYNTHETIC_AUTH_ALIAS:deleteAuthSubject(input:{userID:"SYNTHETIC_INVALID_UUID",providerID:"SYNTHETIC_AUTH_PROVIDER",subjectID:"SYNTHETIC_AUTH_SUBJECT"})}`, nil, true)
+	require.NotEmpty(t, invalid["errors"])
+	require.Contains(t, string(invalid["errors"]), `"fieldName":"UserID"`)
+	require.NotContains(t, string(invalid["extensions"]), "tracing")
+	require.False(t, canary.leaked.Load(), "validation diagnostic canary leaked; sample withheld")
 	var before string
 	require.NoError(t, h.App().DB().QueryRow(`SELECT before_context::text FROM auth_subject_delete_audit_events WHERE root_id=$1`, id).Scan(&before))
 	require.NotContains(t, before, "SYNTHETIC")

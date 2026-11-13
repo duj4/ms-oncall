@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,5 +37,36 @@ func TestAuthSubjectDeleteEnclosingRequestLogRedaction(t *testing.T) {
 		if strings.Contains(out.String(), private) {
 			t.Fatal("private diagnostic canary leaked (sample withheld)")
 		}
+	}
+}
+
+func TestAuthSubjectDeleteDiagnosticFallback(t *testing.T) {
+	for _, query := range []string{
+		`mutation SYNTHETIC_PRIVATE_OPERATION { SYNTHETIC_PRIVATE_ALIAS:`,
+		`mutation SYNTHETIC_PRIVATE_OPERATION { SYNTHETIC_PRIVATE_ALIAS:unknownField }`,
+		`mutation First { deleteAuthSubject(input:{userID:"SYNTHETIC_PRIVATE_UUID",providerID:"SYNTHETIC_PRIVATE_PROVIDER",subjectID:"SYNTHETIC_PRIVATE_SUBJECT"}) } mutation Second { __typename }`,
+	} {
+		t.Run(query[:8], func(t *testing.T) {
+			var out bytes.Buffer
+			l := log.NewLogger()
+			l.EnableDebug()
+			l.SetOutput(&out)
+			body, err := json.Marshal(map[string]string{"query": query})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPost, "/api/graphql?trace=1", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Referer", "https://synthetic.invalid/SYNTHETIC_PRIVATE_REFERER")
+			req = req.WithContext(log.WithLogger(permission.SystemContext(req.Context(), "Engine"), l))
+			recorder := httptest.NewRecorder()
+			logRequest(true)(logRequestAuth(new(graphqlapp.App).Handler())).ServeHTTP(recorder, req)
+			require.Equal(t, http.StatusUnprocessableEntity, recorder.Code)
+			require.Contains(t, recorder.Body.String(), `"errors"`)
+			require.NotContains(t, recorder.Body.String(), `"tracing"`)
+			require.Contains(t, out.String(), "request complete")
+			require.Contains(t, out.String(), "graphql_closed_projection")
+			if strings.Contains(out.String(), "SYNTHETIC_PRIVATE") {
+				t.Fatal("fallback request log leaked; record withheld")
+			}
+		})
 	}
 }
