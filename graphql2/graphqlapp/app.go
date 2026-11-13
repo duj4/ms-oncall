@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -202,7 +203,7 @@ func (a *App) Handler() http.Handler {
 	type hasTraceKey int
 	h.Use(apolloTracer{Tracer: apollotracing.Tracer{}, shouldTrace: func(ctx context.Context) bool {
 		enabled, ok := ctx.Value(hasTraceKey(1)).(bool)
-		return ok && enabled
+		return ok && enabled && graphql.HasOperationContext(ctx) && !authSubjectDeleteOperation(ctx)
 	}})
 
 	h.Use(apikey.Middleware{})
@@ -215,6 +216,11 @@ func (a *App) Handler() http.Handler {
 			}
 		}()
 		fieldCtx := graphql.GetFieldContext(ctx)
+		if authSubjectDeleteField(ctx) || authSubjectDeleteOperation(ctx) {
+			if state, ok := ctx.Value(authSubjectDeleteLogKey{}).(*atomic.Bool); ok {
+				state.Store(true)
+			}
+		}
 		if err := defaultHumanOperation(ctx, fieldCtx.Object, fieldCtx.Field.Name, fieldCtx.Args); err != nil {
 			return nil, err
 		}
@@ -231,7 +237,7 @@ func (a *App) Handler() http.Handler {
 				Observe(time.Since(start).Seconds())
 		}
 		if err == nil && fieldCtx.Object == "Mutation" {
-			ctx = rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)))
+			ctx = authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))))
 			ctx = log.WithFields(ctx, log.Fields{
 				"MutationName": fieldCtx.Field.Name,
 			})
@@ -247,6 +253,14 @@ func (a *App) Handler() http.Handler {
 	h.Use(&errSkipHandler{})
 
 	h.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
+		if graphql.GetFieldContext(ctx) == nil || authSubjectDeleteOperation(ctx) {
+			if state, ok := ctx.Value(authSubjectDeleteLogKey{}).(*atomic.Bool); ok {
+				state.Store(true)
+			}
+		}
+		if authSubjectDeleteField(ctx) {
+			err = authSubjectDeleteSafeError(err)
+		}
 		if errors.Is(err, errAlreadySet) {
 			// This error just indicates that a field error has already been set on the context
 			// it should not be returned to the client.
@@ -307,7 +321,7 @@ func (a *App) Handler() http.Handler {
 		if isUnsafe && !isGQLValidation(gqlErr) {
 			// context.Canceled is caused by normal things like closing a browser tab.
 			if !errors.Is(err, context.Canceled) {
-				log.Log(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))), err)
+				log.Log(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)))), err)
 			}
 			gqlErr.Message = safeErr.Error()
 		}

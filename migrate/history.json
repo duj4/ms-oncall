@@ -2049,6 +2049,35 @@
           "sha256": "24f8cd03d2abd293a56c4cd6c75c5fc44d36120e8c72068783f0ccad2e9b6c30"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-auth-subject-delete-audit-d09-sd9",
+      "first_position": 303,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD9-AUTHSUBJECT-IMPL1 accepted SPEC1; local candidate only",
+        "base_commit": "6ea6621c005d9ebb17bfabb5b9e4d8fa0e0fdbff",
+        "base_tree": "6770e548bf017d2c7295c7b196097352bad3875c",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "09297fffcde83d884690fc7741d7d2c3246af709",
+        "authorization_tree": "f6471e617fd5275f2e7b2f2d8fedba22ff277d0a"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-user-delete-audit-d09-sd8",
+        "migration_id": "20261112174428-user-delete-audit.sql",
+        "sha256": "24f8cd03d2abd293a56c4cd6c75c5fc44d36120e8c72068783f0ccad2e9b6c30",
+        "evidence": "DIRECT_D09_SD9_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_302"
+      },
+      "adaptation_evidence": "TYPED_AUTH_SUBJECT_EXPLICIT_DELETE_ATOMIC_RECEIPT_SIGNED_INT64_CLOSED_PROJECTION",
+      "entries": [
+        {
+          "id": "20261113093936-auth-subject-delete-audit.sql",
+          "original_id": "20261113093936-auth-subject-delete-audit.sql",
+          "sha256": "6bd914d2e961a5ac8397cad1b38a0c2f3d0191c30f3d8bfb066ffb036135d9dc"
+        }
+      ]
     }
   ]
 }
