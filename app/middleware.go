@@ -8,6 +8,7 @@ import (
 
 	"github.com/felixge/httpsnoop"
 	"github.com/pkg/errors"
+	"github.com/target/goalert/graphql2/graphqlapp"
 	"github.com/target/goalert/util/calllimiter"
 	"github.com/target/goalert/util/log"
 )
@@ -52,6 +53,7 @@ func logRequest(alwaysLog bool) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			ctx := req.Context()
 			ctx = log.SetRequestID(ctx)
+			ctx, authSubjectDelete := graphqlapp.WithAuthSubjectDeleteLogState(ctx)
 			ctx = log.WithFields(ctx, log.Fields{
 				"http_method":      req.Method,
 				"http_proto":       req.Proto,
@@ -83,7 +85,21 @@ func logRequest(alwaysLog bool) func(http.Handler) http.Handler {
 			}
 
 			extraFields := ctx.Value(reqInfoCtxKey).(*log.Fields)
-			ctx = log.WithFields(ctx, *extraFields)
+			externalCalls := calllimiter.FromContext(ctx).NumCalls()
+			if authSubjectDelete.Load() {
+				// GraphQL selected the sensitive field or rejected execution
+				// before a field could be selected, regardless of client alias.
+				// The auth middleware copied its log fields before that selection.
+				// Replace the diagnostic context, retaining server correlation only.
+				id := log.RequestID(ctx)
+				ctx = log.FromContext(ctx).BackgroundContext()
+				ctx = log.WithFields(ctx, log.Fields{"RequestID": id, "DiagnosticPolicy": "graphql_closed_projection"})
+				if serveError != nil {
+					serveError = errors.New("GraphQL request panic")
+				}
+			} else {
+				ctx = log.WithFields(ctx, *extraFields)
+			}
 			status := metrics.Code
 			if status == 0 {
 				status = 200
@@ -93,7 +109,7 @@ func logRequest(alwaysLog bool) func(http.Handler) http.Handler {
 				"req_bytes_length":  rLog.n,
 				"resp_elapsed_ms":   metrics.Duration.Seconds() * 1000,
 				"resp_status":       status,
-				"external_calls":    calllimiter.FromContext(ctx).NumCalls(),
+				"external_calls":    externalCalls,
 			})
 
 			if serveError != nil {

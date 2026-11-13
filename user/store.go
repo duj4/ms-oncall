@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
+	"github.com/target/goalert/user/authsubjectdeleteaudit"
 	"github.com/target/goalert/util"
 	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation/validate"
@@ -164,6 +165,7 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 				user_id = $1 AND
 				provider_id = $2 AND 
 				subject_id = $3
+			RETURNING id,user_id,cm_id,xmin::text::bigint
 		`),
 	}
 	if p.Err != nil {
@@ -707,22 +709,17 @@ func (s *Store) AddAuthSubjectTx(ctx context.Context, tx *sql.Tx, a *AuthSubject
 
 // DeleteAuthSubjectTx removes an auth subject for a user.
 //
-// If the subject does not exist, nil is returned.
-func (s *Store) DeleteAuthSubjectTx(ctx context.Context, tx *sql.Tx, a *AuthSubject) error {
+// A missing subject returns an empty result. The caller owns finalization.
+func (s *Store) DeleteAuthSubjectTx(ctx context.Context, tx *sql.Tx, a *AuthSubject, event authsubjectdeleteaudit.Event) (AuthSubjectDeleteResult, error) {
 	err := permission.LimitCheckAny(ctx, permission.System, permission.Admin)
 	if err != nil {
-		return err
+		return AuthSubjectDeleteResult{}, err
 	}
 
 	n, err := a.Normalize()
 	if err != nil {
-		return err
+		return AuthSubjectDeleteResult{}, err
 	}
 
-	_, err = withTx(ctx, tx, s.deleteUserAuthSubject).ExecContext(ctx, a.UserID, n.ProviderID, n.SubjectID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		// do not return error if auth subject doesn't exist
-		return err
-	}
-	return nil
+	return s.deleteAuthSubjectForAudit(ctx, tx, n, event)
 }

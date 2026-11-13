@@ -334,24 +334,7 @@ func (a *Mutation) AddAuthSubject(ctx context.Context, input user.AuthSubject) (
 }
 
 func (a *Mutation) DeleteAuthSubject(ctx context.Context, input user.AuthSubject) (bool, error) {
-	isDefault, err := isDefaultHuman(ctx)
-	if err != nil {
-		return false, err
-	}
-	if isDefault {
-		err := withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-			if err := authorizeDefaultUserTarget(ctx, tx, input.UserID); err != nil {
-				return err
-			}
-			return a.UserStore.DeleteAuthSubjectTx(ctx, tx, &input)
-		})
-		return err == nil, err
-	}
-	err = a.UserStore.DeleteAuthSubjectTx(ctx, nil, &input)
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return a.deleteAuthSubjectAudited(ctx, input)
 }
 
 func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, error) {
