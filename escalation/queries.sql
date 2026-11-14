@@ -22,3 +22,15 @@ WHERE escalation_policy_step_id = $1
         OR rotation_id = $4
         OR channel_id = $5);
 
+-- name: EPStepActionsDeleteReceipt :many
+DELETE FROM escalation_policy_actions
+WHERE escalation_policy_step_id = $1
+    AND (user_id = $2
+        OR schedule_id = $3
+        OR rotation_id = $4
+        OR channel_id = $5)
+RETURNING id, escalation_policy_step_id, user_id, schedule_id, rotation_id, channel_id;
+
+-- name: EPStepDeleteReceipt :one
+DELETE FROM escalation_policy_steps WHERE id = $1
+RETURNING id, escalation_policy_id, step_number;

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/target/goalert/alert/alertlog"
+	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/notification/nfydest"
 	"github.com/target/goalert/notification/slack"
 	"github.com/target/goalert/notificationchannel"
@@ -723,4 +724,19 @@ func (s *Store) DeleteStepTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) (str
 	s.logChange(ctx, tx, polID)
 
 	return polID, nil
+}
+
+// DeleteStepReceiptTx retains the existing permission and business-log behavior
+// while returning the actual deleted Step identity and its persisted parent.
+// The caller owns the transaction and any associated cascade capture.
+func (s *Store) DeleteStepReceiptTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) (gadb.EPStepDeleteReceiptRow, error) {
+	if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
+		return gadb.EPStepDeleteReceiptRow{}, err
+	}
+	r, err := gadb.New(tx).EPStepDeleteReceipt(ctx, id)
+	if err != nil {
+		return r, err
+	}
+	s.logChange(ctx, tx, r.EscalationPolicyID.String())
+	return r, nil
 }

@@ -43,7 +43,7 @@ func sd5Rows(t *testing.T, h *harness.Harness) string {
 func sd5Count(t *testing.T, h *harness.Harness) int {
 	t.Helper()
 	var n int
-	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM escalation_policy_delete_audit_events WHERE record_kind='success_witness'`).Scan(&n))
+	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM escalation_policy_delete_audit_events WHERE operation='escalation_policy.delete' AND record_kind='success_witness'`).Scan(&n))
 	return n
 }
 func sd5App(h *harness.Harness) *graphqlapp.App {
@@ -328,6 +328,9 @@ func TestEscalationPolicyDeleteAuditProjectionAndUpdateBoundary(t *testing.T) {
 	var actions int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM escalation_policy_actions WHERE escalation_policy_step_id=$1`, first).Scan(&actions))
 	require.Zero(t, actions)
+	var updates int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM escalation_policy_delete_audit_events WHERE schema_version=2 AND record_kind='success_witness'`).Scan(&updates))
+	require.Equal(t, 2, updates, "U01/U02 witnesses are distinct from the unchanged v1 Root Delete witness")
 	ok, err = sd5App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeSchedule, h.UUID("schedule-a"))})
 	require.NoError(t, err)
 	require.True(t, ok)
