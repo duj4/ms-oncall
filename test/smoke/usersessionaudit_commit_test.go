@@ -30,7 +30,7 @@ func (c *usLostCommitResponse) Read(p []byte) (int, error) {
 	if c.gate.armed.Load() {
 		c.gate.readOnce.Do(func() { close(c.gate.entered) })
 		<-c.gate.release
-		_ = c.Conn.Close()
+		_ = c.Close()
 		return 0, net.ErrClosed
 	}
 	return c.Conn.Read(p)

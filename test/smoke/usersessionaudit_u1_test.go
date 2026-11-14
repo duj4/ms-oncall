@@ -51,7 +51,7 @@ func TestUserSessionAuditU1UserMatrix(t *testing.T) {
 					if path == "original_handler" {
 						tx, err := h.App().DB().BeginTx(t.Context(), nil)
 						require.NoError(t, err)
-						defer tx.Rollback()
+						defer func() { _ = tx.Rollback() }()
 						err = h.App().AuthHandler.EndUserSessionTx(a12HumanContext(t, f, "om"), tx, ids...)
 						require.Equal(t, tc.invalid, err != nil, "prepared statement error contract (details withheld)")
 						if err == nil {

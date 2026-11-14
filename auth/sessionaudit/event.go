@@ -106,7 +106,7 @@ func (e Event) Validate() error {
 			if e.OrganizationRole != "NONE" || e.AuthorityRole != "platform_admin" && e.AuthorityRole != "none" {
 				return ErrInvalid
 			}
-		} else if e.OrganizationRole != "ORG_MEMBER" && e.OrganizationRole != "ORG_ADMIN" || e.AuthorityRole != "platform_admin" && !(e.AuthorityRole == "org_admin" && e.OrganizationRole == "ORG_ADMIN") && !(e.AuthorityRole == "org_member" && e.OrganizationRole == "ORG_MEMBER") {
+		} else if e.OrganizationRole != "ORG_MEMBER" && e.OrganizationRole != "ORG_ADMIN" || e.AuthorityRole != "platform_admin" && (e.AuthorityRole != "org_admin" || e.OrganizationRole != "ORG_ADMIN") && (e.AuthorityRole != "org_member" || e.OrganizationRole != "ORG_MEMBER") {
 			return ErrInvalid
 		}
 	case "internal_system":

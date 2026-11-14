@@ -656,7 +656,7 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			if audit != nil && audit.plan.hasSession {
 				audit.sessionReceipt, err = a.AuthHandler.EndUserSessionsForAuditTx(ctx, tx, audit.sessionEvent, ids...)
 				if err != nil {
-					audit.userCaptureError(err)
+					err = audit.userCaptureError(err)
 				}
 			} else {
 				err = a.AuthHandler.EndUserSessionTx(ctx, tx, ids...)
