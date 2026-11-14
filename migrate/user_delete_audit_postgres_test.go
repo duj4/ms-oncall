@@ -36,7 +36,7 @@ func TestPostgresUserDeleteMigration302(t *testing.T) {
 			}
 			n, err := Up(ctx, uri, "")
 			require.NoError(t, err)
-			require.Equal(t, 303-start, n)
+			require.Equal(t, 304-start, n)
 			require.NoError(t, VerifyAll(ctx, uri))
 			require.NoError(t, VerifyIsLatest(ctx, uri))
 			n, err = Up(ctx, uri, "")

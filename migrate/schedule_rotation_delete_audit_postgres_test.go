@@ -25,7 +25,7 @@ func sd6SchemaParticipant(e sraudit.Event) sraudit.Effect {
 func TestSRDeleteAudit300CanonicalHistory(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 303)
+	require.Len(t, h.entries, 304)
 	e := h.entries[299]
 	require.Equal(t, "20261112095242-schedule-rotation-delete-audit.sql", e.ID)
 	require.Equal(t, h.entries[298].ID, e.PredecessorID)

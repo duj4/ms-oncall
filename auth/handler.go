@@ -135,7 +135,7 @@ func NewHandler(ctx context.Context, db *sql.DB, cfg HandlerConfig) (*Handler, e
 
 		endSessionUser: p.P(`
 			delete from auth_user_sessions
-			where user_id = $1 and id = $2
+			where user_id = $1 and id = any($2::uuid[])
 		`),
 
 		endAllSessionsUser: p.P(`

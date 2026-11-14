@@ -203,10 +203,21 @@ func (a *App) Handler() http.Handler {
 	type hasTraceKey int
 	h.Use(apolloTracer{Tracer: apollotracing.Tracer{}, shouldTrace: func(ctx context.Context) bool {
 		enabled, ok := ctx.Value(hasTraceKey(1)).(bool)
-		return ok && enabled && graphql.HasOperationContext(ctx) && !authSubjectDeleteOperation(ctx)
+		return ok && enabled && graphql.HasOperationContext(ctx) && !authSubjectDeleteOperation(ctx) && !sessionDiagnosticOperation(ctx)
 	}})
 
+	h.SetRecoverFunc(func(ctx context.Context, recovered any) error {
+		if sessionDiagnosticSelected(ctx) {
+			selectSessionDiagnostics(ctx)
+			return errors.New("GraphQL operation failed")
+		}
+		return graphql.DefaultRecover(ctx, recovered)
+	})
 	h.Use(apikey.Middleware{})
+	h.AroundOperations(func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+		selectSessionDiagnostics(ctx)
+		return next(ctx)
+	})
 
 	h.AroundFields(func(ctx context.Context, next graphql.Resolver) (res interface{}, err error) {
 		defer func() {
@@ -216,6 +227,7 @@ func (a *App) Handler() http.Handler {
 			}
 		}()
 		fieldCtx := graphql.GetFieldContext(ctx)
+		selectSessionDiagnostics(ctx)
 		if authSubjectDeleteField(ctx) || authSubjectDeleteOperation(ctx) {
 			if state, ok := ctx.Value(authSubjectDeleteLogKey{}).(*atomic.Bool); ok {
 				state.Store(true)
@@ -237,7 +249,7 @@ func (a *App) Handler() http.Handler {
 				Observe(time.Since(start).Seconds())
 		}
 		if err == nil && fieldCtx.Object == "Mutation" {
-			ctx = authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))))
+			ctx = sessionDiagnosticContext(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)))))
 			ctx = log.WithFields(ctx, log.Fields{
 				"MutationName": fieldCtx.Field.Name,
 			})
@@ -253,6 +265,14 @@ func (a *App) Handler() http.Handler {
 	h.Use(&errSkipHandler{})
 
 	h.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
+		if graphql.GetFieldContext(ctx) == nil || sessionDiagnosticOperation(ctx) {
+			if state, ok := ctx.Value(sessionDiagnosticKey{}).(*atomic.Bool); ok {
+				state.Store(true)
+			}
+		}
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Mutation" && (f.Field.Name == "endAllAuthSessionsByCurrentUser" || f.Field.Name == "deleteAll" && sessionDiagnosticSelected(ctx)) {
+			err = sessionAuditSafeError(err)
+		}
 		if graphql.GetFieldContext(ctx) == nil || authSubjectDeleteOperation(ctx) {
 			if state, ok := ctx.Value(authSubjectDeleteLogKey{}).(*atomic.Bool); ok {
 				state.Store(true)
@@ -321,7 +341,7 @@ func (a *App) Handler() http.Handler {
 		if isUnsafe && !isGQLValidation(gqlErr) {
 			// context.Canceled is caused by normal things like closing a browser tab.
 			if !errors.Is(err, context.Canceled) {
-				log.Log(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)))), authSubjectDeleteDiagnosticError(ctx, err))
+				log.Log(sessionDiagnosticContext(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))))), sessionDiagnosticError(ctx, authSubjectDeleteDiagnosticError(ctx, err)))
 			}
 			gqlErr.Message = safeErr.Error()
 		}

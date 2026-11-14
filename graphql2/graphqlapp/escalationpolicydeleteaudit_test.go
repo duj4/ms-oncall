@@ -179,7 +179,7 @@ func TestEscalationPolicyDeleteStrictSystemAndRoutes(t *testing.T) {
 		require.NotNil(t, newDeleteAllAudit(context.Background(), nil, []assignment.RawTarget{{Type: typ}}))
 	}
 	for _, typ := range []assignment.TargetType{assignment.TargetTypeUserSession} {
-		require.Nil(t, newDeleteAllAudit(context.Background(), nil, []assignment.RawTarget{{Type: typ}}))
+		require.NotNil(t, newDeleteAllAudit(context.Background(), nil, []assignment.RawTarget{{Type: typ}}))
 	}
 	e := sd5Plan(t, &sd2State{}).nextAttempt().epEvent
 	require.Equal(t, "internal_system", e.ActorKind)

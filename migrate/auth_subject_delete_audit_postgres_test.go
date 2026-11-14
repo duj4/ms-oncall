@@ -22,7 +22,7 @@ import (
 func TestAuthSubjectDeleteCanonicalAppend(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 303)
+	require.Len(t, h.entries, 304)
 	marker := []byte(",\n    {\n      \"id\": \"ms-oncall-auth-subject-delete-audit-d09-sd9\",")
 	i := bytes.Index(h.manifest, marker)
 	require.Positive(t, i)
