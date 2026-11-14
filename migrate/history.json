@@ -2078,6 +2078,35 @@
           "sha256": "6bd914d2e961a5ac8397cad1b38a0c2f3d0191c30f3d8bfb066ffb036135d9dc"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-user-session-revoke-audit-d09-sd9",
+      "first_position": 304,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD9-USERSESSION-IMPL1 accepted SPEC1; local candidate only",
+        "base_commit": "68bd2956e1856529544834ff8b60cb81742bf1c5",
+        "base_tree": "57e352891a6983d7f02af2b161362e20785bb8c3",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "ba6018d8bd73a0ae608b65408a37291adf447fd1",
+        "authorization_tree": "46c7170b015b032e5d0454f2b2df05102160cead"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-auth-subject-delete-audit-d09-sd9",
+        "migration_id": "20261113093936-auth-subject-delete-audit.sql",
+        "sha256": "6bd914d2e961a5ac8397cad1b38a0c2f3d0191c30f3d8bfb066ffb036135d9dc",
+        "evidence": "DIRECT_D09_SD9_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_303"
+      },
+      "adaptation_evidence": "INDEPENDENT_NON_CREDENTIAL_SESSION_ID_ATOMIC_EXPLICIT_RECEIPT_CLOSED_OPERATION_AND_DETAILS",
+      "entries": [
+        {
+          "id": "20261114113625-user-session-revoke-audit.sql",
+          "original_id": "20261114113625-user-session-revoke-audit.sql",
+          "sha256": "fc8ad7ab908e0cdc9e4497ed949b55c993bcbedf6ca5c3da7520d732684975c0"
+        }
+      ]
     }
   ]
 }

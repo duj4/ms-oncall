@@ -338,15 +338,17 @@ func (a *Mutation) DeleteAuthSubject(ctx context.Context, input user.AuthSubject
 }
 
 func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, error) {
-	err := a.AuthHandler.EndAllUserSessionsTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return a.endOtherSessionsAudited(ctx)
 }
 
 func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (ok bool, err error) {
 	audit := newDeleteAllAudit(ctx, a.DB, input)
+	if audit != nil && audit.hasSession {
+		defer func() { err = sessionAuditSafeError(err) }()
+		if hasInheritedContextTx(ctx) {
+			return false, sessionAuditSafeError(errors.New("transaction ownership unavailable"))
+		}
+	}
 	defer func() {
 		// Admission failures have no business transaction or trusted target.
 		if audit != nil && !audit.started && err != nil {
@@ -448,7 +450,15 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 
 func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarget, homeOrganizationID *uuid.UUID, audit *deleteAllAttempt) (err error) {
 	if audit != nil {
-		defer func() { err = audit.finish(err) }()
+		defer func() {
+			if audit.plan.hasSession {
+				if recover() != nil {
+					err = errors.New("user_session.revoke transaction failed")
+					audit.auditFailed = true
+				}
+			}
+			err = audit.finish(err)
+		}()
 	}
 	isDefault, err := isDefaultHuman(ctx)
 	if err != nil {
@@ -643,7 +653,14 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeHeartbeatMonitor:
 			err = errors.Wrap(a.HeartbeatStore.DeleteTx(ctx, tx, ids...), "delete heartbeat monitors")
 		case assignment.TargetTypeUserSession:
-			err = errors.Wrap(a.AuthHandler.EndUserSessionTx(ctx, tx, ids...), "end user sessions")
+			if audit != nil && audit.plan.hasSession {
+				audit.sessionReceipt, err = a.AuthHandler.EndUserSessionsForAuditTx(ctx, tx, audit.sessionEvent, ids...)
+				if err != nil {
+					err = audit.userCaptureError(err)
+				}
+			} else {
+				err = a.AuthHandler.EndUserSessionTx(ctx, tx, ids...)
+			}
 		default:
 			return validation.NewFieldError("type", "unsupported type "+typ.String())
 		}

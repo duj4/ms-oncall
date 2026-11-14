@@ -54,6 +54,7 @@ func logRequest(alwaysLog bool) func(http.Handler) http.Handler {
 			ctx := req.Context()
 			ctx = log.SetRequestID(ctx)
 			ctx, authSubjectDelete := graphqlapp.WithAuthSubjectDeleteLogState(ctx)
+			ctx, userSession := graphqlapp.WithUserSessionLogState(ctx)
 			ctx = log.WithFields(ctx, log.Fields{
 				"http_method":      req.Method,
 				"http_proto":       req.Proto,
@@ -86,7 +87,7 @@ func logRequest(alwaysLog bool) func(http.Handler) http.Handler {
 
 			extraFields := ctx.Value(reqInfoCtxKey).(*log.Fields)
 			externalCalls := calllimiter.FromContext(ctx).NumCalls()
-			if authSubjectDelete.Load() {
+			if authSubjectDelete.Load() || userSession.Load() {
 				// GraphQL selected the sensitive field or rejected execution
 				// before a field could be selected, regardless of client alias.
 				// The auth middleware copied its log fields before that selection.

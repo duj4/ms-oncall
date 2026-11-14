@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
+	sessionaudit "github.com/target/goalert/auth/sessionaudit"
 	epaudit "github.com/target/goalert/escalation/deleteaudit"
 	"github.com/target/goalert/executioncontext"
 	keyaudit "github.com/target/goalert/integrationkey/deleteaudit"
@@ -27,9 +28,10 @@ import (
 )
 
 // deleteAllAudit is deliberately confined to DeleteAll requests that contain
-// explicit Service/CM/NR/IntegrationKey/EP/Schedule/Rotation/UserOverride inputs. Uncovered requests retain their old lifecycle.
+// explicit Service/CM/NR/IntegrationKey/EP/Schedule/Rotation/UserOverride/User/Session inputs. Uncovered requests retain their old lifecycle.
 // Service's capture, witness and event contract stay in its existing adapter.
 type deleteAllAudit struct {
+	hasSession                           bool
 	ctx                                  context.Context
 	db                                   *sql.DB
 	service                              *serviceDeleteAudit
@@ -46,6 +48,8 @@ func newDeleteAllAudit(ctx context.Context, db *sql.DB, input []assignment.RawTa
 	p.userIntents = userExplicitIntents(input)
 	for _, t := range input {
 		switch t.TargetType() {
+		case assignment.TargetTypeUserSession:
+			p.hasSession = true
 		case assignment.TargetTypeUser:
 			p.hasUser = true
 		case assignment.TargetTypeUserOverride:
@@ -67,7 +71,7 @@ func newDeleteAllAudit(ctx context.Context, db *sql.DB, input []assignment.RawTa
 			}
 		}
 	}
-	if p.service == nil && !p.hasCM && !p.hasNR && !p.hasKey && !p.hasEP && !p.hasSchedule && !p.hasRotation && !p.hasUO && !p.hasUser {
+	if !p.hasSession && p.service == nil && !p.hasCM && !p.hasNR && !p.hasKey && !p.hasEP && !p.hasSchedule && !p.hasRotation && !p.hasUO && !p.hasUser {
 		return nil
 	}
 	e := audit.Event{RequestID: uuid.New(), ExecutionID: uuid.New(), ActorKind: "unknown", AuthoritySource: "unknown", AuthorityRole: "unknown", OrganizationRole: "unknown", TargetOrgResolution: "unknown"}
@@ -102,6 +106,8 @@ func newDeleteAllAudit(ctx context.Context, db *sql.DB, input []assignment.RawTa
 }
 
 type deleteAllAttempt struct {
+	sessionEvent                                                                             sessionaudit.Event
+	sessionReceipt                                                                           *sessionaudit.Receipt
 	plan                                                                                     *deleteAllAudit
 	userBase                                                                                 useraudit.Event
 	userReceipts                                                                             []useraudit.Receipt
@@ -131,6 +137,10 @@ func (p *deleteAllAudit) nextAttempt() *deleteAllAttempt {
 	e := p.identity
 	e.EventID, e.AttemptID, e.OccurredAt = uuid.New(), uuid.New(), time.Now()
 	a := &deleteAllAttempt{plan: p, event: e}
+	if p.hasSession {
+		a.sessionEvent = sessionAuditEvent(p.ctx, "selected_sessions")
+		a.sessionEvent.RequestID, a.sessionEvent.ExecutionID, a.sessionEvent.AttemptID = e.RequestID, e.ExecutionID, e.AttemptID
+	}
 	if p.hasUser {
 		a.userBase = useraudit.Event{SchemaVersion: 1, EventID: uuid.New(), RequestID: e.RequestID, ExecutionID: e.ExecutionID, AttemptID: e.AttemptID, OccurredAt: e.OccurredAt, Operation: "user.delete", RootType: "user", ActorKind: e.ActorKind, ActorID: useraudit.ID(e.ActorID), HomeOrganizationID: useraudit.ID(e.HomeOrganizationID), AuthoritySource: e.AuthoritySource, AuthorityRole: e.AuthorityRole, OrganizationRole: e.OrganizationRole, TargetOrgResolution: "unknown"}
 	}
@@ -193,6 +203,9 @@ func (p *deleteAllAudit) retryContext() context.Context {
 
 func (a *deleteAllAttempt) begin(ctx context.Context) (*sql.Tx, error) {
 	a.beginFailed = true
+	if a.plan.hasSession && (a.sessionEvent.ActorKind == "unknown" || a.sessionEvent.Validate() != nil || hasInheritedContextTx(ctx)) {
+		return nil, permission.Unauthorized()
+	}
 	var err error
 	if a.plan.db == nil {
 		return nil, audit.ErrUnavailable
@@ -369,6 +382,16 @@ func (a *deleteAllAttempt) commit(ctx context.Context) error {
 	if err := a.appendUO(ctx); err != nil {
 		a.auditFailed = true
 		return err
+	}
+	if a.plan.hasSession {
+		if a.sessionReceipt == nil {
+			a.auditFailed = true
+			return sessionaudit.ErrInvalid
+		}
+		if err := a.sessionReceipt.Append(ctx, a.tx, a.sessionEvent); err != nil {
+			a.auditFailed = true
+			return err
+		}
 	}
 	a.commitAttempted = true
 	err, finalized := commitServiceUpdate(ctx, a.tx)
@@ -675,7 +698,15 @@ func (a *deleteAllAttempt) finish(operationErr error) error {
 		return fmt.Errorf("%w; %s audit persistence unavailable", safe, op)
 	}
 	services, events, keys, eps := a.failureEvents(outcome, reason)
-	persisted, failureReleased := recordDeleteAllFailureBatchWithUser(a.plan.db, services, events, keys, eps, a.uoFailureEvents(outcome, reason), a.userFailureEvents(outcome, reason), a.srFailureEvents(outcome, reason))
+	persisted, failureReleased := true, true
+	legacyFamilies := a.plan.service != nil || a.plan.hasCM || a.plan.hasNR || a.plan.hasKey || a.plan.hasEP || a.plan.hasSchedule || a.plan.hasRotation || a.plan.hasUO || a.plan.hasUser
+	if legacyFamilies {
+		persisted, failureReleased = recordDeleteAllFailureBatchWithUser(a.plan.db, services, events, keys, eps, a.uoFailureEvents(outcome, reason), a.userFailureEvents(outcome, reason), a.srFailureEvents(outcome, reason))
+	}
+	if a.plan.hasSession && failureReleased {
+		sessionPersisted, sessionReleased := recordSessionObservation(a.plan.db, sessionObservation(a.sessionEvent, outcome, reason))
+		persisted, failureReleased = persisted && sessionPersisted, sessionReleased
+	}
 	if !persisted || !failureReleased {
 		fault := "persistence_unavailable"
 		if persisted {
