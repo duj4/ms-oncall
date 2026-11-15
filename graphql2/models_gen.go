@@ -398,6 +398,69 @@ type DebugSendSMSInput struct {
 	Body string `json:"body"`
 }
 
+type DeletionImpact struct {
+	EdgeID              string            `json:"edgeID"`
+	Target              *DeletionResource `json:"target"`
+	ReferencingResource *DeletionResource `json:"referencingResource"`
+	Parent              *DeletionResource `json:"parent,omitempty"`
+	Relation            string            `json:"relation"`
+	Change              string            `json:"change"`
+	Policy              DeletionPolicy    `json:"policy"`
+	Impact              string            `json:"impact"`
+	RequiredAction      string            `json:"requiredAction"`
+	CanModifyReference  bool              `json:"canModifyReference"`
+	IsDerived           bool              `json:"isDerived"`
+	IsPlannedCoDeletion bool              `json:"isPlannedCoDeletion"`
+}
+
+type DeletionImpactConnection struct {
+	Edges    []DeletionImpactEdge `json:"edges"`
+	PageInfo *PageInfo            `json:"pageInfo"`
+}
+
+type DeletionImpactEdge struct {
+	Cursor string          `json:"cursor"`
+	Node   *DeletionImpact `json:"node"`
+}
+
+type DeletionOrganizationSummary struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type DeletionPlanInput struct {
+	Operation DeletionOperation       `json:"operation"`
+	Targets   []DeletionResourceInput `json:"targets"`
+}
+
+type DeletionPreview struct {
+	Targets              []DeletionResource        `json:"targets"`
+	Operation            DeletionOperation         `json:"operation"`
+	ImpactVersion        string                    `json:"impactVersion"`
+	PolicyVersion        string                    `json:"policyVersion"`
+	AssessedAt           time.Time                 `json:"assessedAt"`
+	Complete             bool                      `json:"complete"`
+	CanProceed           bool                      `json:"canProceed"`
+	RequiresConfirmation bool                      `json:"requiresConfirmation"`
+	Impacts              *DeletionImpactConnection `json:"impacts"`
+	Notices              []string                  `json:"notices"`
+}
+
+// Safe identity and display fields only; no destination, subject, payload or credential.
+type DeletionResource struct {
+	Type         string                       `json:"type"`
+	ID           string                       `json:"id"`
+	Name         *string                      `json:"name,omitempty"`
+	Label        string                       `json:"label"`
+	Organization *DeletionOrganizationSummary `json:"organization,omitempty"`
+}
+
+type DeletionResourceInput struct {
+	Type DeletionTargetType `json:"type"`
+	// Integration keys use audit_resource_id, never the credential ID.
+	ID string `json:"id"`
+}
+
 type DestinationDisplayInfoError struct {
 	// error message to display when the display info cannot be retrieved
 	Error string `json:"error"`
@@ -1280,12 +1343,215 @@ func (e ContactMethodType) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type DeletionOperation string
+
+const (
+	DeletionOperationDeleteResources                    DeletionOperation = "DELETE_RESOURCES"
+	DeletionOperationUpdateEscalationPolicy             DeletionOperation = "UPDATE_ESCALATION_POLICY"
+	DeletionOperationUpdateEscalationPolicyStep         DeletionOperation = "UPDATE_ESCALATION_POLICY_STEP"
+	DeletionOperationUpdateScheduleTarget               DeletionOperation = "UPDATE_SCHEDULE_TARGET"
+	DeletionOperationUpdateRotation                     DeletionOperation = "UPDATE_ROTATION"
+	DeletionOperationUpdateService                      DeletionOperation = "UPDATE_SERVICE"
+	DeletionOperationSetTemporarySchedule               DeletionOperation = "SET_TEMPORARY_SCHEDULE"
+	DeletionOperationClearTemporarySchedules            DeletionOperation = "CLEAR_TEMPORARY_SCHEDULES"
+	DeletionOperationSetScheduleOnCallNotificationRules DeletionOperation = "SET_SCHEDULE_ON_CALL_NOTIFICATION_RULES"
+)
+
+var AllDeletionOperation = []DeletionOperation{
+	DeletionOperationDeleteResources,
+	DeletionOperationUpdateEscalationPolicy,
+	DeletionOperationUpdateEscalationPolicyStep,
+	DeletionOperationUpdateScheduleTarget,
+	DeletionOperationUpdateRotation,
+	DeletionOperationUpdateService,
+	DeletionOperationSetTemporarySchedule,
+	DeletionOperationClearTemporarySchedules,
+	DeletionOperationSetScheduleOnCallNotificationRules,
+}
+
+func (e DeletionOperation) IsValid() bool {
+	switch e {
+	case DeletionOperationDeleteResources, DeletionOperationUpdateEscalationPolicy, DeletionOperationUpdateEscalationPolicyStep, DeletionOperationUpdateScheduleTarget, DeletionOperationUpdateRotation, DeletionOperationUpdateService, DeletionOperationSetTemporarySchedule, DeletionOperationClearTemporarySchedules, DeletionOperationSetScheduleOnCallNotificationRules:
+		return true
+	}
+	return false
+}
+
+func (e DeletionOperation) String() string {
+	return string(e)
+}
+
+func (e *DeletionOperation) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DeletionOperation(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DeletionOperation", str)
+	}
+	return nil
+}
+
+func (e DeletionOperation) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DeletionOperation) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DeletionOperation) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type DeletionPolicy string
+
+const (
+	DeletionPolicyBlock         DeletionPolicy = "BLOCK"
+	DeletionPolicyCascade       DeletionPolicy = "CASCADE"
+	DeletionPolicyWarning       DeletionPolicy = "WARNING"
+	DeletionPolicyInformational DeletionPolicy = "INFORMATIONAL"
+)
+
+var AllDeletionPolicy = []DeletionPolicy{
+	DeletionPolicyBlock,
+	DeletionPolicyCascade,
+	DeletionPolicyWarning,
+	DeletionPolicyInformational,
+}
+
+func (e DeletionPolicy) IsValid() bool {
+	switch e {
+	case DeletionPolicyBlock, DeletionPolicyCascade, DeletionPolicyWarning, DeletionPolicyInformational:
+		return true
+	}
+	return false
+}
+
+func (e DeletionPolicy) String() string {
+	return string(e)
+}
+
+func (e *DeletionPolicy) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DeletionPolicy(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DeletionPolicy", str)
+	}
+	return nil
+}
+
+func (e DeletionPolicy) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DeletionPolicy) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DeletionPolicy) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+// Only roots understood by the dependency collector are selectable. Support is conditional on complete collection.
+type DeletionTargetType string
+
+const (
+	DeletionTargetTypeService          DeletionTargetType = "SERVICE"
+	DeletionTargetTypeEscalationPolicy DeletionTargetType = "ESCALATION_POLICY"
+	DeletionTargetTypeSchedule         DeletionTargetType = "SCHEDULE"
+	DeletionTargetTypeRotation         DeletionTargetType = "ROTATION"
+	DeletionTargetTypeUser             DeletionTargetType = "USER"
+	DeletionTargetTypeContactMethod    DeletionTargetType = "CONTACT_METHOD"
+	DeletionTargetTypeNotificationRule DeletionTargetType = "NOTIFICATION_RULE"
+	DeletionTargetTypeIntegrationKey   DeletionTargetType = "INTEGRATION_KEY"
+	DeletionTargetTypeUserOverride     DeletionTargetType = "USER_OVERRIDE"
+)
+
+var AllDeletionTargetType = []DeletionTargetType{
+	DeletionTargetTypeService,
+	DeletionTargetTypeEscalationPolicy,
+	DeletionTargetTypeSchedule,
+	DeletionTargetTypeRotation,
+	DeletionTargetTypeUser,
+	DeletionTargetTypeContactMethod,
+	DeletionTargetTypeNotificationRule,
+	DeletionTargetTypeIntegrationKey,
+	DeletionTargetTypeUserOverride,
+}
+
+func (e DeletionTargetType) IsValid() bool {
+	switch e {
+	case DeletionTargetTypeService, DeletionTargetTypeEscalationPolicy, DeletionTargetTypeSchedule, DeletionTargetTypeRotation, DeletionTargetTypeUser, DeletionTargetTypeContactMethod, DeletionTargetTypeNotificationRule, DeletionTargetTypeIntegrationKey, DeletionTargetTypeUserOverride:
+		return true
+	}
+	return false
+}
+
+func (e DeletionTargetType) String() string {
+	return string(e)
+}
+
+func (e *DeletionTargetType) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DeletionTargetType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DeletionTargetType", str)
+	}
+	return nil
+}
+
+func (e DeletionTargetType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DeletionTargetType) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DeletionTargetType) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 // Known error codes that the server can return.
 //
 // These values will be returned in the `extensions.code` field of the error response.
 type ErrorCode string
 
 const (
+	ErrorCodeDeletionBlocked              ErrorCode = "DELETION_BLOCKED"
+	ErrorCodeDeletionConfirmationRequired ErrorCode = "DELETION_CONFIRMATION_REQUIRED"
+	ErrorCodeDeletionDependencyChanged    ErrorCode = "DELETION_DEPENDENCY_CHANGED"
+	ErrorCodeDeletionUnavailable          ErrorCode = "DELETION_UNAVAILABLE"
+	ErrorCodeDeletionPreviewLimitExceeded ErrorCode = "DELETION_PREVIEW_LIMIT_EXCEEDED"
 	// The input value is invalid, the `path` field will contain the exact path to the invalid input.
 	//
 	// A separate error will be returned for each invalid field.
@@ -1307,6 +1573,11 @@ const (
 )
 
 var AllErrorCode = []ErrorCode{
+	ErrorCodeDeletionBlocked,
+	ErrorCodeDeletionConfirmationRequired,
+	ErrorCodeDeletionDependencyChanged,
+	ErrorCodeDeletionUnavailable,
+	ErrorCodeDeletionPreviewLimitExceeded,
 	ErrorCodeInvalidInputValue,
 	ErrorCodeInvalidDestFieldValue,
 	ErrorCodeInvalidMapFieldValue,
@@ -1315,7 +1586,7 @@ var AllErrorCode = []ErrorCode{
 
 func (e ErrorCode) IsValid() bool {
 	switch e {
-	case ErrorCodeInvalidInputValue, ErrorCodeInvalidDestFieldValue, ErrorCodeInvalidMapFieldValue, ErrorCodeExprTooComplex:
+	case ErrorCodeDeletionBlocked, ErrorCodeDeletionConfirmationRequired, ErrorCodeDeletionDependencyChanged, ErrorCodeDeletionUnavailable, ErrorCodeDeletionPreviewLimitExceeded, ErrorCodeInvalidInputValue, ErrorCodeInvalidDestFieldValue, ErrorCodeInvalidMapFieldValue, ErrorCodeExprTooComplex:
 		return true
 	}
 	return false

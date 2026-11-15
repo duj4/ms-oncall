@@ -430,6 +430,91 @@ export interface DebugSendSMSInput {
   to: string
 }
 
+export interface DeletionImpact {
+  canModifyReference: boolean
+  change: string
+  edgeID: string
+  impact: string
+  isDerived: boolean
+  isPlannedCoDeletion: boolean
+  parent?: null | DeletionResource
+  policy: DeletionPolicy
+  referencingResource: DeletionResource
+  relation: string
+  requiredAction: string
+  target: DeletionResource
+}
+
+export interface DeletionImpactConnection {
+  edges: DeletionImpactEdge[]
+  pageInfo: PageInfo
+}
+
+export interface DeletionImpactEdge {
+  cursor: string
+  node: DeletionImpact
+}
+
+export type DeletionOperation =
+  | 'CLEAR_TEMPORARY_SCHEDULES'
+  | 'DELETE_RESOURCES'
+  | 'SET_SCHEDULE_ON_CALL_NOTIFICATION_RULES'
+  | 'SET_TEMPORARY_SCHEDULE'
+  | 'UPDATE_ESCALATION_POLICY'
+  | 'UPDATE_ESCALATION_POLICY_STEP'
+  | 'UPDATE_ROTATION'
+  | 'UPDATE_SCHEDULE_TARGET'
+  | 'UPDATE_SERVICE'
+
+export interface DeletionOrganizationSummary {
+  id: string
+  name: string
+}
+
+export interface DeletionPlanInput {
+  operation: DeletionOperation
+  targets: DeletionResourceInput[]
+}
+
+export type DeletionPolicy = 'BLOCK' | 'CASCADE' | 'INFORMATIONAL' | 'WARNING'
+
+export interface DeletionPreview {
+  assessedAt: ISOTimestamp
+  canProceed: boolean
+  complete: boolean
+  impactVersion: string
+  impacts: DeletionImpactConnection
+  notices: string[]
+  operation: DeletionOperation
+  policyVersion: string
+  requiresConfirmation: boolean
+  targets: DeletionResource[]
+}
+
+export interface DeletionResource {
+  id: string
+  label: string
+  name?: null | string
+  organization?: null | DeletionOrganizationSummary
+  type: string
+}
+
+export interface DeletionResourceInput {
+  id: string
+  type: DeletionTargetType
+}
+
+export type DeletionTargetType =
+  | 'CONTACT_METHOD'
+  | 'ESCALATION_POLICY'
+  | 'INTEGRATION_KEY'
+  | 'NOTIFICATION_RULE'
+  | 'ROTATION'
+  | 'SCHEDULE'
+  | 'SERVICE'
+  | 'USER'
+  | 'USER_OVERRIDE'
+
 export interface Destination {
   args: StringMap
   displayInfo: InlineDisplayInfo
@@ -510,6 +595,11 @@ export interface DynamicParamConfig {
 }
 
 export type ErrorCode =
+  | 'DELETION_BLOCKED'
+  | 'DELETION_CONFIRMATION_REQUIRED'
+  | 'DELETION_DEPENDENCY_CHANGED'
+  | 'DELETION_PREVIEW_LIMIT_EXCEEDED'
+  | 'DELETION_UNAVAILABLE'
   | 'EXPR_TOO_COMPLEX'
   | 'INVALID_DEST_FIELD_VALUE'
   | 'INVALID_INPUT_VALUE'
@@ -930,6 +1020,7 @@ export interface Query {
   currentOrganizationContext: CurrentOrganizationContext
   debugMessageStatus: DebugMessageStatusInfo
   debugMessages: DebugMessage[]
+  deletionPreview: DeletionPreview
   destinationDisplayInfo: DestinationDisplayInfo
   destinationFieldSearch: FieldSearchConnection
   destinationFieldValidate: boolean

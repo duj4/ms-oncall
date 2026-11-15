@@ -4,6 +4,12 @@ Known error codes that the server can return.
 These values will be returned in the `extensions.code` field of the error response.
 """
 enum ErrorCode {
+  DELETION_BLOCKED
+  DELETION_CONFIRMATION_REQUIRED
+  DELETION_DEPENDENCY_CHANGED
+  DELETION_UNAVAILABLE
+  DELETION_PREVIEW_LIMIT_EXCEEDED
+
   """
   The input value is invalid, the `path` field will contain the exact path to the invalid input.
 

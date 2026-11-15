@@ -61,7 +61,15 @@ import (
 	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
+// DeletionCursorSigner uses an already initialized application keyring. Sign and
+// Verify must operate in memory; Preview never initializes or rotates keys.
+type DeletionCursorSigner interface {
+	Sign([]byte) ([]byte, error)
+	Verify([]byte, []byte) (bool, bool)
+}
+
 type App struct {
+	PreviewSigner     DeletionCursorSigner
 	DB                *sql.DB
 	AuthBasicStore    *basic.Store
 	UserStore         *user.Store
@@ -207,6 +215,9 @@ func (a *App) Handler() http.Handler {
 	}})
 
 	h.SetRecoverFunc(func(ctx context.Context, recovered any) error {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && f.Field.Name == "deletionPreview" {
+			return previewUnavailable()
+		}
 		if sessionDiagnosticSelected(ctx) {
 			selectSessionDiagnostics(ctx)
 			return errors.New("GraphQL operation failed")
@@ -265,6 +276,9 @@ func (a *App) Handler() http.Handler {
 	h.Use(&errSkipHandler{})
 
 	h.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && f.Field.Name == "deletionPreview" {
+			return deletionPreviewGraphQLError(ctx, err)
+		}
 		if graphql.GetFieldContext(ctx) == nil || sessionDiagnosticOperation(ctx) {
 			if state, ok := ctx.Value(sessionDiagnosticKey{}).(*atomic.Bool); ok {
 				state.Store(true)
