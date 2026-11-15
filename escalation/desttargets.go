@@ -67,9 +67,28 @@ func (s *Store) AddStepActionTx(ctx context.Context, tx *sql.Tx, stepID uuid.UUI
 }
 
 func (s *Store) DeleteStepActionTx(ctx context.Context, tx *sql.Tx, stepID uuid.UUID, dest gadb.DestV1) error {
-	err := permission.LimitCheckAny(ctx, permission.User)
+	params, err := s.stepActionDeleteParams(ctx, tx, stepID, dest)
 	if err != nil {
 		return err
+	}
+	return gadb.New(tx).EPStepActionsDeleteAction(ctx, params)
+}
+
+// DeleteStepActionReceiptTx uses the same destination matching and validation as
+// DeleteStepActionTx. Only DELETE RETURNING supplies deleted database identities;
+// destinations and channel payloads never enter the receipt projection.
+func (s *Store) DeleteStepActionReceiptTx(ctx context.Context, tx *sql.Tx, stepID uuid.UUID, dest gadb.DestV1) ([]gadb.EPStepActionsDeleteReceiptRow, error) {
+	params, err := s.stepActionDeleteParams(ctx, tx, stepID, dest)
+	if err != nil {
+		return nil, err
+	}
+	return gadb.New(tx).EPStepActionsDeleteReceipt(ctx, gadb.EPStepActionsDeleteReceiptParams(params))
+}
+
+func (s *Store) stepActionDeleteParams(ctx context.Context, tx *sql.Tx, stepID uuid.UUID, dest gadb.DestV1) (gadb.EPStepActionsDeleteActionParams, error) {
+	err := permission.LimitCheckAny(ctx, permission.User)
+	if err != nil {
+		return gadb.EPStepActionsDeleteActionParams{}, err
 	}
 
 	var userID, scheduleID, rotationID, channelID uuid.NullUUID
@@ -77,36 +96,36 @@ func (s *Store) DeleteStepActionTx(ctx context.Context, tx *sql.Tx, stepID uuid.
 	case user.DestTypeUser:
 		id, err := validate.ParseUUID("ID", dest.Arg(user.FieldUserID))
 		if err != nil {
-			return err
+			return gadb.EPStepActionsDeleteActionParams{}, err
 		}
 		userID = uuid.NullUUID{UUID: id, Valid: true}
 	case schedule.DestTypeSchedule:
 		id, err := validate.ParseUUID("ID", dest.Arg(schedule.FieldScheduleID))
 		if err != nil {
-			return err
+			return gadb.EPStepActionsDeleteActionParams{}, err
 		}
 		scheduleID = uuid.NullUUID{UUID: id, Valid: true}
 	case rotation.DestTypeRotation:
 		id, err := validate.ParseUUID("ID", dest.Arg(rotation.FieldRotationID))
 		if err != nil {
-			return err
+			return gadb.EPStepActionsDeleteActionParams{}, err
 		}
 		rotationID = uuid.NullUUID{UUID: id, Valid: true}
 	default:
 		id, err := s.ncStore.LookupDestID(ctx, tx, dest)
 		if err != nil {
-			return err
+			return gadb.EPStepActionsDeleteActionParams{}, err
 		}
 		channelID = uuid.NullUUID{UUID: id, Valid: true}
 	}
 
-	return gadb.New(tx).EPStepActionsDeleteAction(ctx, gadb.EPStepActionsDeleteActionParams{
+	return gadb.EPStepActionsDeleteActionParams{
 		EscalationPolicyStepID: stepID,
 		UserID:                 userID,
 		ScheduleID:             scheduleID,
 		RotationID:             rotationID,
 		ChannelID:              channelID,
-	})
+	}, nil
 }
 
 func (s *Store) FindAllStepActionsTx(ctx context.Context, tx gadb.DBTX, stepID uuid.UUID) ([]gadb.DestV1, error) {

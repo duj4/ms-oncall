@@ -2350,6 +2350,87 @@ func (q *Queries) EPStepActionsDeleteAction(ctx context.Context, arg EPStepActio
 	return err
 }
 
+const ePStepActionsDeleteReceipt = `-- name: EPStepActionsDeleteReceipt :many
+DELETE FROM escalation_policy_actions
+WHERE escalation_policy_step_id = $1
+    AND (user_id = $2
+        OR schedule_id = $3
+        OR rotation_id = $4
+        OR channel_id = $5)
+RETURNING id, escalation_policy_step_id, user_id, schedule_id, rotation_id, channel_id
+`
+
+type EPStepActionsDeleteReceiptParams struct {
+	EscalationPolicyStepID uuid.UUID
+	UserID                 uuid.NullUUID
+	ScheduleID             uuid.NullUUID
+	RotationID             uuid.NullUUID
+	ChannelID              uuid.NullUUID
+}
+
+type EPStepActionsDeleteReceiptRow struct {
+	ID                     uuid.UUID
+	EscalationPolicyStepID uuid.UUID
+	UserID                 uuid.NullUUID
+	ScheduleID             uuid.NullUUID
+	RotationID             uuid.NullUUID
+	ChannelID              uuid.NullUUID
+}
+
+func (q *Queries) EPStepActionsDeleteReceipt(ctx context.Context, arg EPStepActionsDeleteReceiptParams) ([]EPStepActionsDeleteReceiptRow, error) {
+	rows, err := q.db.QueryContext(ctx, ePStepActionsDeleteReceipt,
+		arg.EscalationPolicyStepID,
+		arg.UserID,
+		arg.ScheduleID,
+		arg.RotationID,
+		arg.ChannelID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EPStepActionsDeleteReceiptRow
+	for rows.Next() {
+		var i EPStepActionsDeleteReceiptRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EscalationPolicyStepID,
+			&i.UserID,
+			&i.ScheduleID,
+			&i.RotationID,
+			&i.ChannelID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const ePStepDeleteReceipt = `-- name: EPStepDeleteReceipt :one
+DELETE FROM escalation_policy_steps WHERE id = $1
+RETURNING id, escalation_policy_id, step_number
+`
+
+type EPStepDeleteReceiptRow struct {
+	ID                 uuid.UUID
+	EscalationPolicyID uuid.UUID
+	StepNumber         int32
+}
+
+func (q *Queries) EPStepDeleteReceipt(ctx context.Context, id uuid.UUID) (EPStepDeleteReceiptRow, error) {
+	row := q.db.QueryRowContext(ctx, ePStepDeleteReceipt, id)
+	var i EPStepDeleteReceiptRow
+	err := row.Scan(&i.ID, &i.EscalationPolicyID, &i.StepNumber)
+	return i, err
+}
+
 const enableChangeLogTriggers = `-- name: EnableChangeLogTriggers :exec
 UPDATE switchover_state
 SET current_state = 'in_progress'

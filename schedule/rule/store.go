@@ -194,7 +194,7 @@ func (s *Store) FindByTargetTx(ctx context.Context, tx *sql.Tx, scheduleID strin
 		result = append(result, r)
 	}
 
-	return result, nil
+	return result, rows.Err()
 }
 
 func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ruleIDs []string) error {

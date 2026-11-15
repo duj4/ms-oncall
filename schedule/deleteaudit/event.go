@@ -46,6 +46,9 @@ func (e Event) Canonical() Event {
 }
 
 func (e Event) Validate() error {
+	if e.SchemaVersion == 2 {
+		return e.validateScheduleTargetUpdate()
+	}
 	if (e.RootType != Schedule && e.RootType != Rotation) || e.Operation != e.RootType+".delete" {
 		return ErrInvalid
 	}

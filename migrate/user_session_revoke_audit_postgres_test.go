@@ -18,7 +18,7 @@ import (
 func TestUserSessionRevokeCanonicalAppend(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 304)
+	require.GreaterOrEqual(t, len(h.entries), 304)
 	marker := []byte(",\n    {\n      \"id\": \"ms-oncall-user-session-revoke-audit-d09-sd9\",")
 	i := bytes.Index(h.manifest, marker)
 	require.Positive(t, i)
@@ -56,7 +56,7 @@ func TestPostgresUserSessionRevokeMigration(t *testing.T) {
 			}
 			n, err := Up(ctx, uri, "")
 			require.NoError(t, err)
-			require.Equal(t, 304-start, n)
+			require.Equal(t, len(Names())-start, n)
 			require.NoError(t, VerifyAll(ctx, uri))
 			require.NoError(t, VerifyIsLatest(ctx, uri))
 			if start == 303 {

@@ -249,7 +249,7 @@ func (a *App) Handler() http.Handler {
 				Observe(time.Since(start).Seconds())
 		}
 		if err == nil && fieldCtx.Object == "Mutation" {
-			ctx = sessionDiagnosticContext(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)))))
+			ctx = scheduleTargetUpdateDiagnosticContext(epUpdateDiagnosticContext(sessionDiagnosticContext(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx)))))))
 			ctx = log.WithFields(ctx, log.Fields{
 				"MutationName": fieldCtx.Field.Name,
 			})
@@ -341,7 +341,7 @@ func (a *App) Handler() http.Handler {
 		if isUnsafe && !isGQLValidation(gqlErr) {
 			// context.Canceled is caused by normal things like closing a browser tab.
 			if !errors.Is(err, context.Canceled) {
-				log.Log(sessionDiagnosticContext(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))))), sessionDiagnosticError(ctx, authSubjectDeleteDiagnosticError(ctx, err)))
+				log.Log(scheduleTargetUpdateDiagnosticContext(epUpdateDiagnosticContext(sessionDiagnosticContext(authSubjectDeleteDiagnosticContext(rotationUpdateDiagnosticContext(scheduleUpdateDiagnosticContext(serviceUpdateDiagnosticContext(ctx))))))), scheduleTargetUpdateDiagnosticError(ctx, epUpdateDiagnosticError(ctx, sessionDiagnosticError(ctx, authSubjectDeleteDiagnosticError(ctx, err)))))
 			}
 			gqlErr.Message = safeErr.Error()
 		}

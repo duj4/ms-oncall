@@ -13,6 +13,7 @@ import (
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/escalation"
+	epaudit "github.com/target/goalert/escalation/deleteaudit"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
@@ -315,12 +316,17 @@ func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.Cr
 }
 
 func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.UpdateEscalationPolicyInput) (bool, error) {
+	event := epUpdateAuditEvent(ctx, epaudit.PolicyUpdate)
 	organizationID, err := epManagementAuthority(ctx, epManagementUpdate)
 	if err != nil {
+		if !hasInheritedContextTx(ctx) {
+			err = finishEPUpdateAudit(ctx, m.DB, nil, nil, false, false, event, err)
+		}
 		return false, err
 	}
 
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = withEPUpdateAuditTx(ctx, m.DB, &event, func(ctx context.Context, tx *sql.Tx) error {
+		event.Reason = "target_unavailable"
 		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeEscalationPolicy, input.ID)
 		if err != nil {
 			return err
@@ -329,6 +335,9 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 		if err != nil {
 			return err
 		}
+
+		event.RootID, event.TargetOrganizationID, event.TargetOrgResolution = uuid.MustParse(ep.ID), ep.OrganizationID, "known_normal"
+		event.Reason = "invalid_fields"
 
 		if input.Name != nil {
 			ep.Name = *input.Name
@@ -365,13 +374,33 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 				stepIDs = append(stepIDs, step.ID)
 			}
 
+			var deletedStepIDs []uuid.UUID
+			for _, id := range stepIDs {
+				if !slices.Contains(inputStepIDs, id) {
+					deletedStepIDs = append(deletedStepIDs, id)
+				}
+			}
+			actions, err := captureEPUpdateActions(ctx, tx, event, deletedStepIDs)
+			if err != nil {
+				return err
+			}
+			event.Effects = append(event.Effects, actions...)
+
 			// delete existing id if not found in input steps slice
 			for _, stepID := range stepIDs {
 				if !slices.Contains(inputStepIDs, stepID) {
-					_, err = m.PolicyStore.DeleteStepTx(ctx, tx, stepID)
+					receipt, err := m.PolicyStore.DeleteStepReceiptTx(ctx, tx, stepID)
 					if err != nil {
 						return err
 					}
+					if receipt.ID != stepID || receipt.EscalationPolicyID != event.RootID {
+						return epaudit.ErrInvalid
+					}
+					number := int(receipt.StepNumber)
+					event.Effects = append(event.Effects, epaudit.Effect{EffectID: uuid.New(), ResourceType: epaudit.Step,
+						RootID: event.RootID, TargetOrganizationID: event.TargetOrganizationID, ResourceUUID: &receipt.ID,
+						StepNumber: &number, Relation: "escalation_policy.step", Change: "deleted",
+						Provenance: "EXPLICIT", DeletionMechanism: "explicit_sql", Cause: "update_induced"})
 				}
 			}
 
@@ -388,6 +417,9 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 			}
 		}
 
+		if len(event.Effects) != 0 {
+			return verifyEPUpdateDeleted(ctx, tx, event)
+		}
 		return err
 	})
 
@@ -395,12 +427,17 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 }
 
 func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql2.UpdateEscalationPolicyStepInput) (bool, error) {
+	event := epUpdateAuditEvent(ctx, epaudit.StepUpdate)
 	organizationID, err := epManagementAuthority(ctx, epManagementUpdate)
 	if err != nil {
+		if !hasInheritedContextTx(ctx) {
+			err = finishEPUpdateAudit(ctx, m.DB, nil, nil, false, false, event, err)
+		}
 		return false, err
 	}
 
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	err = withEPUpdateAuditTx(ctx, m.DB, &event, func(ctx context.Context, tx *sql.Tx) error {
+		event.Reason = "target_unavailable"
 		organizationID, err = existingStepTargetOrganization(ctx, tx, input.ID)
 		if err != nil {
 			return err
@@ -412,6 +449,18 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 		if err != nil {
 			return err
 		}
+
+		// Read only closed persisted parent identities after the Step lock wait.
+		// No EP lock is added to the existing standalone Step lock hierarchy.
+		var parent, targetOrganization uuid.UUID
+		if err := tx.QueryRowContext(ctx, `SELECT s.escalation_policy_id,p.organization_id FROM escalation_policy_steps s JOIN escalation_policies p ON p.id=s.escalation_policy_id WHERE s.id=$1`, step.ID).Scan(&parent, &targetOrganization); err != nil {
+			return err
+		}
+		if parent.String() != step.PolicyID || organizationID != nil && targetOrganization != *organizationID {
+			return sql.ErrNoRows
+		}
+		event.RootID, event.ParentPolicyID, event.TargetOrgResolution = step.ID, parent, "known_normal"
+		event.TargetOrganizationID, event.Reason = targetOrganization, "invalid_fields"
 
 		// update delay if provided
 		if input.DelayMinutes != nil {
@@ -451,9 +500,22 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 					continue
 				}
 
-				err = m.PolicyStore.DeleteStepActionTx(ctx, tx, step.ID, action)
+				receipts, err := m.PolicyStore.DeleteStepActionReceiptTx(ctx, tx, step.ID, action)
 				if err != nil {
 					return err
+				}
+				for _, receipt := range receipts {
+					if receipt.EscalationPolicyStepID != step.ID {
+						return epaudit.ErrInvalid
+					}
+					effect, err := epUpdateActionEffect(event, receipt, false)
+					if err != nil {
+						return err
+					}
+					event.Effects = append(event.Effects, effect)
+					if len(event.Effects) > epaudit.MaxEffects {
+						return epaudit.ErrCapacity
+					}
 				}
 			}
 
