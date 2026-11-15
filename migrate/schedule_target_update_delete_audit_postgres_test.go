@@ -50,7 +50,7 @@ func u03SchemaAppend(t *testing.T, db *sql.DB, e sraudit.Event) {
 	t.Helper()
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, sraudit.Append(t.Context(), tx, e))
 	require.NoError(t, tx.Commit())
 }
@@ -250,50 +250,42 @@ func TestPostgresScheduleTargetUpdate306CapacityRollback(t *testing.T) {
 	u03NativeIdentity(t, db, name)
 	_, err = Up(t.Context(), uri, "")
 	require.NoError(t, err)
-	e := u03SchemaEvent()
-	template := e.Effects[0]
-	fill := func(n int) {
-		e.Effects = make([]sraudit.Effect, n)
-		for i := range e.Effects {
-			id := uuid.New()
-			f := template
-			f.ResourceUUID, f.EffectID = &id, uuid.New()
-			e.Effects[i] = f
-		}
-	}
-	fill(210)
+	e := u03CapacityEvent(210)
 	require.NoError(t, e.Validate())
 	u03SchemaAppend(t, db, e)
-	one, err := json.Marshal(e.Canonical().Effects[0])
-	require.NoError(t, err)
-	n := min(sraudit.MaxEffects, (sraudit.MaxJSONBytes-1)/(len(one)+1))
-	fill(n)
-	e.EventID, e.AttemptID = uuid.New(), uuid.New()
-	require.NoError(t, e.Validate(), "compact Go event fits at its measured byte boundary")
+	e = u03OversizedCapacityEvent(t)
+	require.ErrorIs(t, e.Validate(), sraudit.ErrCapacity, "exact JSONB budget rejects this compact-fitting event")
 	raw, err := json.Marshal(e.Canonical().Effects)
 	require.NoError(t, err)
 	var sqlBytes int
 	var valid bool
 	require.NoError(t, db.QueryRow(`SELECT octet_length($1::jsonb::text),schedule_target_update_delete_effects_valid($1::jsonb,$2,$3)`, string(raw), e.RootID, e.TargetOrganizationID).Scan(&sqlBytes, &valid))
 	require.Greater(t, sqlBytes, sraudit.MaxJSONBytes)
+	require.Equal(t, len(raw)+27*len(e.Effects)-1, sqlBytes)
 	require.False(t, valid)
-	// A real business deletion and rejected append share one native transaction.
+	// Go rejection leaves the transaction usable; its owner still rolls back
+	// the business deletion. The separate SQL test exercises native rejection.
 	fixture := newBoundedFixture(t, t.Context(), db)
 	ruleID := uuid.New()
 	_, err = db.Exec(`INSERT INTO schedule_rules(id,schedule_id,tgt_user_id) VALUES($1,$2,$3)`, ruleID, fixture.schedule, fixture.user)
 	require.NoError(t, err)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`DELETE FROM schedule_rules WHERE id=$1`, ruleID)
 	require.NoError(t, err)
-	require.ErrorIs(t, sraudit.Append(t.Context(), tx, e), sraudit.ErrUnavailable, "SQL byte budget binds earlier; never truncate")
+	err = sraudit.Append(t.Context(), tx, e)
+	require.ErrorIs(t, err, sraudit.ErrCapacity)
+	require.NotErrorIs(t, err, sraudit.ErrUnavailable)
+	var usable int
+	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT 1`).Scan(&usable))
+	require.Equal(t, 1, usable, "Go preflight did not abort the database transaction")
 	require.NoError(t, tx.Rollback())
 	var rules, witnesses int
 	require.NoError(t, db.QueryRow(`SELECT (SELECT count(*) FROM schedule_rules WHERE id=$1),(SELECT count(*) FROM schedule_rotation_delete_audit_events WHERE event_id=$2)`, ruleID, e.EventID).Scan(&rules, &witnesses))
 	require.Equal(t, 1, rules)
 	require.Zero(t, witnesses)
-	t.Logf("normal210 PASS; effects=%d Go compact bytes=%d SQL JSONB-text bytes=%d; SQL rejection and native business rollback PASS", n, e.JSONBytes(), sqlBytes)
-	fill(sraudit.MaxEffects + 1)
+	t.Logf("normal210 PASS; effects=%d Go compact bytes=%d SQL JSONB-text bytes=%d; Validate/Append ErrCapacity, usable transaction, owner rollback, restored rule=1, witness=0 PASS", len(e.Effects), e.JSONBytes(), sqlBytes)
+	e = u03CapacityEvent(sraudit.MaxEffects + 1)
 	require.ErrorIs(t, e.Validate(), sraudit.ErrCapacity)
 }

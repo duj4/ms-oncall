@@ -210,7 +210,7 @@ func TestScheduleTargetUpdateNativeReceiptScopeAndZero(t *testing.T) {
 	keep := []string{u03Rule(t, h, other, target, 0), u03Rule(t, h, root, different, 0)}
 	tx, err := h.App().DB().BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	receipts, err := u03App(h).RuleStore.DeleteManyReceiptTx(sd3System(), tx, root, target, append(slices.Clone(keep), uuid.NewString(), id))
 	require.NoError(t, err)
 	require.Len(t, receipts, 1)
