@@ -63,7 +63,20 @@ func (e Event) validateUpdateEffects() error {
 	if err != nil {
 		return ErrInvalid
 	}
-	if len(raw) > MaxJSONBytes {
+	// PGVERIFY1 (PostgreSQL 17.11) verified the exact JSONB text expansion
+	// of these closed v2 projections: Step has 11 keys, Action has 13.
+	// Object separators add 21/25 spaces, plus N-1 array separators:
+	// D = C + 22*S + 26*A - 1 (U02 has S=0). Empty [] stays 2 bytes.
+	// Only apply this after semantic validation. Fields, enums, numeric ranges
+	// or PostgreSQL version changes require renewed formula verification;
+	// this is not a size model for v1 or arbitrary raw JSON.
+	// Counts are already bounded by MaxEffects, so overhead cannot overflow
+	// even on 32-bit int. Subtract from the budget rather than adding to C.
+	overhead := 0
+	if len(e.Effects) != 0 {
+		overhead = 22*len(steps) + 26*(len(e.Effects)-len(steps)) - 1
+	}
+	if len(raw) > MaxJSONBytes-overhead {
 		return ErrCapacity
 	}
 	return nil
