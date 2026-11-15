@@ -111,6 +111,7 @@ type Effect struct {
 	ResourceNumericID    *int64             `json:"resource_numeric_id,omitempty"`
 	Fragment             *FragmentIdentity  `json:"event_time_identity,omitempty"`
 	Rule                 *RuleDetail        `json:"rule,omitempty"`
+	RuleDeletion         *RuleDeleteDetail  `json:"rule_deletion,omitempty"`
 	Override             *OverrideDetail    `json:"override,omitempty"`
 	Favorite             *FavoriteDetail    `json:"favorite,omitempty"`
 	Participant          *ParticipantDetail `json:"participant,omitempty"`

@@ -9,6 +9,7 @@ import (
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
+	sraudit "github.com/target/goalert/schedule/deleteaudit"
 	"github.com/target/goalert/schedule/rule"
 	"github.com/target/goalert/validation"
 
@@ -32,6 +33,13 @@ func (r *ScheduleRule) WeekdayFilter(ctx context.Context, raw *rule.Rule) ([]boo
 }
 
 func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.ScheduleTargetInput) (bool, error) {
+	event := scheduleTargetUpdateAuditEvent(ctx)
+	return m.configureScheduleTarget(ctx, input, &event)
+}
+
+// Creation explicitly uses this configuration helper without an Update event.
+// An inherited authorized Update still stages its witness on the outer Tx.
+func (m *Mutation) configureScheduleTarget(ctx context.Context, input graphql2.ScheduleTargetInput, event *sraudit.Event) (bool, error) {
 	var schedID string
 	if input.ScheduleID != nil {
 		schedID = *input.ScheduleID
@@ -41,9 +49,18 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 	}
 	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
+		if event != nil && !hasInheritedContextTx(ctx) {
+			err = finishScheduleTargetUpdateAudit(ctx, m.DB, nil, nil, false, false, *event, err)
+		}
 		return false, err
 	}
-	err = withContextTx(ctx, m.DB, func(ctx context.Context, tx *sql.Tx) error {
+	runTx := func(ctx context.Context, update func(context.Context, *sql.Tx) error) error {
+		if event == nil {
+			return withContextTx(ctx, m.DB, update)
+		}
+		return withScheduleTargetUpdateAuditTx(ctx, m.DB, event, update)
+	}
+	err = runTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, schedID)
 		if err != nil {
 			return err
@@ -56,6 +73,13 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 			return errors.Wrap(err, "lock schedule")
 		}
 
+		if event != nil {
+			event.RootID, event.TargetOrganizationID, event.TargetOrgResolution = uuid.MustParse(sched.ID), sched.OrganizationID, "known_normal"
+		}
+		if err := m.RuleStore.LockScheduleRulesTx(ctx, tx, schedID); err != nil {
+			return err
+		}
+		// Separate post-wait statement preserves the existing created_at,id order.
 		rules, err := m.RuleStore.FindByTargetTx(ctx, tx, schedID, input.Target)
 		if err != nil {
 			return errors.Wrap(err, "fetch existing rules")
@@ -82,11 +106,6 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 				return err
 			}
 		}
-		rulesByID := make(map[string]*rule.Rule, len(rules))
-		for i := range rules {
-			rulesByID[rules[i].ID] = &rules[i]
-		}
-
 		for ruleIndex, inputRule := range input.Rules {
 			r := rule.NewAlwaysActive(schedID, input.Target)
 			if inputRule.Start != nil {
@@ -115,9 +134,19 @@ func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.Sche
 			for i, r := range rules[len(input.Rules):] {
 				toDelete[i] = r.ID
 			}
-			err := errors.Wrap(m.RuleStore.DeleteManyTx(ctx, tx, toDelete), "delete old rules")
+			if event == nil {
+				return errors.Wrap(m.RuleStore.DeleteManyTx(ctx, tx, toDelete), "delete old rules")
+			}
+			receipts, err := m.RuleStore.DeleteManyReceiptTx(ctx, tx, schedID, input.Target, toDelete)
 			if err != nil {
-				return err
+				return errors.Wrap(err, "delete old rules")
+			}
+			for _, receipt := range receipts {
+				effect, err := scheduleTargetRuleEffect(*event, receipt)
+				if err != nil {
+					return err
+				}
+				event.Effects = append(event.Effects, effect)
 			}
 		}
 		return nil

@@ -438,7 +438,7 @@ func (m *Mutation) CreateSchedule(ctx context.Context, input graphql2.CreateSche
 				return err
 			}
 			r.ScheduleID = &sched.ID
-			_, err = m.UpdateScheduleTarget(ctx, r)
+			_, err = m.configureScheduleTarget(ctx, r, nil)
 			if err != nil {
 				return validation.AddPrefix("targets["+strconv.Itoa(i)+"].", err)
 			}

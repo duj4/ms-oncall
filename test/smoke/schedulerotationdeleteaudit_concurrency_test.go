@@ -173,7 +173,12 @@ func TestSRDeleteAuditUpdateBoundary(t *testing.T) {
 		response := stepOrganizationQuery(t, h, q)
 		require.Empty(t, response.Errors)
 	}
-	require.Zero(t, sd6Count(t, h))
+	// U03 shares the append-only table with v1 Root Delete records. Preserve
+	// this boundary assertion without counting a v2 Update as a Root Delete.
+	var rootDeletes, targetUpdates int
+	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FILTER(WHERE schema_version=1),count(*) FILTER(WHERE schema_version=2 AND operation='updateScheduleTarget') FROM schedule_rotation_delete_audit_events WHERE record_kind='success_witness'`).Scan(&rootDeletes, &targetUpdates))
+	require.Zero(t, rootDeletes)
+	require.Equal(t, 1, targetUpdates)
 	require.Equal(t, 1, serviceManagementCount(t, h, "schedules", s))
 	require.Equal(t, 1, serviceManagementCount(t, h, "rotations", r))
 }

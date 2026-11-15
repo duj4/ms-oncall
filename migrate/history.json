@@ -2136,6 +2136,35 @@
           "sha256": "bb40457319a2a5016e98e91442dc54bc6af901e3ba89ca8aa47571fee7725167"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-schedule-target-update-delete-audit-d09-sd10",
+      "first_position": 306,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-SD10-SCHEDULE-UPDATEDELETE-IMPL1 Owner-authorized U03; source-only local candidate",
+        "base_commit": "1075aff27f544ef3a0baaed833c19bba4a5aa511",
+        "base_tree": "d95bf5b290e9cc36cdca350bceaf0599d7eb7551",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "04c628b06a142a156563285de8e4e42873364cdc",
+        "authorization_tree": "843a552f7b09394c8d18af9fef3071cb40a521ff"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-ep-update-delete-audit-d09-sd10",
+        "migration_id": "20261114215338-ep-update-delete-audit-v2.sql",
+        "sha256": "bb40457319a2a5016e98e91442dc54bc6af901e3ba89ca8aa47571fee7725167",
+        "evidence": "DIRECT_OWNER_U03_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_305"
+      },
+      "adaptation_evidence": "VERSIONED_SCHEDULE_STORAGE_EXTENSION_ACTUAL_RULE_DELETE_RETURNING_UPDATE_ROOT_CLOSED_IDENTITIES_NO_V1_SEMANTIC_CHANGE",
+      "entries": [
+        {
+          "id": "20261115004448-schedule-target-update-delete-audit-v2.sql",
+          "original_id": "20261115004448-schedule-target-update-delete-audit-v2.sql",
+          "sha256": "9b9afbd909fcfc46e07c1035e73b84b6592f30d033cb1caf246c9f947dc2279c"
+        }
+      ]
     }
   ]
 }
