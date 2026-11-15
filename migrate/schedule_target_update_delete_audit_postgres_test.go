@@ -50,7 +50,7 @@ func u03SchemaAppend(t *testing.T, db *sql.DB, e sraudit.Event) {
 	t.Helper()
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, sraudit.Append(t.Context(), tx, e))
 	require.NoError(t, tx.Commit())
 }
@@ -284,7 +284,7 @@ func TestPostgresScheduleTargetUpdate306CapacityRollback(t *testing.T) {
 	require.NoError(t, err)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`DELETE FROM schedule_rules WHERE id=$1`, ruleID)
 	require.NoError(t, err)
 	require.ErrorIs(t, sraudit.Append(t.Context(), tx, e), sraudit.ErrUnavailable, "SQL byte budget binds earlier; never truncate")

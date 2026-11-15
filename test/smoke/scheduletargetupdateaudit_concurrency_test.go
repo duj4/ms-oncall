@@ -39,7 +39,7 @@ func TestScheduleTargetUpdateNativeWaitedRuleWriters(t *testing.T) {
 			id := u03Rule(t, h, root, initial, 0)
 			writer, err := db.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
-			defer writer.Rollback()
+			defer func() { _ = writer.Rollback() }()
 			var writerPID int
 			require.NoError(t, writer.QueryRow(`SELECT pg_backend_pid() FROM schedule_rules WHERE id=$1 FOR UPDATE`, id).Scan(&writerPID))
 			ctx, cancel := context.WithTimeout(sd3System(), 20*time.Second)
@@ -118,7 +118,7 @@ func TestScheduleTargetUpdateNativeCapturedLocks(t *testing.T) {
 			require.Zero(t, u03Count(t, h), "success witness is not visible before business commit")
 			writer, err := writers.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			defer writer.Rollback()
+			defer func() { _ = writer.Rollback() }()
 			var writerPID int
 			require.NoError(t, writer.QueryRow(`SELECT pg_backend_pid()`).Scan(&writerPID))
 			writerDone := make(chan error, 1)
@@ -171,7 +171,7 @@ func TestScheduleTargetUpdateNativeScheduleDeleteWins(t *testing.T) {
 	u03Rule(t, h, root, target, 0)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var pid int
 	require.NoError(t, tx.QueryRow(`SELECT pg_backend_pid() FROM schedules WHERE id=$1 FOR UPDATE`, root).Scan(&pid))
 	ctx, cancel := context.WithTimeout(sd3System(), 20*time.Second)

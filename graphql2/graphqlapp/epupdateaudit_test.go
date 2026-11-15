@@ -98,7 +98,7 @@ func TestEPUpdateNoDeletionAndInheritedOwner(t *testing.T) {
 				var err error
 				outer, err = db.BeginTx(ctx, nil)
 				require.NoError(t, err)
-				defer outer.Rollback()
+				defer func() { _ = outer.Rollback() }()
 				ctx = context.WithValue(ctx, txKey, outer)
 			}
 			err := withEPUpdateAuditTx(ctx, db, &e, func(ctx context.Context, tx *sql.Tx) error {

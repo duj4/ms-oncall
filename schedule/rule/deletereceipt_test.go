@@ -116,13 +116,14 @@ func TestDeleteManyReceiptActualRowsAndClosedIdentity(t *testing.T) {
 					}
 					ctx, tx := receiptTestTx(t, f)
 					result, err := new(Store).DeleteManyReceiptTx(ctx, tx, parent.String(), selected, []string{id.String(), uuid.NewString()})
-					if mode == "zero" {
+					switch mode {
+					case "zero":
 						require.NoError(t, err)
 						require.Empty(t, result)
-					} else if mode == "one_of_two" {
+					case "one_of_two":
 						require.NoError(t, err)
 						require.Equal(t, []DeleteReceipt{{ID: id, ScheduleID: parent, TargetKind: kind, TargetID: target}}, result)
-					} else {
+					default:
 						require.Error(t, err)
 						require.Nil(t, result)
 					}

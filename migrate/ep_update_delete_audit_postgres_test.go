@@ -42,7 +42,7 @@ func ep305Append(t *testing.T, ctx context.Context, db *sql.DB, e epaudit.Event)
 	t.Helper()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, epaudit.Append(ctx, tx, e))
 	require.NoError(t, tx.Commit())
 }

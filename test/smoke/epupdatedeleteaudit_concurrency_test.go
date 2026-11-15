@@ -69,7 +69,7 @@ func TestEPUpdateDeleteAuditCapturedChildLocksPostgres(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					tx, err := writers.BeginTx(t.Context(), nil)
 					require.NoError(t, err)
-					defer tx.Rollback()
+					defer func() { _ = tx.Rollback() }()
 					_, err = tx.Exec(`SET LOCAL lock_timeout='80ms'`)
 					require.NoError(t, err)
 					_, err = tx.Exec(tc.query, tc.args...)
@@ -139,7 +139,7 @@ func TestEPUpdateDeleteAuditWaitedActionReceiptPostgres(t *testing.T) {
 			require.NoError(t, err)
 			writer, err := db.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
-			defer writer.Rollback()
+			defer func() { _ = writer.Rollback() }()
 			var pid int
 			require.NoError(t, writer.QueryRow(`SELECT pg_backend_pid() FROM escalation_policy_actions WHERE id=$1 FOR UPDATE`, action).Scan(&pid))
 			ctx, cancel := context.WithTimeout(sd3System(), 20*time.Second)
