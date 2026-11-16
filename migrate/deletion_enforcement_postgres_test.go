@@ -219,7 +219,7 @@ func TestPostgresDeletionEnforcementNRFailClosed(t *testing.T) {
 	before := deletionSnapshot(t, ctx, db)
 	for _, root := range roots {
 		batches := [][]assignment.RawTarget{append(nrInput(f.nr), root)}
-		if root.Type != assignment.TargetTypeContactMethod && root.Type != assignment.TargetTypeService {
+		if root.Type != assignment.TargetTypeContactMethod && root.Type != assignment.TargetTypeService && root.Type != assignment.TargetTypeEscalationPolicy {
 			batches = append(batches, []assignment.RawTarget{root})
 		}
 		for _, batch := range batches {

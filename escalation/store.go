@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/target/goalert/alert/alertlog"
@@ -359,7 +358,7 @@ func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err != nil {
 		return err
 	}
-	parsedIDs, err := validate.ParseManyUUID("EscalationPolicyID", ids, 50)
+	_, err = validate.ParseManyUUID("EscalationPolicyID", ids, 50)
 	if err != nil {
 		return err
 	}
@@ -367,12 +366,12 @@ func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if len(ids) == 0 {
 		return nil
 	}
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceEscalationPolicy, ids); err != nil {
+	ids, err = collector.ConsumeEP(ctx, tx, ids)
+	if err != nil {
 		return err
 	}
-	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
-	for _, id := range parsedIDs {
-		want[id] = struct{}{}
+	if len(ids) == 0 {
+		return nil
 	}
 	stmt := s.deletePolicy
 	args := []any{sqlutil.UUIDArray(ids)}
@@ -394,7 +393,7 @@ func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err != nil {
 		return err
 	}
-	if rows != int64(len(want)) {
+	if rows != int64(len(ids)) {
 		return sql.ErrNoRows
 	}
 	return nil

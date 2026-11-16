@@ -58,9 +58,9 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	if isolation != "read committed" || readOnly != "off" {
 		return ctx, unavailable()
 	}
-	// Only homogeneous NR, CM or Service profiles are executable. Raw validation keeps existing
+	// Only homogeneous NR, CM, Service or EP profiles are executable. Raw validation keeps existing
 	// error precedence and counts; no unsupported root reaches business DML.
-	if len(groups) != 1 || (len(groups[ds.ResourceNotificationRule]) == 0 && len(groups[ds.ResourceContactMethod]) == 0 && len(groups[ds.ResourceService]) == 0) {
+	if len(groups) != 1 || (len(groups[ds.ResourceNotificationRule]) == 0 && len(groups[ds.ResourceContactMethod]) == 0 && len(groups[ds.ResourceService]) == 0 && len(groups[ds.ResourceEscalationPolicy]) == 0) {
 		return ctx, unavailable()
 	}
 	collectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -71,6 +71,9 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	}
 	if len(groups[ds.ResourceService]) > 0 {
 		stabilize = guard.StabilizeService
+	}
+	if len(groups[ds.ResourceEscalationPolicy]) > 0 {
+		stabilize = guard.StabilizeEP
 	}
 	stableCtx, targets, err := stabilize(collectCtx, tx, raw)
 	if err != nil {

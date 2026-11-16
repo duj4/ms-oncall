@@ -25,6 +25,7 @@ type Selector struct {
 const nrProfile = "notification-rule-only-v1"
 const cmProfile = "contact-method-only-v1"
 const serviceProfile = "service-only-v1"
+const epProfile = "escalation-policy-only-v1"
 
 type stabilityKey struct{}
 type enforcementKey struct{}
@@ -130,6 +131,15 @@ func StableService(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
 	return s != nil && s.kind == root.Kind && s.profile == serviceProfile && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
 }
 
+// StableEP admits only the selected existing policies under the EP protocol.
+func StableEP(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
+	if ctx == nil || root.Kind != ds.ResourceEscalationPolicy {
+		return false
+	}
+	s, _ := ctx.Value(stabilityKey{}).(*stability)
+	return s != nil && s.kind == root.Kind && s.profile == epProfile && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
+}
+
 // Bind is called by the trusted enforcer after fresh authorization, collection
 // and policy/version checks under the stable set. base keeps the request's
 // cancellation; checked carries the bounded recheck context and checkpoint.
@@ -190,6 +200,16 @@ func ConsumeService(ctx context.Context, tx *sql.Tx, ids []string) ([]string, er
 	return consume(ctx, tx, ds.ResourceService, ids)
 }
 
+// ConsumeEP never grants a separate Step, Action, or retained-target capability.
+func ConsumeEP(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return consume(ctx, tx, ds.ResourceEscalationPolicy, ids)
+}
+
+// EPTargets keeps original D09 scope/capture on the certified existing subset.
+func EPTargets(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return certifiedTargets(ctx, tx, ds.ResourceEscalationPolicy, ids, false)
+}
+
 // RequireDelete preserves all nine root Store boundaries. Other profiles fail
 // closed, including System and direct Go calls. CM/NR Stores use ConsumeCM/NR.
 func RequireDelete(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string) error {
@@ -215,7 +235,7 @@ func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string
 }
 
 func certifiedTargets(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string, consumeSelection bool) ([]string, error) {
-	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService) {
+	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy) {
 		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)

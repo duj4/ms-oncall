@@ -65,3 +65,16 @@ func TestServiceStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, StableService(context.Background(), new(sql.Tx), ds.Resource{Kind: ds.ResourceService, ID: "00000000-0000-4000-8000-000000000001"}))
 }
+
+func TestEPStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
+	ctx, tx := context.Background(), new(sql.Tx)
+	for _, raw := range [][]Selector{{{Kind: ds.ResourceService, ID: "00000000-0000-4000-8000-000000000001"}}, {{Kind: ds.ResourceEscalationPolicy, ID: "invalid"}}, make([]Selector, 51)} {
+		_, _, err := StabilizeEP(ctx, tx, raw)
+		require.Error(t, err)
+	}
+	_, err := ConsumeEP(ctx, tx, []string{"00000000-0000-4000-8000-000000000001"})
+	require.Error(t, err)
+	_, err = EPTargets(ctx, tx, []string{"00000000-0000-4000-8000-000000000001"})
+	require.Error(t, err)
+	require.False(t, StableEP(ctx, tx, ds.Resource{Kind: ds.ResourceEscalationPolicy, ID: "00000000-0000-4000-8000-000000000001"}))
+}

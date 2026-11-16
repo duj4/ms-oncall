@@ -613,9 +613,13 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			err = errors.Wrap(err, "delete services")
 		case assignment.TargetTypeEscalationPolicy:
 			var policyOrg *uuid.UUID
-			policyOrg, err = existingRootDeleteTargetOrganization(ctx, tx, typ, ids)
+			var existing []string
+			existing, err = guard.EPTargets(ctx, tx, ids)
+			if err == nil {
+				policyOrg, err = existingRootDeleteTargetOrganization(ctx, tx, typ, existing)
+			}
 			if err == nil && audit != nil {
-				err = audit.captureEP(ctx, ids, policyOrg)
+				err = audit.captureEP(ctx, existing, policyOrg)
 			}
 			if err == nil {
 				if audit == nil {

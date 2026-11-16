@@ -798,7 +798,7 @@ func TestPostgresDeletionEnforcementServicePolicyProtection(t *testing.T) {
 	_, err := app.Mutation().DeleteAll(ctx, mixed, nil)
 	enforceCode(t, err, ds.DeletionUnavailable)
 	_, err = app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeEscalationPolicy, ID: f.policy.String()}}, nil)
-	enforceCode(t, err, ds.DeletionUnavailable)
+	enforceCode(t, err, ds.DeletionBlocked)
 	// PostgreSQL NO ACTION is the last defence, separately from product BLOCK.
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
