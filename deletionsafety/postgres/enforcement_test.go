@@ -1,8 +1,8 @@
 package postgres
 
 import (
-	"regexp"
-	"slices"
+	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,32 +10,16 @@ import (
 	guard "github.com/target/goalert/internal/deletionguard"
 )
 
-// Every actual relational projection, including empty/unsupported probes and
-// reference identity checks, must be fenced. A newly added projection cannot
-// silently widen the Collector read set behind the enforcement protocol.
-func TestEnforcementFenceCoversCollectorReadSet(t *testing.T) {
-	queries := []string{userOrganizations, `SELECT FROM public.schedule_data JOIN public.users`}
-	for _, q := range identityQueries {
-		queries = append(queries, q)
-	}
-	for _, q := range ownershipQueries {
-		queries = append(queries, q.query)
-	}
-	for _, q := range referenceQueries {
-		queries = append(queries, q)
-	}
-	for _, q := range unsupportedQueries {
-		queries = append(queries, q)
-	}
+func TestNativeProfileRequiresRealStability(t *testing.T) {
+	root := ds.Resource{Kind: ds.ResourceNotificationRule, ID: "00000000-0000-4000-8000-000000000001"}
+	require.False(t, guard.StableNR(context.Background(), new(sql.Tx), root))
+	require.False(t, guard.StableNR(context.Background(), nil, root))
+	require.Error(t, guard.RequireDelete(context.Background(), new(sql.Tx), root.Kind, []string{root.ID}))
+	// No other root can consume a carrier, even under a System-like marker.
 	for kind := ds.ResourceService; kind <= ds.ResourceScheduleTarget; kind++ {
-		for _, p := range projections(kind) {
-			queries = append(queries, p.from)
+		if kind == ds.ResourceNotificationRule {
+			continue
 		}
-	}
-	table := regexp.MustCompile(`public\.([a-z_]+)`)
-	for _, q := range queries {
-		for _, match := range table.FindAllStringSubmatch(q, -1) {
-			require.True(t, slices.Contains(guard.Tables(), match[1]), "unfenced collector table: %s", match[1])
-		}
+		require.Error(t, guard.RequireDelete(context.Background(), new(sql.Tx), kind, []string{root.ID}))
 	}
 }

@@ -1,13 +1,17 @@
 // Package guard binds a checked server deletion plan to one live transaction.
-// It has no authorization or System bypass and owns no transaction finalization.
+// It owns neither authorization policy nor transaction finalization.
 package guard
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
+	"runtime"
 	"slices"
-	"strings"
 	"sync"
+	"sync/atomic"
+	"weak"
 
 	"github.com/google/uuid"
 	ds "github.com/target/goalert/deletionsafety"
@@ -17,195 +21,190 @@ type Selector struct {
 	Kind ds.ResourceKind
 	ID   string
 }
+
+const nrProfile = "notification-rule-only-v1"
+
+type stabilityKey struct{}
 type enforcementKey struct{}
+
+// Epochs only revoke; they never prove locks. SQL rollback cannot restore an
+// older epoch. Weak keys and cleanup do not retain ended transactions/contexts.
+var epochs = struct {
+	sync.Mutex
+	values map[weak.Pointer[sql.Tx]]*atomic.Uint64
+}{values: make(map[weak.Pointer[sql.Tx]]*atomic.Uint64)}
+
+func nextEpoch(tx *sql.Tx) (*atomic.Uint64, uint64) {
+	key := weak.Make(tx)
+	epochs.Lock()
+	defer epochs.Unlock()
+	epoch := epochs.values[key]
+	if epoch == nil {
+		epoch = new(atomic.Uint64)
+		epochs.values[key] = epoch
+		runtime.AddCleanup(tx, func(key weak.Pointer[sql.Tx]) {
+			epochs.Lock()
+			delete(epochs.values, key)
+			epochs.Unlock()
+		}, key)
+	}
+	return epoch, epoch.Add(1)
+}
+
+type stability struct {
+	bound                  atomic.Bool
+	tx                     *sql.Tx
+	nonce                  uuid.UUID
+	epoch                  *atomic.Uint64
+	generation             uint64
+	rawHash, effectiveHash [32]byte
+	targets                []ds.Resource
+}
 type enforcementGuard struct {
 	mu        sync.Mutex
-	tx        *sql.Tx
+	stable    *stability
 	remaining map[Selector]bool
-	absent    map[Selector]bool
 	ready     bool
 }
 
 func unavailable() error { return &ds.DeletionSafetyError{Code: ds.DeletionUnavailable} }
-
-// These are the complete Collector read set, including conditional unsupported
-// probes and identity/scope lookups. EXCLUSIVE allows ordinary SELECT, but fences
-// DML and row-locking readers. NOWAIT is essential: no reverse-order wait is
-// introduced after the Controller's advisory/Rotation/root locks. Contention
-// aborts the owning attempt; locks are retained until its rollback/commit.
-// This deliberately conservative V1 fence has database-wide contention costs.
-const enforcementTables = `alert_data alert_feedback alert_logs alert_metrics alert_status_subscriptions alerts auth_basic_users auth_subjects auth_user_sessions ep_step_on_call_users escalation_policies escalation_policy_actions escalation_policy_state escalation_policy_steps gql_api_keys heartbeat_monitors integration_keys labels message_status_history normal_organizations notification_channels notification_policy_cycles organizations outgoing_messages pending_signals rotation_participants rotation_state rotations schedule_data schedule_on_call_users schedule_rules schedules services twilio_sms_callbacks uik_config user_calendar_subscriptions user_contact_methods user_favorites user_notification_rules user_organization_assignments user_overrides user_slack_data user_verification_codes users`
-
-type fenceKey struct{}
-
-// Fence is internal and cannot issue deletion authority. Bind still requires a
-// complete checked plan for precisely the admitted selection in this transaction.
-func Fence(ctx context.Context, tx *sql.Tx) (context.Context, error) {
-	if ctx == nil || tx == nil {
-		return ctx, unavailable()
-	}
-	tables := strings.Fields(enforcementTables)
-	for i := range tables {
-		tables[i] = "public." + tables[i]
-	}
-	if _, err := tx.ExecContext(ctx, `LOCK TABLE `+strings.Join(tables, ",")+` IN EXCLUSIVE MODE NOWAIT`); err != nil {
-		return ctx, unavailable()
-	}
-	return context.WithValue(ctx, fenceKey{}, tx), nil
+func digest[T any](value T) [32]byte {
+	data, _ := json.Marshal(value) // fixed non-secret identity structs only
+	return sha256.Sum256(data)
 }
-func Fenced(ctx context.Context, tx *sql.Tx) bool {
-	return ctx != nil && tx != nil && ctx.Value(fenceKey{}) == tx
-}
-func Tables() []string { return strings.Fields(enforcementTables) }
 
-// Bind accepts ONLY a complete server-built plan in the already fenced owning
-// transaction. Selectors are the original admitted operation (legacy key IDs
-// are never serialized). Wire callers cannot construct a DeletionPlan.
-func Bind(ctx context.Context, tx *sql.Tx, raw []Selector, plan ds.DeletionPlan, expected string, acknowledged bool) (context.Context, error) {
-	if !Fenced(ctx, tx) || !holdsFence(ctx, tx) {
-		return ctx, unavailable()
+// The locked checkpoint is NOT executable proof. Bind creates the certified
+// row only after final Collect/BuildPlan/Check. Rolling back across any lock
+// removes the later checkpoint/certificate, including after table reuse.
+const witnessDDL = `CREATE TEMP TABLE IF NOT EXISTS d09_nr_deletion_witness (
+ nonce uuid NOT NULL, phase text NOT NULL, profile text NOT NULL,
+ raw_hash bytea NOT NULL, effective_hash bytea NOT NULL, xid text NOT NULL,
+ PRIMARY KEY(nonce,phase)
+) ON COMMIT DROP`
+
+func (s *stability) witness(ctx context.Context, tx *sql.Tx, phase string) bool {
+	if s == nil || tx == nil || s.tx != tx || s.epoch == nil || s.epoch.Load() != s.generation {
+		return false
 	}
-	targets := plan.Targets()
-	if len(targets) > 0 {
+	// Rollback may remove the temp table; avoid aborting a usable transaction.
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT to_regclass('pg_temp.d09_nr_deletion_witness') IS NOT NULL`).Scan(&exists); err != nil || !exists {
+		return false
+	}
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT FROM pg_temp.d09_nr_deletion_witness
+ WHERE nonce=$1 AND phase=$2 AND profile=$3 AND raw_hash=$4 AND effective_hash=$5
+ AND xid=pg_current_xact_id()::text)`, s.nonce, phase, nrProfile, s.rawHash[:], s.effectiveHash[:]).Scan(&exists)
+	return err == nil && exists
+}
+
+// StableNR permits READ COMMITTED only for existing selected NRs after the
+// actual stabilization protocol in this transaction. It grants no deletion.
+func StableNR(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
+	if ctx == nil || root.Kind != ds.ResourceNotificationRule {
+		return false
+	}
+	s, _ := ctx.Value(stabilityKey{}).(*stability)
+	return s != nil && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
+}
+
+// Bind is called by the trusted enforcer after fresh authorization, collection
+// and policy/version checks under the stable set. base keeps the request's
+// cancellation; checked carries the bounded recheck context and checkpoint.
+func Bind(base context.Context, tx *sql.Tx, checked context.Context, raw []Selector, plan ds.DeletionPlan, expected string, acknowledged bool) (context.Context, error) {
+	if base == nil || checked == nil {
+		return base, unavailable()
+	}
+	s, _ := checked.Value(stabilityKey{}).(*stability)
+	if s == nil || digest(raw) != s.rawHash || !s.witness(checked, tx, "locked") || !slices.Equal(plan.Targets(), s.targets) {
+		return base, unavailable()
+	}
+	if len(s.targets) > 0 {
 		if err := plan.Check(expected, acknowledged); err != nil {
-			return ctx, err
+			return base, err
+		}
+	} else if expected != "" {
+		return base, &ds.DeletionSafetyError{Code: ds.DeletionDependencyChanged}
+	}
+	for _, change := range plan.Changes() {
+		if change.Cause == ds.CauseExplicit && change.Kind != ds.ChangeDeleted {
+			return base, unavailable()
 		}
 	}
-	observed := map[ds.Resource]bool{}
-	absent := map[Selector]bool{}
-	for _, c := range plan.Changes() {
-		if c.Cause == ds.CauseExplicit && c.Kind != ds.ChangeDeleted {
-			return ctx, unavailable()
-		}
+	if !s.bound.CompareAndSwap(false, true) {
+		return base, unavailable()
 	}
+	if _, err := tx.ExecContext(checked, `INSERT INTO pg_temp.d09_nr_deletion_witness
+ (nonce,phase,profile,raw_hash,effective_hash,xid) VALUES($1,'certified',$2,$3,$4,pg_current_xact_id()::text)`, s.nonce, nrProfile, s.rawHash[:], s.effectiveHash[:]); err != nil {
+		return base, unavailable()
+	}
+	g := &enforcementGuard{stable: s, remaining: make(map[Selector]bool), ready: true}
 	for _, sel := range raw {
 		id, err := uuid.Parse(sel.ID)
-		if err != nil {
-			return ctx, unavailable()
+		if err != nil || sel.Kind != ds.ResourceNotificationRule {
+			return base, unavailable()
 		}
 		sel.ID = id.String()
-		r, exists, err := resolve(ctx, tx, sel)
-		if err != nil {
-			return ctx, unavailable()
-		}
-		if !exists {
-			absent[sel] = true
-			continue
-		}
-		if r.Kind == ds.ResourceUser || !slices.Contains(targets, r) {
-			return ctx, unavailable()
-		}
-		observed[r] = true
+		g.remaining[sel] = true
 	}
-	if len(observed) != len(targets) {
-		return ctx, unavailable()
-	}
-	g := &enforcementGuard{tx: tx, remaining: map[Selector]bool{}, absent: absent, ready: true}
-	for _, s := range raw {
-		id, err := uuid.Parse(s.ID)
-		if err != nil {
-			return ctx, unavailable()
-		}
-		s.ID = id.String()
-		g.remaining[s] = true
-	}
-	return context.WithValue(ctx, enforcementKey{}, g), nil
+	return context.WithValue(base, enforcementKey{}, g), nil
 }
 
-// RequireDelete consumes ONLY this Store call's authorized selectors. A copied
-// context cannot authorize another transaction, operation, target, or replay.
-// An ended transaction cannot use a carrier after its fences have been released.
-// Every public root deletion Store (audited and legacy) calls this before DML.
+// ConsumeNR consumes the Store's original selectors once and returns only the
+// certified existing, locked subset. Missing IDs cannot enter Store discovery
+// or DELETE even if another transaction subsequently inserts those identities.
+func ConsumeNR(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return consume(ctx, tx, ds.ResourceNotificationRule, ids)
+}
+
+// RequireDelete preserves all nine root Store boundaries. Every other root
+// fails closed, including System and direct Go calls. NR Store uses ConsumeNR.
 func RequireDelete(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	if ctx == nil || tx == nil {
+	if kind != ds.ResourceNotificationRule {
 		return unavailable()
+	}
+	_, err := consume(ctx, tx, kind, ids)
+	return err
+}
+func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string) ([]string, error) {
+	if ctx == nil || tx == nil || kind != ds.ResourceNotificationRule {
+		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)
 	if g == nil {
-		return unavailable()
+		return nil, unavailable()
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.ready || g.tx != tx || !holdsFence(ctx, tx) {
-		return unavailable()
+	if !g.ready || g.stable.tx != tx {
+		return nil, unavailable()
 	}
-	unique := map[Selector]bool{}
+	if !g.stable.witness(ctx, tx, "certified") {
+		g.ready = false
+		return nil, unavailable()
+	}
+	unique := make(map[Selector]bool)
 	for _, id := range ids {
 		parsed, err := uuid.Parse(id)
 		if err != nil {
-			return unavailable()
+			return nil, unavailable()
 		}
-		s := Selector{Kind: kind, ID: parsed.String()}
-		if !g.remaining[s] {
-			return unavailable()
+		sel := Selector{Kind: kind, ID: parsed.String()}
+		if !g.remaining[sel] {
+			return nil, unavailable()
 		}
-		if g.absent[s] {
-			_, exists, err := resolve(ctx, tx, s)
-			if err != nil || exists {
-				return unavailable()
-			}
+		unique[sel] = true
+	}
+	var effective []string
+	for _, target := range g.stable.targets {
+		if unique[Selector{Kind: target.Kind, ID: target.ID}] {
+			effective = append(effective, target.ID)
 		}
-		unique[s] = true
 	}
-	var alive int
-	if err := tx.QueryRowContext(ctx, `SELECT 1`).Scan(&alive); err != nil {
-		return unavailable()
+	for sel := range unique {
+		delete(g.remaining, sel)
 	}
-	for s := range unique {
-		delete(g.remaining, s)
-	}
-	return nil
-}
-
-// Safe identity resolution is repeated inside the same fenced transaction.
-// It never returns credential identity or data in an error or public response.
-func resolve(ctx context.Context, tx *sql.Tx, s Selector) (ds.Resource, bool, error) {
-	r := ds.Resource{Kind: s.Kind, ID: s.ID}
-	if s.Kind == ds.ResourceIntegrationKey {
-		err := tx.QueryRowContext(ctx, `SELECT audit_resource_id::text FROM public.integration_keys WHERE id=$1::uuid`, s.ID).Scan(&r.ID)
-		if err == sql.ErrNoRows {
-			return r, false, nil
-		}
-		return r, err == nil, err
-	}
-	var table string
-	switch s.Kind {
-	case ds.ResourceService:
-		table = "services"
-	case ds.ResourceEscalationPolicy:
-		table = "escalation_policies"
-	case ds.ResourceSchedule:
-		table = "schedules"
-	case ds.ResourceRotation:
-		table = "rotations"
-	case ds.ResourceUser:
-		table = "users"
-	case ds.ResourceContactMethod:
-		table = "user_contact_methods"
-	case ds.ResourceNotificationRule:
-		table = "user_notification_rules"
-	case ds.ResourceUserOverride:
-		table = "user_overrides"
-	default:
-		return r, false, unavailable()
-	}
-	var exists bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT FROM public.`+table+` WHERE id=$1::uuid)`, s.ID).Scan(&exists)
-	return r, exists, err
-}
-
-// Transaction identity alone is insufficient: ROLLBACK TO SAVEPOINT can release
-// a fence while leaving *sql.Tx alive. Verify the actual granted relation locks
-// each time a carrier is issued or consumed, before authorizing Store DML.
-func holdsFence(ctx context.Context, tx *sql.Tx) bool {
-	tables := strings.Fields(enforcementTables)
-	for i := range tables {
-		tables[i] = "'public." + tables[i] + "'"
-	}
-	var count int
-	err := tx.QueryRowContext(ctx, `SELECT count(DISTINCT relation) FROM pg_locks WHERE locktype='relation' AND pid=pg_backend_pid() AND granted AND mode IN ('ExclusiveLock','AccessExclusiveLock') AND relation=ANY(ARRAY[`+strings.Join(tables, ",")+`]::regclass[])`).Scan(&count)
-	return err == nil && count == len(tables)
+	return effective, nil
 }

@@ -34,9 +34,6 @@ var deleteTargetKinds = map[assignment.TargetType]ds.ResourceKind{
 func enforceDeleteAll(ctx context.Context, tx *sql.Tx, input []assignment.RawTarget, confirmation *graphql2.DeletionSafetyConfirmationInput) (context.Context, error) {
 	var selectors []collector.Selector
 	for _, raw := range input {
-		if raw.TargetType() == assignment.TargetTypeUserSession {
-			continue
-		} // existing revoke contract
 		kind, ok := deleteTargetKinds[raw.TargetType()]
 		if !ok {
 			return ctx, previewUnavailable()
