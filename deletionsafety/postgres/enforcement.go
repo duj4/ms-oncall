@@ -58,9 +58,9 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	if isolation != "read committed" || readOnly != "off" {
 		return ctx, unavailable()
 	}
-	// Only homogeneous NR, CM, Service or EP profiles are executable. Raw validation keeps existing
+	// Only homogeneous NR, CM, Service, EP or Schedule profiles are executable. Raw validation keeps existing
 	// error precedence and counts; no unsupported root reaches business DML.
-	if len(groups) != 1 || (len(groups[ds.ResourceNotificationRule]) == 0 && len(groups[ds.ResourceContactMethod]) == 0 && len(groups[ds.ResourceService]) == 0 && len(groups[ds.ResourceEscalationPolicy]) == 0) {
+	if len(groups) != 1 || (len(groups[ds.ResourceNotificationRule]) == 0 && len(groups[ds.ResourceContactMethod]) == 0 && len(groups[ds.ResourceService]) == 0 && len(groups[ds.ResourceEscalationPolicy]) == 0 && len(groups[ds.ResourceSchedule]) == 0) {
 		return ctx, unavailable()
 	}
 	collectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -74,6 +74,9 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	}
 	if len(groups[ds.ResourceEscalationPolicy]) > 0 {
 		stabilize = guard.StabilizeEP
+	}
+	if len(groups[ds.ResourceSchedule]) > 0 {
+		stabilize = guard.StabilizeSchedule
 	}
 	stableCtx, targets, err := stabilize(collectCtx, tx, raw)
 	if err != nil {
@@ -92,6 +95,11 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 		}
 		if result.Collection.Completeness != ds.DependenciesComplete || !slices.Contains(result.Collection.Checked, root) || fingerprint != "" && fingerprint != result.ScopeFingerprint {
 			return ctx, unavailable()
+		}
+		if root.Kind == ds.ResourceSchedule {
+			if err := scheduleAuditShape(collectCtx, tx, root); err != nil {
+				return ctx, safeError(err)
+			}
 		}
 		fingerprint = result.ScopeFingerprint
 		collection.Checked = append(collection.Checked, result.Collection.Checked...)

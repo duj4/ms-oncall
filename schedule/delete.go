@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/google/uuid"
@@ -24,7 +23,7 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
 		return nil, err
 	}
-	parsed, err := validate.ParseManyUUID("ScheduleID", ids, 50)
+	_, err := validate.ParseManyUUID("ScheduleID", ids, 50)
 	if err != nil {
 		return nil, err
 	}
@@ -34,12 +33,12 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceSchedule, ids); err != nil {
+	ids, err = collector.ConsumeSchedule(ctx, tx, ids)
+	if err != nil {
 		return nil, err
 	}
-	want := map[uuid.UUID]bool{}
-	for _, id := range parsed {
-		want[id] = true
+	if len(ids) == 0 {
+		return nil, nil
 	}
 	q := `DELETE FROM schedules pol WHERE pol.id=any($1)`
 	args := []any{sqlutil.UUIDArray(ids)}
@@ -68,7 +67,7 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if organizationID != nil && len(result) != len(want) {
+	if organizationID != nil && len(result) != len(ids) {
 		return result, sql.ErrNoRows
 	}
 	return result, nil

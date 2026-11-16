@@ -525,7 +525,7 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 	// order. These are independent group scopes, never a shared global scope.
 	rootScopes := make(map[assignment.TargetType]*uuid.UUID)
 	for _, typ := range []assignment.TargetType{assignment.TargetTypeRotation, assignment.TargetTypeSchedule} {
-		if len(m[typ]) == 0 {
+		if len(m[typ]) == 0 || typ == assignment.TargetTypeSchedule {
 			continue
 		}
 		rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, m[typ])
@@ -639,11 +639,20 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeIntegrationKey:
 			err = errors.Wrap(a.deleteIntegrationKeysWithAudit(ctx, tx, ids, audit), "delete integration keys")
 		case assignment.TargetTypeSchedule:
-			if audit == nil {
-				err = a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
-			} else {
-				err = audit.captureSR(ctx, sraudit.Schedule, ids, rootScopes[typ])
-				if err == nil {
+			var existing []string
+			existing, err = guard.ScheduleTargets(ctx, tx, ids)
+			if err == nil {
+				rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, existing)
+			}
+			// Stabilization already locked and checked the real closure with
+			// NOWAIT. The raw missing selectors never enter scope or capture.
+			if err == nil && audit != nil {
+				err = audit.captureSR(ctx, sraudit.Schedule, existing, rootScopes[typ])
+			}
+			if err == nil {
+				if audit == nil {
+					err = a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
+				} else {
 					var receipts []sraudit.Receipt
 					receipts, err = a.ScheduleStore.DeleteManyForAuditTx(ctx, tx, ids, rootScopes[typ])
 					if err == nil {

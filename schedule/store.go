@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/google/uuid"
@@ -422,12 +421,20 @@ func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, 
 	if len(ids) == 0 {
 		return nil
 	}
-	parsedIDs, err := validate.ParseManyUUID("ScheduleID", ids, 50)
+	_, err = validate.ParseManyUUID("ScheduleID", ids, 50)
 	if err != nil {
 		return err
 	}
 
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceSchedule, ids); err != nil {
+	ids, err = collector.ConsumeSchedule(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	parsedIDs, err := validate.ParseManyUUID("ScheduleID", ids, 50)
+	if err != nil {
 		return err
 	}
 	db := gadb.New(store.db)
