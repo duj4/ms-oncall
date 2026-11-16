@@ -38,7 +38,7 @@ func TestIntegrationKeyOrganizationMissingHumanAuthority(t *testing.T) {
 		},
 		"raw Service children": func() error { _, err := app.Service().IntegrationKeys(ctx, &service.Service{ID: id}); return err },
 		"DeleteAll IntegrationKey requires root authority": func() error {
-			_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeIntegrationKey, ID: id}})
+			_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeIntegrationKey, ID: id}}, nil)
 			return err
 		},
 	}

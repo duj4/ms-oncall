@@ -280,7 +280,7 @@ func TestServiceDeleteAuditUnavailableFaultProjection(t *testing.T) {
 	var out bytes.Buffer
 	logger.SetOutput(&out)
 	ctx = log.SetRequestID(log.WithField(log.WithLogger(ctx, logger), "Authorization", "SYNTHETIC_LOG_SECRET"))
-	_, err := new(App).Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: uuid.NewString()}})
+	_, err := new(App).Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: uuid.NewString()}}, nil)
 	require.True(t, permission.IsPermissionError(err))
 	require.Contains(t, err.Error(), "audit persistence unavailable")
 	require.Contains(t, out.String(), log.RequestID(ctx))

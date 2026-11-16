@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/target/goalert/permission"
@@ -27,6 +30,9 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	}
 	if tx == nil {
 		return nil, sql.ErrTxDone
+	}
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceIntegrationKey, ids); err != nil {
+		return nil, err
 	}
 	q := `DELETE FROM integration_keys k WHERE k.id=ANY($1::uuid[])`
 	args := []any{pq.Array(uids)}

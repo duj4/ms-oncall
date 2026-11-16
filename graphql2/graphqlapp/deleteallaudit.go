@@ -13,6 +13,7 @@ import (
 	sessionaudit "github.com/target/goalert/auth/sessionaudit"
 	epaudit "github.com/target/goalert/escalation/deleteaudit"
 	"github.com/target/goalert/executioncontext"
+	"github.com/target/goalert/graphql2"
 	keyaudit "github.com/target/goalert/integrationkey/deleteaudit"
 	"github.com/target/goalert/organization"
 	uoaudit "github.com/target/goalert/override/deleteaudit"
@@ -31,6 +32,7 @@ import (
 // explicit Service/CM/NR/IntegrationKey/EP/Schedule/Rotation/UserOverride/User/Session inputs. Uncovered requests retain their old lifecycle.
 // Service's capture, witness and event contract stay in its existing adapter.
 type deleteAllAudit struct {
+	confirmation                         *graphql2.DeletionSafetyConfirmationInput
 	hasSession                           bool
 	ctx                                  context.Context
 	db                                   *sql.DB
@@ -400,6 +402,11 @@ func (a *deleteAllAttempt) commit(ctx context.Context) error {
 }
 
 func (a *deleteAllAttempt) safeError(err error) error {
+	if !a.commitAttempted && !a.auditFailed {
+		if safe, ok := deletionSafetyError(err); ok {
+			return safe
+		}
+	}
 	safe := serviceDeleteSafeError(err)
 	if a.plan.hasCM || a.plan.hasNR || a.plan.hasKey || a.plan.hasEP || a.plan.hasSchedule || a.plan.hasRotation || a.plan.hasUO || a.plan.hasUser {
 		if safe.Error() == "service.delete transaction failed" {
@@ -679,7 +686,7 @@ func (a *deleteAllAttempt) finish(operationErr error) error {
 		outcome, reason = "denied", "authority_denied"
 	case errors.Is(operationErr, sql.ErrNoRows):
 		outcome, reason = "validation_failed", "target_unavailable"
-	case validation.IsValidationError(safe), errutil.IsLimitError(safe):
+	case isDeletionSafetyRejection(safe), validation.IsValidationError(safe), errutil.IsLimitError(safe):
 		outcome, reason = "validation_failed", "invalid_fields"
 	case a.auditFailed || errors.Is(operationErr, audit.ErrCapacity):
 		reason = "audit_write_failed"
@@ -762,3 +769,5 @@ func deleteAllFailureCapacityWithUser(services, cmnr, keys, eps, schedules, rota
 	}
 	return total > 0 && total <= 500
 }
+
+func isDeletionSafetyRejection(err error) bool { _, ok := deletionSafetyError(err); return ok }

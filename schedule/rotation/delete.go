@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/target/goalert/permission"
 	sraudit "github.com/target/goalert/schedule/deleteaudit"
@@ -30,6 +33,9 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	}
 	if len(ids) == 0 {
 		return nil, nil
+	}
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceRotation, ids); err != nil {
+		return nil, err
 	}
 	want := map[uuid.UUID]bool{}
 	for _, id := range parsed {

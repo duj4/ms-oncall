@@ -27,7 +27,7 @@ import (
 
 type Mutation App
 
-func (a *App) Mutation() graphql2.MutationResolver { return (*Mutation)(a) }
+func (a *App) Mutation() graphql2.MutationResolver { return deletionMutationResolver{(*Mutation)(a)} }
 
 func (a *Mutation) ReEncryptKeyringsAndConfig(ctx context.Context) (bool, error) {
 	err := permission.LimitCheckAny(ctx, permission.Admin)
@@ -341,10 +341,21 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 	return a.endOtherSessionsAudited(ctx)
 }
 
-func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (ok bool, err error) {
+func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
+	return a.deleteAllConfirmed(ctx, input, nil)
+}
+
+func (a *Mutation) deleteAllConfirmed(ctx context.Context, input []assignment.RawTarget, confirmation *graphql2.DeletionSafetyConfirmationInput) (ok bool, err error) {
 	audit := newDeleteAllAudit(ctx, a.DB, input)
+	if audit != nil {
+		audit.confirmation = confirmation
+	}
 	if audit != nil && audit.hasSession {
-		defer func() { err = sessionAuditSafeError(err) }()
+		defer func() {
+			if _, ok := deletionSafetyError(err); !ok {
+				err = sessionAuditSafeError(err)
+			}
+		}()
 		if hasInheritedContextTx(ctx) {
 			return false, sessionAuditSafeError(errors.New("transaction ownership unavailable"))
 		}
@@ -355,6 +366,13 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 			err = audit.nextAttempt().finish(err)
 		}
 	}()
+	// Preserve User Store admission before any existence lookup, including
+	// missing selectors, so incapable callers cannot distinguish User identities.
+	if audit != nil && audit.hasUser {
+		if err := permission.LimitCheckAny(ctx, permission.System, permission.Admin); err != nil {
+			return false, err
+		}
+	}
 	isDefault, err := isDefaultHuman(ctx)
 	if err != nil {
 		return false, err
@@ -531,6 +549,15 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		assignment.TargetTypeNotificationRule,
 		assignment.TargetTypeContactMethod,
 		assignment.TargetTypeUserSession,
+	}
+
+	var confirmation *graphql2.DeletionSafetyConfirmationInput
+	if audit != nil {
+		confirmation = audit.plan.confirmation
+	}
+	ctx, err = enforceDeleteAll(ctx, tx, input, confirmation)
+	if err != nil {
+		return err
 	}
 
 	if audit != nil {

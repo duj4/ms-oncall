@@ -504,6 +504,11 @@ export interface DeletionResourceInput {
   type: DeletionTargetType
 }
 
+export interface DeletionSafetyConfirmationInput {
+  acknowledgeImpacts: boolean
+  expectedImpactVersion: string
+}
+
 export type DeletionTargetType =
   | 'CONTACT_METHOD'
   | 'ESCALATION_POLICY'

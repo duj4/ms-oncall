@@ -461,6 +461,11 @@ type DeletionResourceInput struct {
 	ID string `json:"id"`
 }
 
+type DeletionSafetyConfirmationInput struct {
+	ExpectedImpactVersion string `json:"expectedImpactVersion"`
+	AcknowledgeImpacts    bool   `json:"acknowledgeImpacts"`
+}
+
 type DestinationDisplayInfoError struct {
 	// error message to display when the display info cannot be retrieved
 	Error string `json:"error"`

@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/target/goalert/permission"
@@ -32,6 +35,9 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	}
 	if len(intents) > 100 {
 		return result, audit.ErrInvalid
+	}
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceUser, ids); err != nil {
+		return result, err
 	}
 	var budget audit.Budget
 	// Bounded root descriptors, receipts, explicit witnesses and their copies.

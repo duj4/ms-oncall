@@ -544,7 +544,7 @@ type ComplexityRoot struct {
 		CreateUserOverride                 func(childComplexity int, input CreateUserOverrideInput) int
 		DebugCarrierInfo                   func(childComplexity int, input DebugCarrierInfoInput) int
 		DebugSendSms                       func(childComplexity int, input DebugSendSMSInput) int
-		DeleteAll                          func(childComplexity int, input []assignment.RawTarget) int
+		DeleteAll                          func(childComplexity int, input []assignment.RawTarget, confirmation *DeletionSafetyConfirmationInput) int
 		DeleteAuthSubject                  func(childComplexity int, input user.AuthSubject) int
 		DeleteGQLAPIKey                    func(childComplexity int, id string) int
 		DeleteSecondaryToken               func(childComplexity int, id string) int
@@ -1063,7 +1063,7 @@ type MutationResolver interface {
 	UpdateService(ctx context.Context, input UpdateServiceInput) (bool, error)
 	UpdateEscalationPolicy(ctx context.Context, input UpdateEscalationPolicyInput) (bool, error)
 	UpdateEscalationPolicyStep(ctx context.Context, input UpdateEscalationPolicyStepInput) (bool, error)
-	DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error)
+	DeleteAll(ctx context.Context, input []assignment.RawTarget, confirmation *DeletionSafetyConfirmationInput) (bool, error)
 	CreateAlert(ctx context.Context, input CreateAlertInput) (*alert.Alert, error)
 	CloseMatchingAlert(ctx context.Context, input CloseMatchingAlertInput) (bool, error)
 	SetAlertNoiseReason(ctx context.Context, input SetAlertNoiseReasonInput) (bool, error)
@@ -3142,7 +3142,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.DeleteAll(childComplexity, args["input"].([]assignment.RawTarget)), true
+		return e.ComplexityRoot.Mutation.DeleteAll(childComplexity, args["input"].([]assignment.RawTarget), args["confirmation"].(*DeletionSafetyConfirmationInput)), true
 	case "Mutation.deleteAuthSubject":
 		if e.ComplexityRoot.Mutation.DeleteAuthSubject == nil {
 			break
@@ -5390,6 +5390,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputDebugSendSMSInput,
 		ec.unmarshalInputDeletionPlanInput,
 		ec.unmarshalInputDeletionResourceInput,
+		ec.unmarshalInputDeletionSafetyConfirmationInput,
 		ec.unmarshalInputDestinationFieldSearchInput,
 		ec.unmarshalInputDestinationFieldValidateInput,
 		ec.unmarshalInputDestinationInput,
@@ -7542,6 +7543,14 @@ func (ec *executionContext) field_Mutation_deleteAll_args(ctx context.Context, r
 		return nil, err
 	}
 	args["input"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "confirmation",
+		func(ctx context.Context, v any) (*DeletionSafetyConfirmationInput, error) {
+			return ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["confirmation"] = arg1
 	return args, nil
 }
 
@@ -16312,7 +16321,7 @@ func (ec *executionContext) _Mutation_deleteAll(ctx context.Context, field graph
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().DeleteAll(ctx, fc.Args["input"].([]assignment.RawTarget))
+			return ec.Resolvers.Mutation().DeleteAll(ctx, fc.Args["input"].([]assignment.RawTarget), fc.Args["confirmation"].(*DeletionSafetyConfirmationInput))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
@@ -28550,6 +28559,43 @@ func (ec *executionContext) unmarshalInputDeletionResourceInput(ctx context.Cont
 				return it, err
 			}
 			it.ID = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputDeletionSafetyConfirmationInput(ctx context.Context, obj any) (DeletionSafetyConfirmationInput, error) {
+	var it DeletionSafetyConfirmationInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"expectedImpactVersion", "acknowledgeImpacts"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "expectedImpactVersion":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expectedImpactVersion"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpectedImpactVersion = data
+		case "acknowledgeImpacts":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("acknowledgeImpacts"))
+			data, err := ec.unmarshalNBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AcknowledgeImpacts = data
 		}
 	}
 	return it, nil
@@ -45538,6 +45584,14 @@ func (ec *executionContext) marshalODeletionResource2ᚖgithubᚗcomᚋtargetᚋ
 		return graphql.Null
 	}
 	return ec._DeletionResource(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx context.Context, v any) (*DeletionSafetyConfirmationInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputDeletionSafetyConfirmationInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalODestinationInput2githubᚗcomᚋtargetᚋgoalertᚋgadbᚐDestV1(ctx context.Context, v any) (gadb.DestV1, error) {

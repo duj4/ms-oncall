@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/target/goalert/auth/authtoken"
 	"github.com/target/goalert/expflag"
 	"github.com/target/goalert/gadb"
@@ -155,6 +158,10 @@ func (s *Store) DeleteMany(ctx context.Context, dbtx gadb.DBTX, ids []string, or
 		return err
 	}
 
+	tx, _ := dbtx.(*sql.Tx)
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceIntegrationKey, ids); err != nil {
+		return err
+	}
 	if organizationID == nil {
 		return gadb.New(dbtx).IntKeyDelete(ctx, uuids)
 	}

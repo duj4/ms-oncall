@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/executioncontext"
+	guard "github.com/target/goalert/internal/deletionguard"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util/sqlutil"
 )
@@ -132,7 +133,8 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	if err := c.queryRow(`SELECT current_setting('transaction_read_only'), current_setting('transaction_isolation'), statement_timestamp()`).Scan(&readOnly, &isolation, &c.result.ObservedAt); err != nil {
 		return bad, safeError(err)
 	}
-	if purpose == Preview && readOnly != "on" || isolation != "repeatable read" && isolation != "serializable" {
+	fenced := purpose == Recheck && guard.Fenced(ctx, tx)
+	if purpose == Preview && readOnly != "on" || !fenced && isolation != "repeatable read" && isolation != "serializable" {
 		return bad, unavailable()
 	}
 	if !c.global {

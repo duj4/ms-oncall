@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"sort"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/assignment"
@@ -484,6 +487,9 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 		return validation.NewFieldError("OrganizationID", "must be specified")
 	}
 
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceRotation, ids); err != nil {
+		return err
+	}
 	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
 	for _, id := range parsedIDs {
 		want[id] = struct{}{}

@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/target/goalert/alert/alertlog"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/notification/nfydest"
@@ -363,6 +366,9 @@ func (s *Store) DeleteManyPoliciesTx(ctx context.Context, tx *sql.Tx, ids []stri
 
 	if len(ids) == 0 {
 		return nil
+	}
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceEscalationPolicy, ids); err != nil {
+		return err
 	}
 	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
 	for _, id := range parsedIDs {

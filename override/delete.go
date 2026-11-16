@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"slices"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/target/goalert/override/deleteaudit"
@@ -34,6 +37,9 @@ func (s *Store) DeleteUserOverrideForAuditTx(ctx context.Context, tx *sql.Tx, id
 	}
 	parsed, err := validate.ParseManyUUID("UserOverrideID", ids, 50)
 	if err != nil {
+		return result, err
+	}
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceUserOverride, ids); err != nil {
 		return result, err
 	}
 	slices.SortFunc(parsed, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })

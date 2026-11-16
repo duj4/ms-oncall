@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/gadb"
@@ -424,6 +427,9 @@ func (store *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, 
 		return err
 	}
 
+	if err := collector.RequireDelete(ctx, tx, ds.ResourceSchedule, ids); err != nil {
+		return err
+	}
 	db := gadb.New(store.db)
 	if tx != nil {
 		db = db.WithTx(tx)

@@ -276,6 +276,11 @@ func (a *App) Handler() http.Handler {
 	h.Use(&errSkipHandler{})
 
 	h.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Mutation" && f.Field.Name == "deleteAll" {
+			if typed, ok := deletionSafetyError(err); ok {
+				return deletionPreviewGraphQLError(ctx, typed)
+			}
+		}
 		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && f.Field.Name == "deletionPreview" {
 			return deletionPreviewGraphQLError(ctx, err)
 		}
