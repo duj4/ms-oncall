@@ -23,6 +23,7 @@ type Selector struct {
 }
 
 const nrProfile = "notification-rule-only-v1"
+const cmProfile = "contact-method-only-v1"
 
 type stabilityKey struct{}
 type enforcementKey struct{}
@@ -53,6 +54,8 @@ func nextEpoch(tx *sql.Tx) (*atomic.Uint64, uint64) {
 
 type stability struct {
 	bound                  atomic.Bool
+	kind                   ds.ResourceKind
+	profile                string
 	tx                     *sql.Tx
 	nonce                  uuid.UUID
 	epoch                  *atomic.Uint64
@@ -93,7 +96,7 @@ func (s *stability) witness(ctx context.Context, tx *sql.Tx, phase string) bool 
 	}
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT FROM pg_temp.d09_nr_deletion_witness
  WHERE nonce=$1 AND phase=$2 AND profile=$3 AND raw_hash=$4 AND effective_hash=$5
- AND xid=pg_current_xact_id()::text)`, s.nonce, phase, nrProfile, s.rawHash[:], s.effectiveHash[:]).Scan(&exists)
+ AND xid=pg_current_xact_id()::text)`, s.nonce, phase, s.profile, s.rawHash[:], s.effectiveHash[:]).Scan(&exists)
 	return err == nil && exists
 }
 
@@ -104,7 +107,17 @@ func StableNR(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
 		return false
 	}
 	s, _ := ctx.Value(stabilityKey{}).(*stability)
-	return s != nil && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
+	return s != nil && s.kind == root.Kind && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
+}
+
+// StableCM uses the same transactional checkpoint as NR, with an exact root
+// profile. Owned NR cascades are facts, never an explicit NR Store capability.
+func StableCM(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
+	if ctx == nil || root.Kind != ds.ResourceContactMethod {
+		return false
+	}
+	s, _ := ctx.Value(stabilityKey{}).(*stability)
+	return s != nil && s.kind == root.Kind && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
 }
 
 // Bind is called by the trusted enforcer after fresh authorization, collection
@@ -134,13 +147,13 @@ func Bind(base context.Context, tx *sql.Tx, checked context.Context, raw []Selec
 		return base, unavailable()
 	}
 	if _, err := tx.ExecContext(checked, `INSERT INTO pg_temp.d09_nr_deletion_witness
- (nonce,phase,profile,raw_hash,effective_hash,xid) VALUES($1,'certified',$2,$3,$4,pg_current_xact_id()::text)`, s.nonce, nrProfile, s.rawHash[:], s.effectiveHash[:]); err != nil {
+ (nonce,phase,profile,raw_hash,effective_hash,xid) VALUES($1,'certified',$2,$3,$4,pg_current_xact_id()::text)`, s.nonce, s.profile, s.rawHash[:], s.effectiveHash[:]); err != nil {
 		return base, unavailable()
 	}
 	g := &enforcementGuard{stable: s, remaining: make(map[Selector]bool), ready: true}
 	for _, sel := range raw {
 		id, err := uuid.Parse(sel.ID)
-		if err != nil || sel.Kind != ds.ResourceNotificationRule {
+		if err != nil || sel.Kind != s.kind {
 			return base, unavailable()
 		}
 		sel.ID = id.String()
@@ -156,20 +169,26 @@ func ConsumeNR(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) 
 	return consume(ctx, tx, ds.ResourceNotificationRule, ids)
 }
 
-// RequireDelete preserves all nine root Store boundaries. Every other root
-// fails closed, including System and direct Go calls. NR Store uses ConsumeNR.
+// ConsumeCM returns only certified existing CM roots. Raw missing selectors must
+// never be reintroduced by either the legacy or audited Store.
+func ConsumeCM(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return consume(ctx, tx, ds.ResourceContactMethod, ids)
+}
+
+// RequireDelete preserves all nine root Store boundaries. Other profiles fail
+// closed, including System and direct Go calls. CM/NR Stores use ConsumeCM/NR.
 func RequireDelete(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	if kind != ds.ResourceNotificationRule {
+	if kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod {
 		return unavailable()
 	}
 	_, err := consume(ctx, tx, kind, ids)
 	return err
 }
 func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string) ([]string, error) {
-	if ctx == nil || tx == nil || kind != ds.ResourceNotificationRule {
+	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod) {
 		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)
@@ -178,7 +197,7 @@ func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.ready || g.stable.tx != tx {
+	if !g.ready || g.stable.tx != tx || g.stable.kind != kind {
 		return nil, unavailable()
 	}
 	if !g.stable.witness(ctx, tx, "certified") {

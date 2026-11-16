@@ -58,16 +58,18 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	if isolation != "read committed" || readOnly != "off" {
 		return ctx, unavailable()
 	}
-	// Only the NR profile is executable. Raw validation above keeps existing
+	// Only homogeneous NR or CM profiles are executable. Raw validation keeps existing
 	// error precedence and counts; no unsupported root reaches business DML.
-	for kind := range groups {
-		if kind != ds.ResourceNotificationRule {
-			return ctx, unavailable()
-		}
+	if len(groups) != 1 || (len(groups[ds.ResourceNotificationRule]) == 0 && len(groups[ds.ResourceContactMethod]) == 0) {
+		return ctx, unavailable()
 	}
 	collectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	stableCtx, targets, err := guard.StabilizeNR(collectCtx, tx, raw)
+	stabilize := guard.StabilizeNR
+	if len(groups[ds.ResourceContactMethod]) > 0 {
+		stabilize = guard.StabilizeCM
+	}
+	stableCtx, targets, err := stabilize(collectCtx, tx, raw)
 	if err != nil {
 		return ctx, safeError(err)
 	}

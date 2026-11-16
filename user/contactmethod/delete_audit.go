@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"slices"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/google/uuid"
@@ -70,8 +69,16 @@ func deleteCMNRTargetsResult(ctx context.Context, tx *sql.Tx, authority executio
 	for i, id := range ids {
 		rawIDs[i] = id.String()
 	}
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceContactMethod, rawIDs); err != nil {
+	effective, err := collector.ConsumeCM(ctx, tx, rawIDs)
+	if err != nil {
 		return result, err
+	}
+	if len(effective) == 0 {
+		return result, nil
+	}
+	ids = make([]uuid.UUID, len(effective))
+	for i, id := range effective {
+		ids[i] = uuid.MustParse(id)
 	}
 	cms, err := LockCMNRContactMethods(ctx, tx, ids)
 	if err != nil {

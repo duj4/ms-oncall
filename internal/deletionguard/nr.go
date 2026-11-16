@@ -69,29 +69,51 @@ func column(rows [][]string, index int) []string {
 	return slices.Compact(out)
 }
 
-// StabilizeNR is the ONLY creator of the private stability checkpoint. It
+// StabilizeNR enters the shared owner protocol, which alone creates the private
+// stability checkpoint. It
 // acquires actual business rows, then re-reads after the owner FK barrier. All
 // new locks use NOWAIT, preserving CM -> NR -> User order without a reverse
 // waiting chain against existing Stores/triggers. No global table lock is used.
 // The caller already owns D09's audit advisory lock and a writable RC tx.
 func StabilizeNR(ctx context.Context, tx *sql.Tx, raw []Selector) (context.Context, []ds.Resource, error) {
+	return stabilizeOwner(ctx, tx, raw, ds.ResourceNotificationRule)
+}
+
+func stabilizeOwner(ctx context.Context, tx *sql.Tx, raw []Selector, kind ds.ResourceKind) (context.Context, []ds.Resource, error) {
 	if ctx == nil || tx == nil || len(raw) == 0 || len(raw) > 50 {
 		return ctx, nil, unavailable()
 	}
-	s := &stability{tx: tx, nonce: uuid.New(), rawHash: digest(raw)}
+	profile := nrProfile
+	if kind == ds.ResourceContactMethod {
+		profile = cmProfile
+	}
+	s := &stability{tx: tx, nonce: uuid.New(), rawHash: digest(raw), kind: kind, profile: profile}
 	s.epoch, s.generation = nextEpoch(tx) // revoke even when the new attempt fails
 	ids := make([]string, 0, len(raw))
 	for _, sel := range raw {
 		id, err := uuid.Parse(sel.ID)
-		if err != nil || sel.Kind != ds.ResourceNotificationRule {
+		if err != nil || sel.Kind != kind {
 			return ctx, nil, unavailable()
 		}
 		ids = append(ids, id.String())
 	}
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
+	if kind == ds.ResourceContactMethod {
+		// SELECT FOR UPDATE below requires this same normal relation mode. Request
+		// it NOWAIT before any business row locks: the existing message manager
+		// takes EXCLUSIVE before touching CMs. This avoids a CM -> relation wait
+		// against that reverse writer order. ROW SHARE permits ordinary DML.
+		if _, err := tx.ExecContext(ctx, `LOCK TABLE public.outgoing_messages IN ROW SHARE MODE NOWAIT`); err != nil {
+			return ctx, nil, unavailable()
+		}
+	}
 	r := stableReader{ctx: ctx, tx: tx}
-	selected, err := r.read(`SELECT id::text,user_id::text,contact_method_id::text FROM public.user_notification_rules WHERE id=ANY($1::uuid[]) ORDER BY id LIMIT 10001`, pq.Array(ids))
+	selectedQuery := `SELECT id::text,user_id::text,contact_method_id::text FROM public.user_notification_rules WHERE id=ANY($1::uuid[]) ORDER BY id LIMIT 10001`
+	if kind == ds.ResourceContactMethod {
+		selectedQuery = `SELECT id::text,user_id::text,id::text FROM public.user_contact_methods WHERE id=ANY($1::uuid[]) ORDER BY id LIMIT 10001`
+	}
+	selected, err := r.read(selectedQuery, pq.Array(ids))
 	if err != nil {
 		return ctx, nil, err
 	}
@@ -147,10 +169,21 @@ func StabilizeNR(ctx context.Context, tx *sql.Tx, raw []Selector) (context.Conte
 		}
 	}
 	for _, row := range selected {
-		if !slices.ContainsFunc(nrs, func(n []string) bool { return slices.Equal(n, row) }) {
+		present := slices.ContainsFunc(nrs, func(n []string) bool { return slices.Equal(n, row) })
+		if kind == ds.ResourceContactMethod {
+			present = cmOwners[row[0]] == row[1]
+		}
+		if !present {
 			return ctx, nil, unavailable()
 		}
-		s.targets = append(s.targets, ds.Resource{Kind: ds.ResourceNotificationRule, ID: row[0]})
+		s.targets = append(s.targets, ds.Resource{Kind: kind, ID: row[0]})
+	}
+	var cmFacts cmClosure
+	if kind == ds.ResourceContactMethod {
+		cmFacts, err = r.lockCMClosure(column(selected, 0), cmOwners, nrs)
+		if err != nil {
+			return ctx, nil, err
+		}
 	}
 	// Owner UPDATE blocks new/retargeted Cycle FKs; SHARE stabilizes existing
 	// cycles and alerts, including non-key status updates and deletion.
@@ -162,8 +195,8 @@ func StabilizeNR(ctx context.Context, tx *sql.Tx, raw []Selector) (context.Conte
 	if err = r.charge(cycles); err != nil {
 		return ctx, nil, err
 	}
-	alerts, err := r.read(`SELECT id::text FROM public.alerts WHERE id=ANY($1::bigint[]) ORDER BY id LIMIT 10001 FOR SHARE NOWAIT`, pq.Array(column(cycles, 2)))
-	if err != nil || !slices.Equal(column(alerts, 0), column(cycles, 2)) {
+	alerts, err := r.read(`SELECT id::text FROM public.alerts WHERE id=ANY($1::bigint[]) ORDER BY id LIMIT 10001 FOR SHARE NOWAIT`, pq.Array(mergeIDs(column(cycles, 2), cmFacts.alerts)))
+	if err != nil || !slices.Equal(column(alerts, 0), mergeIDs(column(cycles, 2), cmFacts.alerts)) {
 		return ctx, nil, unavailable()
 	}
 	if err = r.charge(alerts); err != nil {
@@ -173,7 +206,12 @@ func StabilizeNR(ctx context.Context, tx *sql.Tx, raw []Selector) (context.Conte
 	if err != nil || !sameRows(cycles, freshCycles) {
 		return ctx, nil, unavailable()
 	}
-	scopeUsers := slices.Clone(owners)
+	if kind == ds.ResourceContactMethod {
+		if err := r.lockCMReferences(cmFacts, cycles, alerts); err != nil {
+			return ctx, nil, err
+		}
+	}
+	scopeUsers := mergeIDs(owners, cmFacts.statusUsers)
 	if !permission.System(ctx) {
 		actor, err := uuid.Parse(permission.UserID(ctx))
 		if err != nil || actor == uuid.Nil {
@@ -216,7 +254,7 @@ func StabilizeNR(ctx context.Context, tx *sql.Tx, raw []Selector) (context.Conte
 	if _, err = tx.ExecContext(ctx, witnessDDL); err != nil {
 		return ctx, nil, unavailable()
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO pg_temp.d09_nr_deletion_witness(nonce,phase,profile,raw_hash,effective_hash,xid) VALUES($1,'locked',$2,$3,$4,pg_current_xact_id()::text)`, s.nonce, nrProfile, s.rawHash[:], s.effectiveHash[:]); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO pg_temp.d09_nr_deletion_witness(nonce,phase,profile,raw_hash,effective_hash,xid) VALUES($1,'locked',$2,$3,$4,pg_current_xact_id()::text)`, s.nonce, s.profile, s.rawHash[:], s.effectiveHash[:]); err != nil {
 		return ctx, nil, unavailable()
 	}
 	return context.WithValue(ctx, stabilityKey{}, s), slices.Clone(s.targets), nil

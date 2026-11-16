@@ -218,7 +218,11 @@ func TestPostgresDeletionEnforcementNRFailClosed(t *testing.T) {
 	}
 	before := deletionSnapshot(t, ctx, db)
 	for _, root := range roots {
-		for _, batch := range [][]assignment.RawTarget{{root}, append(nrInput(f.nr), root)} {
+		batches := [][]assignment.RawTarget{append(nrInput(f.nr), root)}
+		if root.Type != assignment.TargetTypeContactMethod {
+			batches = append(batches, []assignment.RawTarget{root})
+		}
+		for _, batch := range batches {
 			ok, err := app.Mutation().DeleteAll(ctx, batch, &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: "guessed", AcknowledgeImpacts: true})
 			require.False(t, ok)
 			enforceCode(t, err, ds.DeletionUnavailable)
@@ -263,11 +267,36 @@ func TestPostgresDeletionEnforcementNRFailClosed(t *testing.T) {
 }
 
 func TestPostgresDeletionEnforcementNRGuardLifecycle(t *testing.T) {
+	nativeGuardLifecycle(t, ds.ResourceNotificationRule)
+}
+
+func nativeGuardLifecycle(t *testing.T, kind ds.ResourceKind) {
 	ctx, _, db := boundedAuditDB(t, len(Names()))
 	f := newDeletionFixture(t, ctx, db)
 	ctx = permission.SystemContext(ctx, "NRProofTest")
-	version := nrVersion(t, ctx, db, f.nr)
+	id := f.nr
+	stabilize := guard.StabilizeNR
+	wrongKind := ds.ResourceContactMethod
+	if kind == ds.ResourceContactMethod {
+		id = f.cm
+		stabilize = guard.StabilizeCM
+		wrongKind = ds.ResourceNotificationRule
+	}
+	root := ds.Resource{Kind: kind, ID: id.String()}
+	raw := []collector.Selector{{Kind: kind, ID: id.String()}}
+	facts, err := collectDeletion(t, ctx, db, root, collector.Limits{})
+	require.NoError(t, err)
+	version := deletionPlan(t, root, facts).ImpactVersion()
 	app := enforcementApp(t, ctx, db)
+	deleteOne := app.NRStore.DeleteForAuditTx
+	if kind == ds.ResourceContactMethod {
+		deleteOne = app.CMStore.DeleteForAuditTx
+	}
+	enforce := func(tx *sql.Tx) context.Context {
+		carrier, err := collector.Enforce(ctx, tx, raw, version, true, authorizeDeletionFixture(root))
+		require.NoError(t, err)
+		return carrier
+	}
 	for _, phase := range []string{"before_locks", "after_locks_before_witness", "after_witness"} {
 		t.Run(phase, func(t *testing.T) {
 			tx := nrBegin(t, ctx, db)
@@ -275,9 +304,9 @@ func TestPostgresDeletionEnforcementNRGuardLifecycle(t *testing.T) {
 				_, err := tx.ExecContext(ctx, `SAVEPOINT checkpoint`)
 				require.NoError(t, err)
 			}
-			checked, targets, err := guard.StabilizeNR(ctx, tx, nrSelectors(f.nr))
+			checked, targets, err := stabilize(ctx, tx, raw)
 			require.NoError(t, err)
-			require.Equal(t, []ds.Resource{nrRoot(f.nr)}, targets)
+			require.Equal(t, []ds.Resource{root}, targets)
 			var certified int
 			require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_temp.d09_nr_deletion_witness WHERE phase='certified'`).Scan(&certified))
 			require.Zero(t, certified)
@@ -285,10 +314,10 @@ func TestPostgresDeletionEnforcementNRGuardLifecycle(t *testing.T) {
 				_, err = tx.ExecContext(ctx, `SAVEPOINT checkpoint`)
 				require.NoError(t, err)
 			}
-			facts, err := collector.Collect(checked, tx, nrRoot(f.nr), collector.Recheck, collector.Limits{}, authorizeDeletionFixture(nrRoot(f.nr)))
+			facts, err := collector.Collect(checked, tx, root, collector.Recheck, collector.Limits{}, authorizeDeletionFixture(root))
 			require.NoError(t, err)
-			plan := deletionPlan(t, nrRoot(f.nr), facts)
-			carrier, err := guard.Bind(ctx, tx, checked, nrSelectors(f.nr), plan, version, true)
+			plan := deletionPlan(t, root, facts)
+			carrier, err := guard.Bind(ctx, tx, checked, raw, plan, version, true)
 			require.NoError(t, err)
 			if phase == "after_witness" {
 				_, err = tx.ExecContext(ctx, `SAVEPOINT checkpoint`)
@@ -298,21 +327,21 @@ func TestPostgresDeletionEnforcementNRGuardLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			if phase == "after_witness" {
 				// Locks precede the savepoint and remain held. Witness is still valid.
-				result, err := app.NRStore.DeleteForAuditTx(carrier, tx, f.nr.String())
+				result, err := deleteOne(carrier, tx, id.String())
 				require.NoError(t, err)
 				require.Len(t, result.Targets, 1)
 				require.True(t, result.Targets[0].Deleted)
 			} else {
-				_, err := app.NRStore.DeleteForAuditTx(carrier, tx, f.nr.String())
+				_, err := deleteOne(carrier, tx, id.String())
 				enforceCode(t, err, ds.DeletionUnavailable)
 				// Re-binding the SAME stability/nonce is forbidden, even if SQL rollback
 				// removed its final row while retaining its locked checkpoint.
-				_, err = guard.Bind(ctx, tx, checked, nrSelectors(f.nr), plan, version, true)
+				_, err = guard.Bind(ctx, tx, checked, raw, plan, version, true)
 				enforceCode(t, err, ds.DeletionUnavailable)
-				fresh := nrEnforce(t, ctx, tx, f.nr, version)
-				_, err = app.NRStore.DeleteForAuditTx(carrier, tx, f.nr.String())
+				fresh := enforce(tx)
+				_, err = deleteOne(carrier, tx, id.String())
 				enforceCode(t, err, ds.DeletionUnavailable)
-				result, err := app.NRStore.DeleteForAuditTx(fresh, tx, f.nr.String())
+				result, err := deleteOne(fresh, tx, id.String())
 				require.NoError(t, err)
 				require.Len(t, result.Targets, 1)
 			}
@@ -320,35 +349,35 @@ func TestPostgresDeletionEnforcementNRGuardLifecycle(t *testing.T) {
 		})
 	}
 	tx := nrBegin(t, ctx, db)
-	old := nrEnforce(t, ctx, tx, f.nr, version)
-	_, err := tx.ExecContext(ctx, `SAVEPOINT old_generation`)
+	old := enforce(tx)
+	_, err = tx.ExecContext(ctx, `SAVEPOINT old_generation`)
 	require.NoError(t, err)
-	newer := nrEnforce(t, ctx, tx, f.nr, version)
+	newer := enforce(tx)
 	_, err = tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT old_generation`)
 	require.NoError(t, err)
 	// The old SQL witness still exists; monotonic revocation prevents resurrection.
-	enforceCode(t, guard.RequireDelete(old, tx, ds.ResourceNotificationRule, []string{f.nr.String()}), ds.DeletionUnavailable)
-	enforceCode(t, guard.RequireDelete(newer, tx, ds.ResourceNotificationRule, []string{f.nr.String()}), ds.DeletionUnavailable)
-	current := nrEnforce(t, ctx, tx, f.nr, version)
+	enforceCode(t, guard.RequireDelete(old, tx, kind, []string{id.String()}), ds.DeletionUnavailable)
+	enforceCode(t, guard.RequireDelete(newer, tx, kind, []string{id.String()}), ds.DeletionUnavailable)
+	current := enforce(tx)
 	other, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	enforceCode(t, guard.RequireDelete(current, other, ds.ResourceNotificationRule, []string{f.nr.String()}), ds.DeletionUnavailable)
+	enforceCode(t, guard.RequireDelete(current, other, kind, []string{id.String()}), ds.DeletionUnavailable)
 	require.NoError(t, other.Rollback())
-	enforceCode(t, guard.RequireDelete(current, tx, ds.ResourceNotificationRule, []string{uuid.NewString()}), ds.DeletionUnavailable)
-	enforceCode(t, guard.RequireDelete(current, tx, ds.ResourceContactMethod, []string{f.cm.String()}), ds.DeletionUnavailable)
+	enforceCode(t, guard.RequireDelete(current, tx, kind, []string{uuid.NewString()}), ds.DeletionUnavailable)
+	enforceCode(t, guard.RequireDelete(current, tx, wrongKind, []string{id.String()}), ds.DeletionUnavailable)
 	type forgedProfile struct{}
 	fake := context.WithValue(ctx, forgedProfile{}, "notification-rule-only-v1")
-	enforceCode(t, guard.RequireDelete(fake, tx, ds.ResourceNotificationRule, []string{f.nr.String()}), ds.DeletionUnavailable)
+	enforceCode(t, guard.RequireDelete(fake, tx, kind, []string{id.String()}), ds.DeletionUnavailable)
 	copyContext := context.WithValue(current, forgedProfile{}, true)
-	require.NoError(t, guard.RequireDelete(copyContext, tx, ds.ResourceNotificationRule, []string{f.nr.String()}))
-	enforceCode(t, guard.RequireDelete(current, tx, ds.ResourceNotificationRule, []string{f.nr.String()}), ds.DeletionUnavailable)
+	require.NoError(t, guard.RequireDelete(copyContext, tx, kind, []string{id.String()}))
+	enforceCode(t, guard.RequireDelete(current, tx, kind, []string{id.String()}), ds.DeletionUnavailable)
 	require.NoError(t, tx.Rollback())
-	enforceCode(t, guard.RequireDelete(current, tx, ds.ResourceNotificationRule, []string{f.nr.String()}), ds.DeletionUnavailable)
+	enforceCode(t, guard.RequireDelete(current, tx, kind, []string{id.String()}), ds.DeletionUnavailable)
 	// Commit invalidates an unconsumed carrier, with no reliance on Go flags.
 	tx = nrBegin(t, ctx, db)
-	current = nrEnforce(t, ctx, tx, f.nr, version)
+	current = enforce(tx)
 	require.NoError(t, tx.Commit())
-	enforceCode(t, guard.RequireDelete(current, tx, ds.ResourceNotificationRule, []string{f.nr.String()}), ds.DeletionUnavailable)
+	enforceCode(t, guard.RequireDelete(current, tx, kind, []string{id.String()}), ds.DeletionUnavailable)
 	nrNoSuccess(t, ctx, db)
 }
 
