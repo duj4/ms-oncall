@@ -1,5 +1,8 @@
 -- name: AlertLog_InsertEP :exec
 -- Inserts a new alert log for all alerts in the escalation policy that are not closed.
+WITH locked_subject_key AS MATERIALIZED (
+    SELECT 1 FROM integration_keys WHERE id = $5 FOR KEY SHARE
+)
 INSERT INTO alert_logs(alert_id, event, sub_type, sub_user_id, sub_integration_key_id, sub_hb_monitor_id, sub_channel_id, sub_classifier, meta, message)
 SELECT
     a.id,
@@ -17,7 +20,10 @@ FROM
     JOIN services svc ON svc.id = a.service_id
         AND svc.escalation_policy_id = $1
 WHERE
-    a.status != 'closed';
+    a.status != 'closed'
+    AND (SELECT count(*) FROM locked_subject_key) >= 0
+ORDER BY a.id
+FOR KEY SHARE OF a;
 
 -- name: AlertLog_HasRecentDuplicate :one
 -- Checks if there is a recent duplicate-suppressed log for the alert.
@@ -34,6 +40,9 @@ SELECT
 
 -- name: AlertLog_InsertSvc :exec
 -- Inserts a new alert log for all alerts in the service that are not closed.
+WITH locked_subject_key AS MATERIALIZED (
+    SELECT 1 FROM integration_keys WHERE id = $5 FOR KEY SHARE
+)
 INSERT INTO alert_logs(alert_id, event, sub_type, sub_user_id, sub_integration_key_id, sub_hb_monitor_id, sub_channel_id, sub_classifier, meta, message)
 SELECT
     a.id,
@@ -53,10 +62,20 @@ WHERE
     AND (($2 = 'closed'::enum_alert_log_event
             AND a.status != 'closed')
         OR ($2::enum_alert_log_event IN ('acknowledged', 'notification_sent')
-            AND a.status = 'triggered'));
+            AND a.status = 'triggered'))
+    AND (SELECT count(*) FROM locked_subject_key) >= 0
+ORDER BY a.id
+FOR KEY SHARE OF a;
 
 -- name: AlertLog_InsertMany :exec
--- Inserts many alert logs
+-- Inserts many alert logs. Non-FK Alert and subject-Key edges cooperate with
+-- native deletion in the same SQL statement, including the nil-Tx path.
+-- Missing historical IDs retain the original logging behavior.
+WITH locked_subject_key AS MATERIALIZED (
+    SELECT 1 FROM integration_keys WHERE id = $5 FOR KEY SHARE
+), locked_alerts AS MATERIALIZED (
+    SELECT id FROM alerts WHERE id = ANY($1::bigint[]) ORDER BY id FOR KEY SHARE
+)
 INSERT INTO alert_logs(alert_id, event, sub_type, sub_user_id, sub_integration_key_id, sub_hb_monitor_id, sub_channel_id, sub_classifier, meta, message)
 SELECT
     unnest,
@@ -70,7 +89,9 @@ SELECT
     $9,
     $10
 FROM
-    unnest($1::bigint[]);
+    unnest($1::bigint[])
+WHERE (SELECT count(*) FROM locked_subject_key) >= 0
+  AND (SELECT count(*) FROM locked_alerts) >= 0;
 
 -- name: AlertLog_LookupCMDest :one
 -- Looks up the destination for a contact method

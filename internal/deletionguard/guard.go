@@ -24,6 +24,7 @@ type Selector struct {
 
 const nrProfile = "notification-rule-only-v1"
 const cmProfile = "contact-method-only-v1"
+const serviceProfile = "service-only-v1"
 
 type stabilityKey struct{}
 type enforcementKey struct{}
@@ -120,6 +121,15 @@ func StableCM(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
 	return s != nil && s.kind == root.Kind && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
 }
 
+// StableService accepts only this transaction's selected existing Service roots.
+func StableService(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
+	if ctx == nil || root.Kind != ds.ResourceService {
+		return false
+	}
+	s, _ := ctx.Value(stabilityKey{}).(*stability)
+	return s != nil && s.kind == root.Kind && s.profile == serviceProfile && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
+}
+
 // Bind is called by the trusted enforcer after fresh authorization, collection
 // and policy/version checks under the stable set. base keeps the request's
 // cancellation; checked carries the bounded recheck context and checkpoint.
@@ -175,6 +185,11 @@ func ConsumeCM(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) 
 	return consume(ctx, tx, ds.ResourceContactMethod, ids)
 }
 
+// ConsumeService prevents raw missing selectors from entering legacy or audited DML.
+func ConsumeService(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return consume(ctx, tx, ds.ResourceService, ids)
+}
+
 // RequireDelete preserves all nine root Store boundaries. Other profiles fail
 // closed, including System and direct Go calls. CM/NR Stores use ConsumeCM/NR.
 func RequireDelete(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string) error {
@@ -187,8 +202,20 @@ func RequireDelete(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []
 	_, err := consume(ctx, tx, kind, ids)
 	return err
 }
+
+// ServiceTargets is a non-consuming projection for the original D09 capture.
+// Capture and Store must use the same certified subset, even if a raw Missing
+// UUID is inserted between certification and the first capture query.
+func ServiceTargets(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return certifiedTargets(ctx, tx, ds.ResourceService, ids, false)
+}
+
 func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string) ([]string, error) {
-	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod) {
+	return certifiedTargets(ctx, tx, kind, ids, true)
+}
+
+func certifiedTargets(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string, consumeSelection bool) ([]string, error) {
+	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService) {
 		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)
@@ -222,8 +249,10 @@ func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string
 			effective = append(effective, target.ID)
 		}
 	}
-	for sel := range unique {
-		delete(g.remaining, sel)
+	if consumeSelection {
+		for sel := range unique {
+			delete(g.remaining, sel)
+		}
 	}
 	return effective, nil
 }

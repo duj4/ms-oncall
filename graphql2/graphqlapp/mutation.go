@@ -10,6 +10,7 @@ import (
 	"github.com/target/goalert/expflag"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
+	guard "github.com/target/goalert/internal/deletionguard"
 	"github.com/target/goalert/keyring"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
@@ -591,9 +592,13 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			// Resolve only this group's scope. In particular, a Foreign Service
 			// must not grant its Organization to Schedule/Rotation/EP deletion.
 			var serviceOrg *uuid.UUID
-			serviceOrg, err = serviceDeleteTargetOrganization(ctx, tx, ids)
+			var existing []string
+			existing, err = guard.ServiceTargets(ctx, tx, ids)
+			if err == nil {
+				serviceOrg, err = serviceDeleteTargetOrganization(ctx, tx, existing)
+			}
 			if err == nil && audit != nil {
-				err = audit.capture(ctx, ids, serviceOrg)
+				err = audit.capture(ctx, existing, serviceOrg)
 			}
 			if err == nil {
 				if audit != nil {

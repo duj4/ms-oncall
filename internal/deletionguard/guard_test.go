@@ -53,3 +53,15 @@ func TestCMStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, StableCM(context.Background(), new(sql.Tx), ds.Resource{Kind: ds.ResourceContactMethod, ID: "00000000-0000-4000-8000-000000000001"}))
 }
+
+func TestServiceStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
+	for _, raw := range [][]Selector{{{Kind: ds.ResourceContactMethod, ID: "00000000-0000-4000-8000-000000000001"}}, {{Kind: ds.ResourceService, ID: "invalid"}}, make([]Selector, 51)} {
+		_, _, err := StabilizeService(context.Background(), new(sql.Tx), raw)
+		require.Error(t, err)
+	}
+	_, err := ConsumeService(context.Background(), new(sql.Tx), []string{"00000000-0000-4000-8000-000000000001"})
+	require.Error(t, err)
+	_, err = ServiceTargets(context.Background(), new(sql.Tx), []string{"00000000-0000-4000-8000-000000000001"})
+	require.Error(t, err)
+	require.False(t, StableService(context.Background(), new(sql.Tx), ds.Resource{Kind: ds.ResourceService, ID: "00000000-0000-4000-8000-000000000001"}))
+}

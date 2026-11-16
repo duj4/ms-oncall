@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/target/goalert/permission"
@@ -306,14 +305,22 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err != nil {
 		return nil, err
 	}
-	parsedIDs, err := validate.ParseManyUUID("ServiceID", ids, 50)
+	_, err = validate.ParseManyUUID("ServiceID", ids, 50)
 	if err != nil {
 		return nil, err
 	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceService, ids); err != nil {
+	ids, err = collector.ConsumeService(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	parsedIDs, err := validate.ParseManyUUID("ServiceID", ids, 50)
+	if err != nil {
 		return nil, err
 	}
 	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
