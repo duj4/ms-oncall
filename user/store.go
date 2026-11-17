@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/golang/groupcache"
@@ -313,8 +312,12 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string) erro
 		return err
 	}
 
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceUser, ids); err != nil {
+	ids, err = collector.ConsumeUser(ctx, tx, ids)
+	if err != nil {
 		return err
+	}
+	if len(ids) == 0 {
+		return nil
 	}
 	var ownsTx bool
 	if tx == nil {

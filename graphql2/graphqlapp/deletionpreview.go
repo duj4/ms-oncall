@@ -127,7 +127,7 @@ func (q *Query) DeletionPreview(ctx context.Context, input graphql2.DeletionPlan
 	}
 	defer func() { _ = tx.Rollback() }()
 	collection := ds.Collection{Completeness: ds.DependenciesComplete}
-	var fingerprint string
+	var fingerprints []string
 	var assessedAt time.Time
 	remaining := ds.DefaultBudget().MaxDependencies
 	rootFacts := make(map[ds.Resource]collector.Target)
@@ -147,10 +147,7 @@ func (q *Query) DeletionPreview(ctx context.Context, input graphql2.DeletionPlan
 		if result.Collection.Completeness != ds.DependenciesComplete || !slices.Contains(result.Collection.Checked, root) {
 			return nil, previewUnavailable()
 		}
-		if fingerprint != "" && fingerprint != result.ScopeFingerprint {
-			return nil, previewUnavailable()
-		}
-		fingerprint = result.ScopeFingerprint
+		fingerprints = append(fingerprints, result.ScopeFingerprint)
 		if assessedAt.IsZero() {
 			assessedAt = result.ObservedAt
 		}
@@ -162,6 +159,10 @@ func (q *Query) DeletionPreview(ctx context.Context, input graphql2.DeletionPlan
 		if remaining < 0 {
 			return nil, previewLimit()
 		}
+	}
+	fingerprint, err := collector.BatchScopeFingerprint(targets, fingerprints)
+	if err != nil {
+		return nil, previewUnavailable()
 	}
 	intent := make([]ds.DestructiveChange, len(targets))
 	for i, target := range targets {

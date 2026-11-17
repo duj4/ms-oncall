@@ -141,7 +141,7 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	if purpose == Recheck && overrideStable {
 		c.result.ObservedAt = overrideObservation
 	}
-	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root) || guard.StableRotation(ctx, tx, root) || guard.StableIntegrationKey(ctx, tx, root) || overrideStable)
+	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root) || guard.StableRotation(ctx, tx, root) || guard.StableIntegrationKey(ctx, tx, root) || guard.StableUser(ctx, tx, root) || overrideStable)
 	if purpose == Preview && readOnly != "on" || !stable && isolation != "repeatable read" && isolation != "serializable" {
 		return bad, unavailable()
 	}
@@ -171,6 +171,13 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	}
 	if !c.allowed(org) {
 		return bad, unavailable()
+	}
+	if root.Kind == ds.ResourceUser {
+		var role, organizationRole string
+		if err := c.queryRow(userOrganizations+` SELECT user_role::text,organization_role::text FROM user_org WHERE user_id=$1::uuid`, root.ID).Scan(&role, &organizationRole); err != nil {
+			return bad, safeError(err)
+		}
+		fingerprint += ":user:" + root.ID + ":" + org + ":" + role + ":" + organizationRole
 	}
 	target := Target{resource: root, organization: uuid.MustParse(org)}
 	if ownership, ok := ownershipQueries[root.Kind]; ok {

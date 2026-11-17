@@ -41,9 +41,6 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 			continue
 		}
 		limit := 50
-		if kind == ds.ResourceUser {
-			limit = 100
-		}
 		if _, err := validate.ParseManyUUID(map[ds.ResourceKind]string{ds.ResourceService: "ServiceID", ds.ResourceEscalationPolicy: "EscalationPolicyID", ds.ResourceSchedule: "ScheduleID", ds.ResourceRotation: "RotationID", ds.ResourceUser: "UserID", ds.ResourceContactMethod: "ContactMethodID", ds.ResourceNotificationRule: "NotificationRuleID", ds.ResourceIntegrationKey: "IntegrationKeyID", ds.ResourceUserOverride: "UserOverrideID"}[kind], ids, limit); err != nil {
 			return ctx, err
 		}
@@ -60,7 +57,7 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	}
 	// Only homogeneous native profiles are executable. Raw validation keeps existing
 	// error precedence and counts; no unsupported root reaches business DML.
-	if len(groups) != 1 || (len(groups[ds.ResourceNotificationRule]) == 0 && len(groups[ds.ResourceContactMethod]) == 0 && len(groups[ds.ResourceService]) == 0 && len(groups[ds.ResourceEscalationPolicy]) == 0 && len(groups[ds.ResourceSchedule]) == 0 && len(groups[ds.ResourceRotation]) == 0 && len(groups[ds.ResourceUserOverride]) == 0 && len(groups[ds.ResourceIntegrationKey]) == 0) {
+	if len(groups) != 1 || (len(groups[ds.ResourceNotificationRule]) == 0 && len(groups[ds.ResourceContactMethod]) == 0 && len(groups[ds.ResourceService]) == 0 && len(groups[ds.ResourceEscalationPolicy]) == 0 && len(groups[ds.ResourceSchedule]) == 0 && len(groups[ds.ResourceRotation]) == 0 && len(groups[ds.ResourceUserOverride]) == 0 && len(groups[ds.ResourceIntegrationKey]) == 0 && len(groups[ds.ResourceUser]) == 0) {
 		return ctx, unavailable()
 	}
 	collectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -87,6 +84,9 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	if len(groups[ds.ResourceIntegrationKey]) > 0 {
 		stabilize = guard.StabilizeIntegrationKey
 	}
+	if len(groups[ds.ResourceUser]) > 0 {
+		stabilize = guard.StabilizeUser
+	}
 	stableCtx, targets, err := stabilize(collectCtx, tx, raw)
 	if err != nil {
 		return ctx, safeError(err)
@@ -95,6 +95,7 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	collection := ds.Collection{Completeness: ds.DependenciesComplete}
 	remaining := ds.DefaultBudget().MaxDependencies
 	var fingerprint string
+	var fingerprints []string
 	for _, root := range targets {
 		limits := DefaultLimits()
 		limits.MaxRows = max(1, remaining)
@@ -102,7 +103,7 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 		if err != nil {
 			return ctx, safeError(err)
 		}
-		if result.Collection.Completeness != ds.DependenciesComplete || !slices.Contains(result.Collection.Checked, root) || fingerprint != "" && fingerprint != result.ScopeFingerprint {
+		if result.Collection.Completeness != ds.DependenciesComplete || !slices.Contains(result.Collection.Checked, root) {
 			return ctx, unavailable()
 		}
 		if root.Kind == ds.ResourceSchedule {
@@ -110,7 +111,7 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 				return ctx, safeError(err)
 			}
 		}
-		fingerprint = result.ScopeFingerprint
+		fingerprints = append(fingerprints, result.ScopeFingerprint)
 		collection.Checked = append(collection.Checked, result.Collection.Checked...)
 		collection.Dependencies = append(collection.Dependencies, result.Collection.Dependencies...)
 		for _, d := range result.Collection.Dependencies {
@@ -125,6 +126,10 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 	}
 	var plan ds.DeletionPlan
 	if len(targets) > 0 {
+		fingerprint, err = BatchScopeFingerprint(targets, fingerprints)
+		if err != nil {
+			return ctx, err
+		}
 		intent := make([]ds.DestructiveChange, len(targets))
 		for i, r := range targets {
 			intent[i] = ds.DestructiveChange{Resource: r, Kind: ds.ChangeDeleted}
@@ -140,6 +145,14 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 		}
 		if err := plan.Check(expected, acknowledged); err != nil {
 			return ctx, err
+		}
+		for _, root := range targets {
+			if root.Kind == ds.ResourceUser {
+				var unsupported bool
+				if err := tx.QueryRowContext(collectCtx, `SELECT EXISTS(SELECT FROM public.notification_policy_cycles WHERE user_id=$1)`, root.ID).Scan(&unsupported); err != nil || unsupported {
+					return ctx, unavailable()
+				}
+			}
 		}
 	}
 	return guard.Bind(ctx, tx, collectCtx, raw, plan, expected, acknowledged)

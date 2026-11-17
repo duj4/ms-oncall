@@ -485,7 +485,7 @@ func TestPostgresUserDeleteSessionIdentityAnomalies(t *testing.T) {
 	}
 }
 
-func TestPostgresUserDeleteSessionIdentityUserHold(t *testing.T) {
+func TestPostgresUserDeleteSessionIdentityUserAdmission(t *testing.T) {
 	base, _, db := boundedAuditDB(t, len(Names()))
 	system := permission.SystemContext(base, "SessionContractFix1")
 	f, actor := newUserPhaseAFixture(t, system, db), newUserPhaseAFixture(t, system, db)
@@ -516,7 +516,13 @@ func TestPostgresUserDeleteSessionIdentityUserHold(t *testing.T) {
 					targets = append(targets, id.String())
 				}
 				_, err := app.Mutation().DeleteAll(ctx, raw, nil)
-				enforceCode(t, err, ds.DeletionUnavailable)
+				if ids[0] != f.user {
+					require.NoError(t, err)
+				} else if name == "system" {
+					enforceCode(t, err, ds.DeletionConfirmationRequired)
+				} else {
+					enforceCode(t, err, ds.DeletionUnavailable)
+				} // Foreign Home stays denied.
 				for _, audited := range []bool{false, true} {
 					tx := userPhaseATx(t, ctx, db)
 					if audited {

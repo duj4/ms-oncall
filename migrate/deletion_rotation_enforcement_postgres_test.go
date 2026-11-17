@@ -844,7 +844,11 @@ func TestPostgresDeletionEnforcementRotationFailClosed(t *testing.T) {
 	}
 	for _, kind := range []assignment.TargetType{assignment.TargetTypeUser, assignment.TargetTypeUserSession, assignment.TargetTypeCalendarSubscription} {
 		_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: kind, ID: uuid.NewString()}}, nil)
-		require.Error(t, err)
+		if kind == assignment.TargetTypeUser {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
 	}
 	// Labels and cross-organization references remain unsupported/unauthorized.
 	enforcementExec(t, ctx, db, `INSERT INTO labels(tgt_rotation_id,key,value) VALUES($1,'synthetic','value')`, f.root)

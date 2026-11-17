@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/auth"
 	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/deletionsafety/postgres"
@@ -126,15 +125,7 @@ func TestPostgresDeletionUserPhaseAFailClosed(t *testing.T) {
 	base, _, db := boundedAuditDB(t, len(Names()))
 	ctx := permission.SystemContext(base, "UserPhaseA")
 	f := newUserPhaseAFixture(t, ctx, db)
-	app := enforcementApp(t, ctx, db)
-	for _, ids := range [][]uuid.UUID{{f.user}, {f.user, f.user, uuid.New()}, {uuid.New()}, {uuid.Nil}} {
-		var raw []assignment.RawTarget
-		for _, id := range ids {
-			raw = append(raw, assignment.RawTarget{Type: assignment.TargetTypeUser, ID: id.String()})
-		}
-		_, err := app.Mutation().DeleteAll(ctx, raw, nil)
-		enforceCode(t, err, ds.DeletionUnavailable)
-	}
+	// User-only is now admitted; direct Store calls remain uncertified.
 	for _, audited := range []bool{false, true} {
 		tx := userPhaseATx(t, ctx, db)
 		var err error

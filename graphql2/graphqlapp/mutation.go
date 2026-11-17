@@ -501,11 +501,6 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		m[tgt.TargetType()] = append(m[tgt.TargetType()], tgt.TargetID())
 	}
 	if isDefault {
-		for _, id := range m[assignment.TargetTypeUser] {
-			if err := authorizeDefaultUserTarget(ctx, tx, id); err != nil {
-				return err
-			}
-		}
 		for _, id := range m[assignment.TargetTypeUserSession] {
 			var owner string
 			err := tx.QueryRowContext(ctx, `SELECT user_id FROM auth_user_sessions WHERE id=$1 FOR UPDATE`, id).Scan(&owner)
@@ -547,6 +542,18 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 	ctx, err = enforceDeleteAll(ctx, tx, input, confirmation)
 	if err != nil {
 		return err
+	}
+
+	if isDefault && len(m[assignment.TargetTypeUser]) > 0 {
+		existing, err := guard.UserTargets(ctx, tx, m[assignment.TargetTypeUser])
+		if err != nil {
+			return err
+		}
+		for _, id := range existing {
+			if err := authorizeDefaultUserTarget(ctx, tx, id); err != nil {
+				return err
+			}
+		}
 	}
 
 	if audit != nil {

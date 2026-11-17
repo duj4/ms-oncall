@@ -58,6 +58,21 @@ func TestNRStabilityRejectsUnsupportedAndRawOverflow(t *testing.T) {
 	}
 }
 
+func TestUserRequiresExactNativeCarrier(t *testing.T) {
+	ctx, tx := context.Background(), new(sql.Tx)
+	for _, raw := range [][]Selector{nil, {{Kind: ds.ResourceContactMethod, ID: "00000000-0000-4000-8000-000000000001"}}, {{Kind: ds.ResourceUser, ID: "invalid"}}, make([]Selector, 51)} {
+		_, _, err := StabilizeUser(ctx, tx, raw)
+		require.Error(t, err)
+	}
+	ids := []string{"00000000-0000-4000-8000-000000000001"}
+	_, err := ConsumeUser(ctx, tx, ids)
+	require.Error(t, err)
+	_, err = UserTargets(ctx, tx, ids)
+	require.Error(t, err)
+	require.False(t, StableUser(ctx, tx, ds.Resource{Kind: ds.ResourceUser, ID: ids[0]}))
+	require.False(t, StableUser(ctx, tx, ds.Resource{Kind: ds.ResourceContactMethod, ID: ids[0]}))
+}
+
 func TestCMStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
 	for _, raw := range [][]Selector{{{Kind: ds.ResourceNotificationRule, ID: "00000000-0000-4000-8000-000000000001"}}, {{Kind: ds.ResourceContactMethod, ID: "invalid"}}, make([]Selector, 51)} {
 		_, _, err := StabilizeCM(context.Background(), new(sql.Tx), raw)

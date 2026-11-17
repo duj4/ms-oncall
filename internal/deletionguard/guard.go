@@ -279,7 +279,7 @@ func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string
 }
 
 func certifiedTargets(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string, consumeSelection bool) ([]string, error) {
-	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule && kind != ds.ResourceRotation && kind != ds.ResourceUserOverride && kind != ds.ResourceIntegrationKey) {
+	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule && kind != ds.ResourceRotation && kind != ds.ResourceUserOverride && kind != ds.ResourceIntegrationKey && kind != ds.ResourceUser) {
 		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)

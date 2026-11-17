@@ -255,9 +255,9 @@ func (a *deleteAllAttempt) begin(ctx context.Context) (*sql.Tx, error) {
 			_, err = a.tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(1297305411::integer,1396979713::integer)`)
 		}
 		if err == nil && a.plan.hasUser {
-			_, err = a.tx.ExecContext(ctx, `LOCK TABLE rotation_participants,rotation_state IN EXCLUSIVE MODE`)
+			_, err = a.tx.ExecContext(ctx, `LOCK TABLE rotation_participants,rotation_state IN EXCLUSIVE MODE NOWAIT`)
 			if err == nil {
-				_, err = a.tx.ExecContext(ctx, `LOCK TABLE user_overrides IN EXCLUSIVE MODE`)
+				_, err = a.tx.ExecContext(ctx, `LOCK TABLE user_overrides IN EXCLUSIVE MODE NOWAIT`)
 			}
 		}
 		err = a.userCaptureError(err)
