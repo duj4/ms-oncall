@@ -27,8 +27,9 @@
 //
 // Known schema boundaries without an accepted V1 mapping stop the affected
 // projection: labels, heartbeat children, provider compatibility rows, universal
-// key config, calendar credentials, and participant references from rotation
-// state. Consequently populated rotations are currently Unsupported. A raw
+// key config and calendar credentials. A Rotation root admits its complete
+// Participant/State closure only for consistent version-2 runtime and scoped
+// Users; historical or malformed State and other roots' runtime remain closed. A raw
 // TemporarySchedule shift with an empty effective intersection is Unsupported:
 // V1 cannot represent that interval without inventing a PeriodState. Unknown
 // JSON members are detected before the SQL projection strips their values.

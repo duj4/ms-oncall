@@ -38,7 +38,7 @@ var policyRules = map[RelationshipKind]policyRule{
 	RelationshipEscalationHistory:         rule(PolicyWarning, ChangeDeleted, kinds(ResourceEscalationPolicy, ResourceEscalationPolicyStep, ResourceUser), kinds(ResourceEscalationHistory)),
 	RelationshipRotationParticipant:       rule(PolicyCascade, ChangeDeleted, kinds(ResourceRotation), kinds(ResourceRotationParticipant)),
 	RelationshipParticipantUser:           rule(PolicyBlock, ChangePreserved, kinds(ResourceUser), kinds(ResourceRotationParticipant)),
-	RelationshipRotationState:             rule(PolicyInformational, ChangeDeleted, kinds(ResourceRotation), kinds(ResourceRotationState)),
+	RelationshipRotationState:             rule(PolicyCascade, ChangeDeleted, kinds(ResourceRotation), kinds(ResourceRotationState)),
 	RelationshipServiceAlert:              rule(PolicyBlock, ChangePreserved, kinds(ResourceService), kinds(ResourceAlert)),
 	RelationshipServiceIntegrationKey:     rule(PolicyCascade, ChangeDeleted, kinds(ResourceService), kinds(ResourceIntegrationKey)),
 	RelationshipOutgoingMessage:           rule(PolicyWarning, ChangeDeleted, kinds(ResourceService, ResourceEscalationPolicy, ResourceSchedule, ResourceContactMethod, ResourceUser, ResourceAlert, ResourceNotificationPolicyCycle, ResourceVerificationState), kinds(ResourceOutgoingMessage)),

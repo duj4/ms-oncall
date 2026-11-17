@@ -27,6 +27,11 @@ func canonicalConfiguration(c Configuration) Configuration {
 		position := *c.Position
 		c.Position = &position
 	}
+	if c.RotationState != nil {
+		state := *c.RotationState
+		state.ShiftStart = state.ShiftStart.Round(0).UTC()
+		c.RotationState = &state
+	}
 	c.WindowStart = c.WindowStart.Round(0).UTC()
 	c.WindowEnd = c.WindowEnd.Round(0).UTC()
 	return c

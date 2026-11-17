@@ -203,8 +203,18 @@ func TestPostgresDeletionPreviewPoliciesPaginationAndReadOnly(t *testing.T) {
 		coDeleted = coDeleted || edge.Node.IsPlannedCoDeletion
 	}
 	require.True(t, coDeleted)
-	// A real populated RotationState remains unavailable, never an empty preview.
-	previewRejected(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeRotation, f.rotation), 50, nil), string(ds.DeletionUnavailable))
+	// The real populated closure is complete; its incoming references still block.
+	populated := previewOK(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeRotation, f.rotation), 50, nil))
+	require.True(t, populated.Complete)
+	require.False(t, populated.CanProceed)
+	stateFound := false
+	for _, edge := range populated.Impacts.Edges {
+		if edge.Node.Relation == "ROTATION_STATE" {
+			stateFound = true
+			require.Equal(t, graphql2.DeletionPolicyCascade, edge.Node.Policy)
+		}
+	}
+	require.True(t, stateFound)
 	require.Equal(t, before, deletionSnapshot(t, ctx, db))
 	require.Zero(t, outbound.calls.Load(), "Preview must not send external requests")
 	require.Zero(t, wrapped.Stats().InUse)
@@ -236,9 +246,8 @@ func TestPostgresDeletionPreviewEmptyBatchAndBounds(t *testing.T) {
 	require.Empty(t, p.Impacts.Edges)
 	require.True(t, p.CanProceed)
 	require.False(t, p.RequiresConfirmation)
-	// Nonempty roster without runtime state is genuinely supported.
-	_, err = db.ExecContext(ctx, `DELETE FROM rotation_state WHERE rotation_id=$1`, f.rotation)
-	require.NoError(t, err)
+	// Keep the real populated runtime intact throughout the Preview.
+	// Missing State is an invalid closure, covered by the populated negative suite.
 	rotationInput := previewInput(graphql2.DeletionTargetTypeRotation, f.rotation)
 	p = previewOK(t, previewHTTP(t, ctx, app, rotationInput, 100, nil))
 	require.False(t, p.CanProceed) // real incoming Schedule/EP references still block

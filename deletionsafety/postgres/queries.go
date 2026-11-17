@@ -87,13 +87,19 @@ var unsupportedQueries = map[ds.ResourceKind]string{
 }
 
 func (c *collector) collectKind(kind ds.ResourceKind, ids []string) error {
-	if query := unsupportedQueries[kind]; query != "" {
+	rotationOwned := c.rotationRoot != "" && (kind == ds.ResourceRotationParticipant || kind == ds.ResourceRotationState)
+	if query := unsupportedQueries[kind]; query != "" && !rotationOwned {
 		var present bool
 		if err := c.queryRow(query, sqlutil.StringArray(ids)).Scan(&present); err != nil {
 			return err
 		}
 		if present {
 			return errUnsupported
+		}
+	}
+	if kind == ds.ResourceRotation && c.rotationRoot != "" {
+		if err := c.validateRotation(ids); err != nil {
+			return err
 		}
 	}
 	if kind == ds.ResourceSchedule || kind == ds.ResourceUser {
@@ -242,7 +248,12 @@ func projections(kind ds.ResourceKind) []projection {
 		p.position = "p.position"
 		p.referenceKind, p.reference = number(ds.ResourceUser), "p.user_id"
 		add(p)
-		add(edge(ds.RelationshipRotationState, kind, ds.ResourceRotationState, `public.rotation_state rs LEFT JOIN public.rotations r ON r.id=rs.rotation_id`, "rs.rotation_id", "rs.rotation_id", "rs.id", "r.organization_id"))
+		p = owned(edge(ds.RelationshipRotationState, kind, ds.ResourceRotationState,
+			`public.rotation_state rs LEFT JOIN public.rotations r ON r.id=rs.rotation_id LEFT JOIN public.rotation_participants p ON p.id=rs.rotation_participant_id AND p.rotation_id=rs.rotation_id AND p.position=rs.position`,
+			"rs.rotation_id", "rs.rotation_id", "rs.id", "r.organization_id"), kind, kind, "r.id", "r.id")
+		p.position, p.shiftStart, p.runtimeVersion = "rs.position", "rs.shift_start", "rs.version"
+		p.referenceKind, p.reference = number(ds.ResourceRotationParticipant), "p.id"
+		add(p)
 	case ds.ResourceRotationParticipant:
 		add(participants(true))
 	case ds.ResourceUser:

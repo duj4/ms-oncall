@@ -59,10 +59,10 @@ func TestPostgresDeletionEnforcementRotationStateFix1Contract(t *testing.T) {
 				require.NoError(t, app.RotationStore.AddRotationUsersTx(ctx, nil, f.root.String(), users))
 				require.NoError(t, app.RotationStore.SetActiveIndexTx(ctx, nil, f.root.String(), active))
 				before := rotationStateContractInventory(t, ctx, db)
-				// Until the B2 receipt contract can be met, the existing native
-				// success path must continue to refuse the populated closure.
+				// FIX3 admits this closure, but still requires confirmation.
+				// Keep the original truthful explicit-child audit rejection proof.
 				_, err := app.Mutation().DeleteAll(ctx, rotationProfileInput(f.root), nil)
-				enforceCode(t, err, ds.DeletionUnavailable)
+				enforceCode(t, err, ds.DeletionConfirmationRequired)
 				require.Equal(t, before, rotationStateContractInventory(t, ctx, db))
 
 				tx := nrBegin(t, ctx, db)
@@ -70,8 +70,8 @@ func TestPostgresDeletionEnforcementRotationStateFix1Contract(t *testing.T) {
 				require.NoError(t, err)
 				// Intentionally inspect the gate without cleaning State first.
 				facts, err := collector.Collect(locked, tx, rotationProfileRoot(f.root), collector.Recheck, collector.Limits{}, authorizeDeletionFixture(rotationProfileRoot(f.root)))
-				enforceCode(t, err, ds.DeletionUnavailable)
-				require.Equal(t, ds.DependenciesUnsupported, facts.Collection.Completeness)
+				require.NoError(t, err)
+				require.Equal(t, ds.DependenciesComplete, facts.Collection.Completeness)
 				e := rotationStateContractEvent(f.root, f.org)
 				s := &sraudit.RotationState{}
 				var rotationID uuid.UUID

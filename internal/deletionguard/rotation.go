@@ -85,7 +85,7 @@ func (r *stableReader) lockRotationClosure(roots [][]string) error {
 		return err
 	}
 	// Both FK directions matter: even a cross-linked runtime row must remain
-	// visible to the unchanged Collector, which rejects the unmapped closure.
+	// visible to the Collector, which rejects an inconsistent closure.
 	_, err = r.lockChildren(`SELECT id::text,rotation_id::text,rotation_participant_id::text,position::text,shift_start::text,version::text FROM public.rotation_state WHERE rotation_id=ANY($1::uuid[]) OR rotation_participant_id=ANY($2::uuid[]) ORDER BY id LIMIT 10001`, pq.Array(ids), pq.Array(column(participants, 0)))
 	if err != nil {
 		return err

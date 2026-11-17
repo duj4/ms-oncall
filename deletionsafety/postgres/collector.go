@@ -73,6 +73,7 @@ type collector struct {
 	limits                              Limits
 	result                              Result
 	organization                        string
+	rotationRoot                        string
 	global                              bool
 	removed, checked                    map[ds.Resource]bool
 	queue                               map[ds.ResourceKind][]string
@@ -111,6 +112,9 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	ctx, cancel := context.WithTimeout(ctx, limits.Timeout)
 	defer cancel()
 	c := collector{tx: tx, ctx: ctx, limits: limits, removed: map[ds.Resource]bool{}, checked: map[ds.Resource]bool{}, queue: map[ds.ResourceKind][]string{}}
+	if root.Kind == ds.ResourceRotation {
+		c.rotationRoot = root.ID
+	}
 	var fingerprint string
 	var admittedOrganizationRole string
 	if permission.System(ctx) {
@@ -275,6 +279,7 @@ type projection struct {
 	from, filter, targetID, referenceID, parentID, ownerID, organization string
 	start, end, alert, sameOwner, position, referenceKind, reference     string
 	risk, references                                                     string
+	shiftStart, runtimeVersion                                           string
 }
 
 func expression(s, fallback string) string {
@@ -294,9 +299,10 @@ func (c *collector) read(p projection, ids []string, numeric bool) error {
 	}
 	base := fmt.Sprintf(`SELECT %s::text AS tid, %s::text AS rid, %s::text AS pid, %s::text AS oid,
 	 %s::text AS org, %s AS start_time, %s AS end_time, %s::text AS alert,
-	 %s AS same_owner, %s AS position, %s::int AS reference_kind, %s::text AS reference_id, %s::int AS risk, %s AS refs
+	 %s AS same_owner, %s AS position, %s::int AS reference_kind, %s::text AS reference_id, %s::int AS risk, %s AS refs,
+	 %s AS shift_start, %s AS runtime_version
 	 FROM %s WHERE %s = ANY($1::%s)`, p.targetID, p.referenceID, expression(p.parentID, "''"), expression(p.ownerID, "''"), p.organization,
-		expression(p.start, "NULL::timestamptz"), expression(p.end, "NULL::timestamptz"), expression(p.alert, "''"), expression(p.sameOwner, "false"), expression(p.position, "NULL::int"), expression(p.referenceKind, "0"), expression(p.reference, "''"), expression(p.risk, "0"), expression(p.references, "'[]'::jsonb"), p.from, p.filter, cast)
+		expression(p.start, "NULL::timestamptz"), expression(p.end, "NULL::timestamptz"), expression(p.alert, "''"), expression(p.sameOwner, "false"), expression(p.position, "NULL::int"), expression(p.referenceKind, "0"), expression(p.reference, "''"), expression(p.risk, "0"), expression(p.references, "'[]'::jsonb"), expression(p.shiftStart, "NULL::timestamptz"), expression(p.runtimeVersion, "NULL::int"), p.from, p.filter, cast)
 	var previousTarget, previousReference string
 	for {
 		if c.queries >= c.limits.MaxQueries {
@@ -317,7 +323,9 @@ func (c *collector) read(p projection, ids []string, numeric bool) error {
 			var position sql.NullInt64
 			var referenceKind ds.ResourceKind
 			var rawReferences []byte
-			if err := rows.Scan(&d.Target.ID, &d.Referencing.ID, &parent, &owner, &org, &start, &end, &alert, &d.State.SameOwner, &position, &referenceKind, &reference, &d.State.NotificationRisk, &rawReferences); err != nil {
+			var shiftStart sql.NullTime
+			var runtimeVersion sql.NullInt64
+			if err := rows.Scan(&d.Target.ID, &d.Referencing.ID, &parent, &owner, &org, &start, &end, &alert, &d.State.SameOwner, &position, &referenceKind, &reference, &d.State.NotificationRisk, &rawReferences, &shiftStart, &runtimeVersion); err != nil {
 				rows.Close()
 				return unavailable()
 			}
@@ -358,6 +366,13 @@ func (c *collector) read(p projection, ids []string, numeric bool) error {
 			if position.Valid {
 				n := int(position.Int64)
 				d.Before.Position = &n
+			}
+			if p.relation == ds.RelationshipRotationState {
+				if c.rotationRoot != d.Target.ID || !shiftStart.Valid || !runtimeVersion.Valid {
+					rows.Close()
+					return unavailable()
+				}
+				d.Before.RotationState = &ds.RotationRuntime{ShiftStart: shiftStart.Time, Version: int(runtimeVersion.Int64)}
 			}
 			if referenceKind != ds.ResourceUnknown {
 				d.Before.References = []ds.Resource{{Kind: referenceKind, ID: reference}}

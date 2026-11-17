@@ -167,11 +167,6 @@ func TestPostgresDeletionCollectorsRootGraphs(t *testing.T) {
 			limits := collector.DefaultLimits()
 			limits.PageSize = 1
 			result, err := collectDeletion(t, ctx, db, root, limits)
-			if tc.kind == ds.ResourceRotation {
-				require.Error(t, err)
-				require.Equal(t, ds.DependenciesUnsupported, result.Collection.Completeness)
-				return
-			}
 			require.NoError(t, err)
 			require.Equal(t, ds.DependenciesComplete, result.Collection.Completeness)
 			plan := deletionPlan(t, root, result)

@@ -225,7 +225,11 @@ func TestPostgresDeletionEnforcementNRFailClosed(t *testing.T) {
 		for _, batch := range batches {
 			ok, err := app.Mutation().DeleteAll(ctx, batch, &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: "guessed", AcknowledgeImpacts: true})
 			require.False(t, ok)
-			enforceCode(t, err, ds.DeletionUnavailable)
+			expected := ds.DeletionUnavailable
+			if len(batch) == 1 && root.Type == assignment.TargetTypeRotation {
+				expected = ds.DeletionBlocked // Complete Rotation closure retains its real external blockers.
+			}
+			enforceCode(t, err, expected)
 		}
 	}
 	for _, batch := range [][]assignment.RawTarget{{roots[1], roots[2]}, {roots[3], roots[4]}, {roots[0], roots[5], nrInput(f.nr)[0]}, {roots[4], roots[2]}} {

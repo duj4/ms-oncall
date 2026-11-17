@@ -23,6 +23,10 @@ func validResource(r Resource) bool {
 }
 
 func validConfiguration(c Configuration) bool {
+	if s := c.RotationState; s != nil && (s.Version != 2 || s.ShiftStart.IsZero() ||
+		s.ShiftStart.UTC().Year() < 1 || s.ShiftStart.UTC().Year() > 9999) {
+		return false
+	}
 	if c.Position != nil && *c.Position < 0 {
 		return false
 	}
@@ -73,6 +77,14 @@ func validateDependency(d Dependency) error {
 		if !d.State.SameOwner {
 			return unavailable()
 		}
+	case RelationshipRotationState:
+		if d.Before.RotationState == nil || d.Before.Position == nil ||
+			len(d.Before.References) != 1 || d.Before.References[0].Kind != ResourceRotationParticipant {
+			return unavailable()
+		}
+	}
+	if d.Relationship != RelationshipRotationState && d.Before.RotationState != nil || d.After.RotationState != nil {
+		return unavailable()
 	}
 	return nil
 }
@@ -88,7 +100,7 @@ func validOwnership(d Dependency) bool {
 		parentKind, ownerKind = ResourceSchedule, ResourceSchedule
 	case ResourceFixedShift:
 		parentKind, ownerKind = ResourceTemporarySchedule, ResourceSchedule
-	case ResourceRotationParticipant:
+	case ResourceRotationParticipant, ResourceRotationState:
 		parentKind, ownerKind = ResourceRotation, ResourceRotation
 	case ResourceNotificationRule, ResourceContactMethod:
 		parentKind, ownerKind = ResourceUser, ResourceUser
@@ -104,7 +116,7 @@ func validOwnership(d Dependency) bool {
 	switch d.Relationship {
 	case RelationshipPolicyStep, RelationshipPolicyAction, RelationshipScheduleRule, RelationshipScheduleOverride,
 		RelationshipScheduleTemporary, RelationshipScheduleShift, RelationshipScheduleOnCallRule,
-		RelationshipRotationParticipant, RelationshipServiceIntegrationKey, RelationshipUserContact, RelationshipUserNotificationRule:
+		RelationshipRotationParticipant, RelationshipRotationState, RelationshipServiceIntegrationKey, RelationshipUserContact, RelationshipUserNotificationRule:
 		return d.Owner == d.Target
 	case RelationshipStepAction, RelationshipTemporaryShift:
 		return d.Parent == d.Target
@@ -114,6 +126,7 @@ func validOwnership(d Dependency) bool {
 
 func validIntent(op Operation, c DestructiveChange) bool {
 	if !validResource(c.Resource) || !validConfiguration(c.Before) || !validConfiguration(c.After) ||
+		c.Before.RotationState != nil || c.After.RotationState != nil ||
 		c.Kind < ChangeDeleted || c.Kind > ChangeConfigTrimmed {
 		return false
 	}
@@ -184,5 +197,5 @@ func contextRelationship(op Operation, resource ResourceKind) RelationshipKind {
 }
 
 func emptyConfiguration(c Configuration) bool {
-	return len(c.References) == 0 && c.Position == nil && c.WindowStart.IsZero() && c.WindowEnd.IsZero()
+	return len(c.References) == 0 && c.Position == nil && c.WindowStart.IsZero() && c.WindowEnd.IsZero() && c.RotationState == nil
 }

@@ -151,16 +151,15 @@ func TestPostgresDeletionEnforcementRotationLifecycleBoundary(t *testing.T) {
 		require.NoError(t, app.RotationStore.AddRotationUsersTx(ctx, nil, f.root.String(), users))
 		require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM rotation_state WHERE rotation_id=$1`, f.root))
 		facts, err := collectDeletion(t, ctx, db, rotationProfileRoot(f.root), collector.Limits{})
-		require.Error(t, err)
-		require.Equal(t, ds.DependenciesUnsupported, facts.Collection.Completeness)
-		for _, confirm := range []*graphql2.DeletionSafetyConfirmationInput{nil, {ExpectedImpactVersion: old, AcknowledgeImpacts: true}} {
-			_, err = app.Mutation().DeleteAll(ctx, rotationProfileInput(f.root), confirm)
-			enforceCode(t, err, ds.DeletionUnavailable)
-		}
-		// Whole-batch refusal retains even the independently executable empty root.
+		require.NoError(t, err)
+		require.Equal(t, ds.DependenciesComplete, facts.Collection.Completeness)
+		_, err = app.Mutation().DeleteAll(ctx, rotationProfileInput(f.root), nil)
+		enforceCode(t, err, ds.DeletionConfirmationRequired)
+		_, err = app.Mutation().DeleteAll(ctx, rotationProfileInput(f.root), &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: old, AcknowledgeImpacts: true})
+		enforceCode(t, err, ds.DeletionDependencyChanged)
 		empty := newRotationProfileFixture(t, ctx, db)
 		_, err = app.Mutation().DeleteAll(ctx, rotationProfileInput(empty.root, f.root), nil)
-		enforceCode(t, err, ds.DeletionUnavailable)
+		enforceCode(t, err, ds.DeletionConfirmationRequired)
 		require.Equal(t, 2, enforcementCount(t, ctx, db, `SELECT count(*) FROM rotations WHERE id IN ($1,$2)`, empty.root, f.root))
 		require.Equal(t, count, enforcementCount(t, ctx, db, `SELECT count(*) FROM rotation_participants WHERE rotation_id=$1`, f.root))
 		var ids []string
@@ -186,7 +185,7 @@ func TestPostgresDeletionEnforcementRotationReferenceBlock(t *testing.T) {
 	ctx = permission.SystemContext(ctx, "RotationProfileTest")
 	app := enforcementApp(t, ctx, db)
 	for _, kind := range []string{"rule", "action"} {
-		f := newRotationProfileFixture(t, ctx, db)
+		f := rotationPopulated(t, ctx, db, 5, 2)
 		for range 2 {
 			if kind == "rule" {
 				id := uuid.New()
@@ -243,7 +242,7 @@ func TestPostgresDeletionEnforcementRotationAuditFailure(t *testing.T) {
 func TestPostgresDeletionEnforcementRotationGuardLifecycle(t *testing.T) {
 	ctx, _, db := boundedAuditDB(t, len(Names()))
 	ctx = permission.SystemContext(ctx, "RotationProfileTest")
-	f := newRotationProfileFixture(t, ctx, db)
+	f := rotationPopulated(t, ctx, db, 5, 2)
 	app := enforcementApp(t, ctx, db)
 	version := rotationProfileVersion(t, ctx, db, f.root)
 	raw := rotationProfileSelectors(f.root)
@@ -356,7 +355,7 @@ func TestPostgresDeletionEnforcementRotationAuthorization(t *testing.T) {
 	app := enforcementApp(t, sys, db)
 	for _, role := range []string{"ORG_ADMIN", "ORG_MEMBER", "PLATFORM_ADMIN"} {
 		t.Run(role, func(t *testing.T) {
-			f := newRotationProfileFixture(t, ctx, db)
+			f := rotationPopulated(t, ctx, db, 5, 2)
 			if role == "ORG_MEMBER" {
 				enforcementExec(t, ctx, db, `UPDATE user_organization_assignments SET organization_role='ORG_MEMBER' WHERE user_id=$1`, f.actor)
 			}
@@ -412,7 +411,7 @@ func TestPostgresDeletionEnforcementRotationAuthorization(t *testing.T) {
 func TestPostgresDeletionEnforcementRotationCarrierIsolation(t *testing.T) {
 	ctx, _, db := boundedAuditDB(t, len(Names()))
 	ctx = permission.SystemContext(ctx, "RotationProfileTest")
-	f := newRotationProfileFixture(t, ctx, db)
+	f := rotationPopulated(t, ctx, db, 5, 2)
 	other := newServiceProfileFixture(t, ctx, db)
 	nr := newDeletionFixture(t, ctx, db)
 	app := enforcementApp(t, ctx, db)
@@ -451,7 +450,7 @@ func TestPostgresDeletionEnforcementRotationCarrierIsolation(t *testing.T) {
 func TestPostgresDeletionEnforcementRotationWitnessTamper(t *testing.T) {
 	ctx, _, db := boundedAuditDB(t, len(Names()))
 	ctx = permission.SystemContext(ctx, "RotationProfileTest")
-	f := newRotationProfileFixture(t, ctx, db)
+	f := rotationPopulated(t, ctx, db, 5, 2)
 	version := rotationProfileVersion(t, ctx, db, f.root)
 	for _, change := range []string{`nonce=gen_random_uuid()`, `profile='service-only-v1'`, `xid='foreign'`, `raw_hash=decode('00','hex')`, `effective_hash=decode('00','hex')`} {
 		tx := nrBegin(t, ctx, db)
@@ -484,7 +483,7 @@ func TestPostgresDeletionEnforcementRotationIndependent(t *testing.T) {
 	ctx = permission.SystemContext(ctx, "RotationProfileTest")
 	for _, first := range []string{"writer", "delete"} {
 		for index := 0; index < 9; index++ {
-			f := newRotationProfileFixture(t, ctx, db)
+			f := rotationPopulated(t, ctx, db, 5, 2)
 			other := newDeletionFixture(t, ctx, db)
 			writes := []nrWrite{
 				{name: "organization", query: `UPDATE organizations SET display_name=display_name WHERE id=$1`, args: []any{other.org}},
@@ -555,7 +554,7 @@ func TestPostgresDeletionEnforcementRotationReferenceWriters(t *testing.T) {
 	for _, first := range []string{"delete", "writer"} {
 		for _, kind := range []string{"rule_create", "rule_to", "rule_away", "rule_delete", "rule_reparent", "rule_update", "schedule_scope", "action_create", "action_to", "action_away", "action_delete", "action_reparent", "ep_scope"} {
 			t.Run(first+"_"+kind, func(t *testing.T) {
-				f := newRotationProfileFixture(t, ctx, db)
+				f := rotationPopulated(t, ctx, db, 5, 2)
 				app := enforcementApp(t, ctx, db)
 				rules, err := rule.NewStore(ctx, db)
 				require.NoError(t, err)
@@ -729,8 +728,8 @@ func TestPostgresDeletionEnforcementRotationStateWriters(t *testing.T) {
 					checked, _, err := guard.StabilizeRotation(ctx, tx, rotationProfileSelectors(f.root))
 					require.NoError(t, err)
 					facts, err := collector.Collect(checked, tx, rotationProfileRoot(f.root), collector.Recheck, collector.Limits{}, authorizeDeletionFixture(rotationProfileRoot(f.root)))
-					require.Error(t, err)
-					require.Equal(t, ds.DependenciesUnsupported, facts.Collection.Completeness)
+					require.NoError(t, err)
+					require.Equal(t, ds.DependenciesComplete, facts.Collection.Completeness)
 					done := serviceProfileWait(t, ctx, db, writer, run)
 					require.NoError(t, tx.Rollback())
 					require.NoError(t, <-done)
@@ -738,7 +737,7 @@ func TestPostgresDeletionEnforcementRotationStateWriters(t *testing.T) {
 				}
 				tx := nrBegin(t, ctx, db)
 				_, err = collector.Enforce(ctx, tx, rotationProfileSelectors(f.root), "", false, authorizeDeletionFixture(rotationProfileRoot(f.root)))
-				enforceCode(t, err, ds.DeletionUnavailable)
+				enforceCode(t, err, ds.DeletionConfirmationRequired)
 				require.NoError(t, tx.Rollback())
 				require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM rotations WHERE id=$1`, f.root))
 				require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM users WHERE id=$1`, f.user))
@@ -756,7 +755,7 @@ func TestPostgresDeletionEnforcementRotationMissingWindow(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		for _, existing := range []bool{false, true} {
 			t.Run(fmt.Sprintf("legacy=%v/existing=%v", legacy, existing), func(t *testing.T) {
-				f := newRotationProfileFixture(t, ctx, db)
+				f := rotationPopulated(t, ctx, db, 5, 2)
 				missing := uuid.New()
 				ids := []uuid.UUID{missing}
 				version := ""
@@ -797,7 +796,7 @@ func TestPostgresDeletionEnforcementRotationControllerMissingWindow(t *testing.T
 	ctx, uri, db := boundedAuditDB(t, len(Names()))
 	sys := permission.SystemContext(ctx, "RotationProfileTest")
 	for _, existing := range []bool{false, true} {
-		f, other := newRotationProfileFixture(t, sys, db), newRotationProfileFixture(t, sys, db)
+		f, other := rotationPopulated(t, sys, db, 5, 2), newRotationProfileFixture(t, sys, db)
 		enforcementExec(t, ctx, db, `UPDATE users SET role='admin' WHERE id=$1`, f.actor)
 		human := previewAdmit(t, ctx, db, f.actor)
 		conf, err := pgx.ParseConfig(uri)
@@ -860,7 +859,7 @@ func TestPostgresDeletionEnforcementRotationTableProtocol(t *testing.T) {
 	ctx = permission.SystemContext(ctx, "RotationProfileTest")
 	app := enforcementApp(t, ctx, db)
 	for _, table := range []string{"rotation_participants", "rotation_state"} {
-		f := newRotationProfileFixture(t, ctx, db)
+		f := rotationPopulated(t, ctx, db, 5, 2)
 		writer := epProfileWriter(t, ctx, db)
 		_, err := writer.ExecContext(ctx, `LOCK TABLE `+table+` IN ROW EXCLUSIVE MODE`)
 		require.NoError(t, err)
@@ -887,7 +886,7 @@ func TestPostgresDeletionEnforcementRotationTableProtocol(t *testing.T) {
 	}
 	// A reverse writer holds the root, then waits for the two-table protocol.
 	// Native deletion rejects that root NOWAIT and releases its early tables.
-	f := newRotationProfileFixture(t, ctx, db)
+	f := rotationPopulated(t, ctx, db, 5, 2)
 	writer := epProfileWriter(t, ctx, db)
 	_, err := writer.ExecContext(ctx, `UPDATE rotations SET name=name WHERE id=$1`, f.root)
 	require.NoError(t, err)
@@ -996,7 +995,7 @@ func TestPostgresDeletionEnforcementRotationScope(t *testing.T) {
 func TestPostgresDeletionEnforcementRotationStoreBypass(t *testing.T) {
 	ctx, _, db := boundedAuditDB(t, len(Names()))
 	ctx = permission.SystemContext(ctx, "RotationProfileTest")
-	f := newRotationProfileFixture(t, ctx, db)
+	f := rotationPopulated(t, ctx, db, 5, 2)
 	app := enforcementApp(t, ctx, db)
 	for _, audited := range []bool{false, true} {
 		tx := nrBegin(t, ctx, db)

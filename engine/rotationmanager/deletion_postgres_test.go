@@ -3,6 +3,7 @@ package rotationmanager
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/url"
@@ -18,12 +19,16 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/stretchr/testify/require"
+	"github.com/target/goalert/assignment"
 	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/deletionsafety/postgres"
+	"github.com/target/goalert/graphql2"
+	"github.com/target/goalert/graphql2/graphqlapp"
 	guard "github.com/target/goalert/internal/deletionguard"
 	"github.com/target/goalert/migrate"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
+	sraudit "github.com/target/goalert/schedule/deleteaudit"
 	"github.com/target/goalert/schedule/rotation"
 )
 
@@ -94,7 +99,7 @@ func TestPostgresDeletionEnforcementRotationManager(t *testing.T) {
 			}{
 				{`INSERT INTO organizations(id,canonical_name,display_name,classification) VALUES($1,($1::uuid)::text,'synthetic','NORMAL')`, []any{org}},
 				{`INSERT INTO normal_organizations(organization_id,corporate_mapping_key,iana_time_zone) VALUES($1,($1::uuid)::text,'UTC')`, []any{org}},
-				{`INSERT INTO users(id,name) VALUES($1,'synthetic')`, []any{user}},
+				{`INSERT INTO users(id,name,role) VALUES($1,'synthetic','user')`, []any{user}},
 			} {
 				_, err := db.ExecContext(ctx, q.s, q.a...)
 				require.NoError(t, err)
@@ -129,8 +134,8 @@ func TestPostgresDeletionEnforcementRotationManager(t *testing.T) {
 				checked, _, err := guard.StabilizeRotation(ctx, tx, raw)
 				require.NoError(t, err)
 				facts, err := collector.Collect(checked, tx, ds.Resource{Kind: ds.ResourceRotation, ID: root.ID}, collector.Recheck, collector.Limits{}, func(context.Context, *sql.Tx, collector.Target) error { return nil })
-				require.Error(t, err)
-				require.Equal(t, ds.DependenciesUnsupported, facts.Collection.Completeness)
+				require.NoError(t, err)
+				require.Equal(t, ds.DependenciesComplete, facts.Collection.Completeness)
 			}
 			done := make(chan error, 1)
 			go func() { done <- manager.updateRotation(ctx, &river.Job[UpdateArgs]{Args: UpdateArgs{RotationID: id}}) }()
@@ -169,6 +174,137 @@ func TestPostgresDeletionEnforcementRotationManager(t *testing.T) {
 			require.Equal(t, 1, roots)
 			require.Equal(t, 2, parts)
 			require.Equal(t, 1, states)
+			deletionManagerCommit(t, ctx, uri, db, id, user, first)
 		})
 	}
+}
+
+type deletionCertifiedKey struct{}
+type deletionCertifiedBarrier struct{ deletionStateBarrier }
+
+func (b *deletionCertifiedBarrier) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
+	return context.WithValue(ctx, deletionCertifiedKey{}, strings.Contains(d.SQL, "VALUES($1,'certified'"))
+}
+func (b *deletionCertifiedBarrier) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryEndData) {
+	if d.Err == nil && ctx.Value(deletionCertifiedKey{}) == true {
+		b.once.Do(func() {
+			close(b.arrived)
+			select {
+			case <-b.resume:
+			case <-ctx.Done():
+			}
+		})
+	}
+}
+
+// After the original rollback/lock proof, run the actual controller to Commit
+// against the real engine in both orders, and inspect persisted business/audit.
+func deletionManagerCommit(t *testing.T, ctx context.Context, uri string, db *sql.DB, root, user uuid.UUID, first string) {
+	t.Helper()
+	_, err := db.ExecContext(ctx, `UPDATE rotation_state SET shift_start=now()-interval '48 hours' WHERE rotation_id=$1`, root)
+	require.NoError(t, err)
+	engineBarrier := &deletionStateBarrier{arrived: make(chan struct{}), resume: make(chan struct{}), pid: make(chan uint32, 1), pause: first == "engine"}
+	conf, err := pgx.ParseConfig(uri)
+	require.NoError(t, err)
+	conf.Tracer = engineBarrier
+	engineDB := stdlib.OpenDB(*conf)
+	defer engineDB.Close()
+	client, err := river.NewClient(riverdatabasesql.New(engineDB), &river.Config{PollOnly: true, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	require.NoError(t, err)
+	manager, err := NewDB(ctx, engineDB, client)
+	require.NoError(t, err)
+	cert := &deletionCertifiedBarrier{deletionStateBarrier: deletionStateBarrier{arrived: make(chan struct{}), resume: make(chan struct{})}}
+	conf, err = pgx.ParseConfig(uri)
+	require.NoError(t, err)
+	if first == "delete" {
+		conf.Tracer = cert
+	}
+	deleteDB := stdlib.OpenDB(*conf)
+	defer deleteDB.Close()
+	store, err := rotation.NewStore(ctx, deleteDB)
+	require.NoError(t, err)
+	app := &graphqlapp.App{DB: deleteDB, RotationStore: store}
+	version := func() string {
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback() }()
+		r := ds.Resource{Kind: ds.ResourceRotation, ID: root.String()}
+		facts, err := collector.Collect(ctx, tx, r, collector.Preview, collector.Limits{}, func(context.Context, *sql.Tx, collector.Target) error { return nil })
+		require.NoError(t, err)
+		plan, err := ds.BuildPlan(ds.PlanInput{Operation: ds.OperationDeleteResources, Targets: []ds.Resource{r}, Intent: []ds.DestructiveChange{{Resource: r, Kind: ds.ChangeDeleted}}, Collection: facts.Collection, ScopeFingerprint: facts.ScopeFingerprint}, ds.Budget{})
+		require.NoError(t, err)
+		return plan.ImpactVersion()
+	}
+	confirm := &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: version(), AcknowledgeImpacts: true}
+	input := []assignment.RawTarget{{Type: assignment.TargetTypeRotation, ID: root.String()}}
+	engineDone := make(chan error, 1)
+	runEngine := func() {
+		go func() {
+			engineDone <- manager.updateRotation(ctx, &river.Job[UpdateArgs]{Args: UpdateArgs{RotationID: root}})
+		}()
+	}
+	if first == "engine" {
+		runEngine()
+		select {
+		case <-engineBarrier.arrived:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		_, err = app.Mutation().DeleteAll(ctx, input, confirm)
+		var safe *ds.DeletionSafetyError
+		require.ErrorAs(t, err, &safe)
+		require.Equal(t, ds.DeletionUnavailable, safe.Code)
+		close(engineBarrier.resume)
+		require.NoError(t, <-engineDone)
+		_, err = app.Mutation().DeleteAll(ctx, input, confirm)
+		require.ErrorAs(t, err, &safe)
+		require.Equal(t, ds.DeletionDependencyChanged, safe.Code)
+		confirm.ExpectedImpactVersion = version()
+	}
+	var before sraudit.RotationState
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT id,rotation_participant_id,position,version,shift_start FROM rotation_state WHERE rotation_id=$1`, root).Scan(&before.ID, &before.ParticipantID, &before.Position, &before.Version, &before.ShiftStart))
+	deleted := make(chan error, 1)
+	go func() { _, err := app.Mutation().DeleteAll(ctx, input, confirm); deleted <- err }()
+	if first == "delete" {
+		select {
+		case <-cert.arrived:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		runEngine()
+		var pid uint32
+		select {
+		case pid = <-engineBarrier.pid:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		for {
+			var blocked bool
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT cardinality(pg_blocking_pids($1))>0`, pid).Scan(&blocked))
+			if blocked {
+				break
+			}
+			require.NoError(t, ctx.Err())
+		}
+		close(cert.resume)
+	}
+	require.NoError(t, <-deleted)
+	if first == "delete" {
+		require.NoError(t, <-engineDone)
+	}
+	var roots, parts, states, users, events int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM rotations WHERE id=$1),(SELECT count(*) FROM rotation_participants WHERE rotation_id=$1),(SELECT count(*) FROM rotation_state WHERE rotation_id=$1),(SELECT count(*) FROM users WHERE id=$2),(SELECT count(*) FROM schedule_rotation_delete_audit_events WHERE root_id=$1 AND outcome='committed')`, root, user).Scan(&roots, &parts, &states, &users, &events))
+	require.Zero(t, roots)
+	require.Zero(t, parts)
+	require.Zero(t, states)
+	require.Equal(t, 1, users)
+	require.Equal(t, 1, events)
+	var raw, snapshot []byte
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT before_state,effects FROM schedule_rotation_delete_audit_events WHERE root_id=$1 AND outcome='committed'`, root).Scan(&snapshot, &raw))
+	var actual sraudit.RotationState
+	var effects []sraudit.Effect
+	require.NoError(t, json.Unmarshal(snapshot, &actual))
+	require.Equal(t, before, actual)
+	require.NoError(t, json.Unmarshal(raw, &effects))
+	require.Len(t, effects, 2)
 }

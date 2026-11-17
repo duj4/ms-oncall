@@ -3,7 +3,7 @@ package deletionsafety
 import "time"
 
 // PolicyVersion changes whenever the frozen policy or its interpretation changes.
-const PolicyVersion = "deletion-safety-spec1-v1"
+const PolicyVersion = "deletion-safety-spec1-v2"
 
 type ResourceKind uint8
 
@@ -221,6 +221,15 @@ type Configuration struct {
 	References             []Resource
 	Position               *int
 	WindowStart, WindowEnd time.Time
+	RotationState          *RotationRuntime `json:",omitempty"`
+}
+
+// RotationRuntime is the safe runtime projection of a Rotation-owned State.
+// Its row identity, current Participant and position live on the same dependency.
+// It is not an interval, a collection timestamp, or an additional audit event.
+type RotationRuntime struct {
+	ShiftStart time.Time
+	Version    int
 }
 
 type DestructiveChange struct {

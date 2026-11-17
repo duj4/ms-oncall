@@ -16,6 +16,12 @@ func dep(target, ref Resource, rel RelationshipKind, parent, owner Resource) Dep
 		RelationshipScheduleOverride, RelationshipScheduleTemporary, RelationshipScheduleShift, RelationshipTemporaryShift:
 		d.Before.WindowStart = time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 		d.Before.WindowEnd = d.Before.WindowStart.Add(time.Hour)
+	case RelationshipRotationState:
+		d.Parent, d.Owner = target, target
+		position := 0
+		d.Before.Position = &position
+		d.Before.References = []Resource{obj(ResourceRotationParticipant, "current")}
+		d.Before.RotationState = &RotationRuntime{ShiftStart: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), Version: 2}
 	case RelationshipExecutionState, RelationshipUserCycle, RelationshipChangedServicePolicy:
 		d.Before.References = []Resource{obj(ResourceAlert, "related-alert")}
 	}
@@ -66,7 +72,7 @@ func TestPolicyResourceBoundaries(t *testing.T) {
 		{"user referenced by rule", dep(user, scheduleRule, RelationshipRuleTarget, schedule, schedule), PolicyBlock},
 		{"rotation owns participant", dep(rotation, participant, RelationshipRotationParticipant, rotation, rotation), PolicyCascade},
 		{"user referenced by participant", dep(user, participant, RelationshipParticipantUser, rotation, rotation), PolicyBlock},
-		{"rotation runtime state", dep(rotation, obj(ResourceRotationState, "state"), RelationshipRotationState, Resource{}, Resource{}), PolicyInformational},
+		{"rotation runtime state", dep(rotation, obj(ResourceRotationState, "state"), RelationshipRotationState, rotation, rotation), PolicyCascade},
 		{"policy favorite", dep(policy, obj(ResourceFavorite, "favorite"), RelationshipFavorite, Resource{}, Resource{}), PolicyInformational},
 		{"service retains policy", dep(service, policy, RelationshipRetainedPolicy, Resource{}, Resource{}), PolicyInformational},
 	}
