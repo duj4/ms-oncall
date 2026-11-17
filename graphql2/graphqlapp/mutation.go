@@ -521,21 +521,9 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		}
 	}
 
-	// Resolve Rotation before Schedule to retain the existing table/root lock
-	// order. These are independent group scopes, never a shared global scope.
+	// Native enforcement already stabilized both profiles before this point.
+	// Resolve scopes from their certified existing subsets in the original group order.
 	rootScopes := make(map[assignment.TargetType]*uuid.UUID)
-	for _, typ := range []assignment.TargetType{assignment.TargetTypeRotation, assignment.TargetTypeSchedule} {
-		if len(m[typ]) == 0 || typ == assignment.TargetTypeSchedule {
-			continue
-		}
-		rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, m[typ])
-		if err != nil {
-			return err
-		}
-	}
-	if err := validateScheduleRotationDeleteTx(ctx, tx, m, rootScopes[assignment.TargetTypeRotation], rootScopes[assignment.TargetTypeSchedule]); err != nil {
-		return err
-	}
 
 	order := []assignment.TargetType{
 		assignment.TargetTypeRotation,
@@ -664,11 +652,21 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeCalendarSubscription:
 			err = errors.Wrap(a.CalSubStore.DeleteTx(ctx, tx, permission.UserID(ctx), ids...), "delete calendar subscriptions")
 		case assignment.TargetTypeRotation:
-			if audit == nil {
-				err = a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
-			} else {
-				err = audit.captureSR(ctx, sraudit.Rotation, ids, rootScopes[typ])
-				if err == nil {
+			var existing []string
+			existing, err = guard.RotationTargets(ctx, tx, ids)
+			if err == nil && len(existing) > 0 {
+				rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, existing)
+			}
+			if err == nil {
+				err = validateScheduleRotationDeleteTx(ctx, tx, map[assignment.TargetType][]string{typ: existing}, rootScopes[typ], nil)
+			}
+			if err == nil && audit != nil {
+				err = audit.captureSR(ctx, sraudit.Rotation, existing, rootScopes[typ])
+			}
+			if err == nil {
+				if audit == nil {
+					err = a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
+				} else {
 					var receipts []sraudit.Receipt
 					receipts, err = a.RotationStore.DeleteManyForAuditTx(ctx, tx, ids, rootScopes[typ])
 					if err == nil {

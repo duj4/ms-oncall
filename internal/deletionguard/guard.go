@@ -27,6 +27,7 @@ const cmProfile = "contact-method-only-v1"
 const serviceProfile = "service-only-v1"
 const epProfile = "escalation-policy-only-v1"
 const scheduleProfile = "schedule-only-v1"
+const rotationProfile = "rotation-only-v1"
 
 type stabilityKey struct{}
 type enforcementKey struct{}
@@ -150,6 +151,15 @@ func StableSchedule(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
 	return s != nil && s.kind == root.Kind && s.profile == scheduleProfile && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
 }
 
+// StableRotation admits only existing Rotation roots under the native protocol.
+func StableRotation(ctx context.Context, tx *sql.Tx, root ds.Resource) bool {
+	if ctx == nil || root.Kind != ds.ResourceRotation {
+		return false
+	}
+	s, _ := ctx.Value(stabilityKey{}).(*stability)
+	return s != nil && s.kind == root.Kind && s.profile == rotationProfile && slices.Contains(s.targets, root) && s.witness(ctx, tx, "locked")
+}
+
 // Bind is called by the trusted enforcer after fresh authorization, collection
 // and policy/version checks under the stable set. base keeps the request's
 // cancellation; checked carries the bounded recheck context and checkpoint.
@@ -220,6 +230,16 @@ func ConsumeSchedule(ctx context.Context, tx *sql.Tx, ids []string) ([]string, e
 	return consume(ctx, tx, ds.ResourceSchedule, ids)
 }
 
+// ConsumeRotation grants no independent Participant or User deletion capability.
+func ConsumeRotation(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return consume(ctx, tx, ds.ResourceRotation, ids)
+}
+
+// RotationTargets keeps scope and audit capture on the certified existing subset.
+func RotationTargets(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	return certifiedTargets(ctx, tx, ds.ResourceRotation, ids, false)
+}
+
 // ScheduleTargets keeps scope and D09 capture on that same existing subset.
 func ScheduleTargets(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
 	return certifiedTargets(ctx, tx, ds.ResourceSchedule, ids, false)
@@ -255,7 +275,7 @@ func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string
 }
 
 func certifiedTargets(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string, consumeSelection bool) ([]string, error) {
-	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule) {
+	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule && kind != ds.ResourceRotation) {
 		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)

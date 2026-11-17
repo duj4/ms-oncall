@@ -91,3 +91,16 @@ func TestScheduleStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, StableSchedule(ctx, tx, ds.Resource{Kind: ds.ResourceSchedule, ID: "00000000-0000-4000-8000-000000000001"}))
 }
+
+func TestRotationStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
+	ctx, tx := context.Background(), new(sql.Tx)
+	for _, raw := range [][]Selector{{{Kind: ds.ResourceSchedule, ID: "00000000-0000-4000-8000-000000000001"}}, {{Kind: ds.ResourceRotation, ID: "invalid"}}, make([]Selector, 51)} {
+		_, _, err := StabilizeRotation(ctx, tx, raw)
+		require.Error(t, err)
+	}
+	_, err := ConsumeRotation(ctx, tx, []string{"00000000-0000-4000-8000-000000000001"})
+	require.Error(t, err)
+	_, err = RotationTargets(ctx, tx, []string{"00000000-0000-4000-8000-000000000001"})
+	require.Error(t, err)
+	require.False(t, StableRotation(ctx, tx, ds.Resource{Kind: ds.ResourceRotation, ID: "00000000-0000-4000-8000-000000000001"}))
+}

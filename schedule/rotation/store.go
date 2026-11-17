@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"sort"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/google/uuid"
@@ -475,7 +474,7 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 	if err != nil {
 		return err
 	}
-	parsedIDs, err := validate.ParseManyUUID("RotationID", ids, 50)
+	_, err = validate.ParseManyUUID("RotationID", ids, 50)
 	if err != nil {
 		return err
 	}
@@ -487,7 +486,15 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 		return validation.NewFieldError("OrganizationID", "must be specified")
 	}
 
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceRotation, ids); err != nil {
+	ids, err = collector.ConsumeRotation(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	parsedIDs, err := validate.ParseManyUUID("RotationID", ids, 50)
+	if err != nil {
 		return err
 	}
 	want := make(map[uuid.UUID]struct{}, len(parsedIDs))

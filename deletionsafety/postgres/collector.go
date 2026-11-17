@@ -133,7 +133,7 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	if err := c.queryRow(`SELECT current_setting('transaction_read_only'), current_setting('transaction_isolation'), statement_timestamp()`).Scan(&readOnly, &isolation, &c.result.ObservedAt); err != nil {
 		return bad, safeError(err)
 	}
-	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root))
+	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root) || guard.StableRotation(ctx, tx, root))
 	if purpose == Preview && readOnly != "on" || !stable && isolation != "repeatable read" && isolation != "serializable" {
 		return bad, unavailable()
 	}
