@@ -86,7 +86,7 @@ func TestPostgresDeletionEnforcementRotationManager(t *testing.T) {
 	uri := parsed.String()
 	n, err := migrate.Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 306, n)
+	require.Equal(t, len(migrate.Names()), n)
 	db, err := sql.Open("pgx", uri)
 	require.NoError(t, err)
 	defer db.Close()

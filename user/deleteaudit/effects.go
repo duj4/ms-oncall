@@ -12,8 +12,8 @@ import (
 )
 
 // Projection lists every permitted snapshot field, its scalar type, and the
-// original primary/unique identity. Uppercase scalar kinds are nullable.
-// No profile, destination, authentication subject, or credential is selected.
+// identity under its frozen contract. Uppercase scalar kinds are nullable.
+// Historical Session v1 retains its frozen locator field for reads only.
 type Projection struct {
 	Key    string
 	Fields map[string]string
@@ -36,6 +36,27 @@ var projections = map[string]Projection{
 	"user_session":                 {"id", map[string]string{"id": "u", "user_id": "u", "row_version": "x"}},
 	"basic_auth_link":              {"user_id", map[string]string{"user_id": "u", "id": "i", "row_version": "x"}},
 	"user_status_contact_setting":  {"user_id", map[string]string{"user_id": "u", "contact_method_id": "U", "row_version": "x"}},
+}
+
+// Unversioned Session snapshots are historical v1 physical identities. Only
+// Session snapshots have a v2 contract; other resources retain their projection.
+var sessionV2 = Projection{"audit_resource_id", map[string]string{"version": "2", "audit_resource_id": "u", "user_id": "u", "row_version": "x"}}
+
+func effectProjection(typ string, raw json.RawMessage) (Projection, bool) {
+	p, ok := projections[typ]
+	if typ == "user_session" {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil {
+			return Projection{}, false
+		}
+		if version, exists := fields["version"]; exists {
+			if !bytes.Equal(version, []byte("2")) {
+				return Projection{}, false
+			}
+			return sessionV2, true
+		}
+	}
+	return p, ok
 }
 
 type Effect struct {
@@ -62,6 +83,8 @@ func scalar(raw json.RawMessage, kind string) bool {
 		return kind == "U" || kind == "I" || kind == "T"
 	}
 	switch kind {
+	case "2":
+		return bytes.Equal(raw, []byte("2"))
 	case "u", "U":
 		var s string
 		if json.Unmarshal(raw, &s) != nil {
@@ -125,7 +148,7 @@ func snapshot(raw json.RawMessage, p Projection) (map[string]json.RawMessage, er
 }
 
 func (e Effect) Validate(root uuid.UUID) error {
-	p, ok := projections[e.ResourceType]
+	p, ok := effectProjection(e.ResourceType, e.Before)
 	if !ok || e.EffectID == uuid.Nil || root == uuid.Nil || e.TriggerUserID != root || !ValidOrganization(e.TargetOrganizationID, e.OrgResolution) || e.TransitionSlot != "row" {
 		return ErrInvalid
 	}
@@ -243,10 +266,23 @@ func DecodeEffect(raw []byte) (Effect, error) {
 
 var clockTime = regexp.MustCompile(`^(([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,6})?|24:00:00(\.0{1,6})?)$`)
 
-// ValidateSnapshot proves a closed, exact original identity before an explicit
-// CMNR target can be excluded from User's implicit effect collection.
+// ValidateForWrite keeps historical decoding separate from new admission.
+// Database admission additionally requires the transaction's real row binding.
+func (e Effect) ValidateForWrite(root uuid.UUID) error {
+	if err := e.Validate(root); err != nil {
+		return err
+	}
+	p, _ := effectProjection(e.ResourceType, e.Before)
+	if e.ResourceType == "user_session" && p.Key != sessionV2.Key {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// ValidateSnapshot reads both frozen Session contracts. It does not establish
+// that an arbitrary UUID belongs to a live Session; CaptureSessions does that.
 func ValidateSnapshot(typ, key string, raw json.RawMessage) error {
-	p, ok := projections[typ]
+	p, ok := effectProjection(typ, raw)
 	if !ok {
 		return ErrInvalid
 	}

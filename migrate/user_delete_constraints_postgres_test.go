@@ -34,7 +34,7 @@ func TestPostgresUserDeleteV1AndCauseConstraints(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT to_jsonb(e)::text,xmin::text FROM user_cmnr_delete_audit_events e WHERE event_id=$1`, legacy.EventID).Scan(&before, &xmin))
 	n, err := Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Equal(t, len(Names())-301, n)
 	var after, afterXmin string
 	require.NoError(t, db.QueryRow(`SELECT (to_jsonb(e)-'cause_root_type'-'cause_root_id'-'user_cause_witness')::text,xmin::text FROM user_cmnr_delete_audit_events e WHERE event_id=$1`, legacy.EventID).Scan(&after, &afterXmin))
 	require.JSONEq(t, before, after)

@@ -117,8 +117,8 @@ func TestPostgresDeletionUserPhaseASessionIdentityContract(t *testing.T) {
 			require.True(t, d.Referencing.ID != token.ID.String())
 		}
 	}
-	require.True(t, found, "Preview uses the SD9 safe identity; SD8 capture still selects the physical id")
-	t.Log("CONFIRMED: SD8 physical session-id projection and SD9 safe Preview identity differ; no User deletion or audit write attempted")
+	require.True(t, found, "Preview uses the SD9 safe identity; historical v1 keeps its physical-id meaning")
+	t.Log("CONFIRMED: historical SD8 v1 physical-id projection and SD9 safe identity remain distinct; v2 capture is tested separately")
 }
 
 func TestPostgresDeletionUserPhaseAFailClosed(t *testing.T) {

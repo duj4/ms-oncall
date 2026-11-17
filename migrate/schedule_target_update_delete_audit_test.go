@@ -13,7 +13,7 @@ import (
 func TestScheduleTargetUpdateDeleteAudit306CanonicalAppend(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 306)
+	require.GreaterOrEqual(t, len(h.entries), 306)
 	e := h.entries[305]
 	require.Equal(t, "20261115004448-schedule-target-update-delete-audit-v2.sql", e.ID)
 	require.Equal(t, int64(306), e.Position)
