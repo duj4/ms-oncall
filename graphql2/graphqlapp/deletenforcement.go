@@ -32,6 +32,18 @@ var deleteTargetKinds = map[assignment.TargetType]ds.ResourceKind{
 }
 
 func enforceDeleteAll(ctx context.Context, tx *sql.Tx, input []assignment.RawTarget, confirmation *graphql2.DeletionSafetyConfirmationInput) (context.Context, error) {
+	// Selected Session revocation predates Deletion Safety. Keep its SD9
+	// authorization, DELETE RETURNING receipt and audit on the existing shared
+	// transaction; Sessions are not a general Deletion Safety root profile.
+	if len(input) > 0 && input[0].TargetType() == assignment.TargetTypeUserSession {
+		for _, raw := range input {
+			if raw.TargetType() != assignment.TargetTypeUserSession {
+				return ctx, previewUnavailable()
+			}
+		}
+		return ctx, nil
+	}
+
 	var selectors []collector.Selector
 	for _, raw := range input {
 		kind, ok := deleteTargetKinds[raw.TargetType()]

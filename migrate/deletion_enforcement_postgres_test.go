@@ -219,7 +219,8 @@ func TestPostgresDeletionEnforcementNRFailClosed(t *testing.T) {
 	before := deletionSnapshot(t, ctx, db)
 	for _, root := range roots {
 		batches := [][]assignment.RawTarget{append(nrInput(f.nr), root)}
-		if root.Type != assignment.TargetTypeContactMethod && root.Type != assignment.TargetTypeService && root.Type != assignment.TargetTypeEscalationPolicy {
+		// Pure Session revocation uses SD9; the NR + Session batch stays rejected.
+		if root.Type != assignment.TargetTypeContactMethod && root.Type != assignment.TargetTypeService && root.Type != assignment.TargetTypeEscalationPolicy && root.Type != assignment.TargetTypeUserSession {
 			batches = append(batches, []assignment.RawTarget{root})
 		}
 		for _, batch := range batches {
