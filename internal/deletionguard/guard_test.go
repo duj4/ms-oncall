@@ -104,3 +104,15 @@ func TestRotationStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, StableRotation(ctx, tx, ds.Resource{Kind: ds.ResourceRotation, ID: "00000000-0000-4000-8000-000000000001"}))
 }
+
+func TestUserOverrideStabilityRejectsOtherRootsAndRawOverflow(t *testing.T) {
+	ctx, tx := context.Background(), new(sql.Tx)
+	for _, raw := range [][]Selector{{{Kind: ds.ResourceSchedule, ID: "00000000-0000-4000-8000-000000000001"}}, {{Kind: ds.ResourceUserOverride, ID: "invalid"}}, make([]Selector, 51)} {
+		_, _, err := StabilizeUserOverride(ctx, tx, raw)
+		require.Error(t, err)
+	}
+	_, err := ConsumeUserOverride(ctx, tx, []string{"00000000-0000-4000-8000-000000000001"})
+	require.Error(t, err)
+	_, ok := UserOverrideObservation(ctx, tx, ds.Resource{Kind: ds.ResourceUserOverride, ID: "00000000-0000-4000-8000-000000000001"})
+	require.False(t, ok)
+}

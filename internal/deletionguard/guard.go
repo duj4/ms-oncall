@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 	"weak"
 
 	"github.com/google/uuid"
@@ -28,6 +29,7 @@ const serviceProfile = "service-only-v1"
 const epProfile = "escalation-policy-only-v1"
 const scheduleProfile = "schedule-only-v1"
 const rotationProfile = "rotation-only-v1"
+const overrideProfile = "user-override-only-v1"
 
 type stabilityKey struct{}
 type enforcementKey struct{}
@@ -66,6 +68,7 @@ type stability struct {
 	generation             uint64
 	rawHash, effectiveHash [32]byte
 	targets                []ds.Resource
+	observedAt             time.Time
 }
 type enforcementGuard struct {
 	mu        sync.Mutex
@@ -275,7 +278,7 @@ func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string
 }
 
 func certifiedTargets(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string, consumeSelection bool) ([]string, error) {
-	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule && kind != ds.ResourceRotation) {
+	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule && kind != ds.ResourceRotation && kind != ds.ResourceUserOverride) {
 		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)

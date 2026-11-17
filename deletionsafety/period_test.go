@@ -48,3 +48,37 @@ func TestConditionalFactsNeedSafeIntervalsAndAlertIdentity(t *testing.T) {
 	_, err = BuildPlan(inputFor([]Resource{user}, add, remove), Budget{})
 	requireCode(t, err, DeletionUnavailable)
 }
+
+func TestUserOverrideRootFrozenLifecycle(t *testing.T) {
+	root, schedule := obj(ResourceUserOverride, "override"), obj(ResourceSchedule, "schedule")
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	for _, tc := range []struct {
+		at     time.Time
+		period PeriodState
+		policy DeletionPolicy
+	}{
+		{start.Add(-time.Nanosecond), PeriodFuture, PolicyWarning},
+		{start, PeriodActive, PolicyWarning},
+		{end.Add(-time.Nanosecond), PeriodActive, PolicyWarning},
+		{end, PeriodEnded, PolicyInformational},
+	} {
+		d := dep(root, schedule, RelationshipOverrideCoverage, Resource{}, Resource{})
+		d.Before.WindowStart, d.Before.WindowEnd = start, end
+		var err error
+		d.State.Period, err = ClassifyPeriod(start, end, tc.at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.State.Period != tc.period {
+			t.Fatalf("period %v", d.State.Period)
+		}
+		decision, err := Evaluate(EvaluationInput{Dependency: d})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decision.Policy != tc.policy || !decision.CanProceed || decision.Affected != root || decision.RequiresConfirmation != (tc.policy == PolicyWarning) {
+			t.Fatalf("unexpected decision: %+v", decision)
+		}
+	}
+}

@@ -15,7 +15,11 @@
 // from a client request. Ordinary Human reads remain within their Normal Home;
 // unsupported principal modes fail closed rather than gaining global access.
 //
-// Every collection uses one server statement_timestamp observation, keyset
+// Every collection uses one server statement_timestamp observation. Native
+// UserOverride rechecks share one post-lock database observation across the
+// entire batch; locks stabilize rows, never the passage of time. Preview uses
+// its own observation and a changed lifecycle invalidates its ImpactVersion.
+// Collection uses keyset
 // pages, typed/indexable FK predicates, per-kind batched identity resolution,
 // and raw pre-deduplication budgets. Checked coverage includes every object
 // actually admitted to the frozen policy's removal closure. Empty final pages,

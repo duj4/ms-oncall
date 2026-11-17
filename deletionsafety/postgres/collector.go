@@ -137,7 +137,11 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	if err := c.queryRow(`SELECT current_setting('transaction_read_only'), current_setting('transaction_isolation'), statement_timestamp()`).Scan(&readOnly, &isolation, &c.result.ObservedAt); err != nil {
 		return bad, safeError(err)
 	}
-	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root) || guard.StableRotation(ctx, tx, root))
+	overrideObservation, overrideStable := guard.UserOverrideObservation(ctx, tx, root)
+	if purpose == Recheck && overrideStable {
+		c.result.ObservedAt = overrideObservation
+	}
+	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root) || guard.StableRotation(ctx, tx, root) || overrideStable)
 	if purpose == Preview && readOnly != "on" || !stable && isolation != "repeatable read" && isolation != "serializable" {
 		return bad, unavailable()
 	}
@@ -178,6 +182,11 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	}
 	if err := authorize(ctx, tx, target); err != nil {
 		return bad, unavailable()
+	}
+	if root.Kind == ds.ResourceUserOverride {
+		if err := c.validateUserOverrides([]string{root.ID}); err != nil {
+			return bad, safeError(err)
+		}
 	}
 	// Even a global System read must resolve a real Organization, rather than
 	// defaulting an orphaned owner into an invented scope.
