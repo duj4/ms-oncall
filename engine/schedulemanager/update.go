@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/target/goalert/gadb"
+	"github.com/target/goalert/internal/scheduledataref"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rule"
@@ -66,6 +69,20 @@ func (db *DB) update(ctx context.Context) error {
 		return errors.Wrap(err, "start transaction")
 	}
 	defer sqlutil.Rollback(ctx, "schedule manager", tx)
+	committed := false
+	defer func() {
+		if !committed {
+			// Migration progress is transaction-owned too. A late reference-lock
+			// failure must not skip earlier rolled-back rewrites on the next run.
+			db.migrateMap = nil
+			db.migrateSchedIDs = nil
+		}
+	}()
+	commit := func() error {
+		err := tx.Commit()
+		committed = err == nil
+		return err
+	}
 
 	var s State
 	err = state.Load(ctx, &s)
@@ -80,7 +97,7 @@ func (db *DB) update(ctx context.Context) error {
 		}
 		if !isDone {
 			// We're not done yet, so we'll try again later.
-			return tx.Commit()
+			return commit()
 		}
 
 		s.HasMigratedScheduleData = true
@@ -117,6 +134,9 @@ func (db *DB) update(ctx context.Context) error {
 	}
 
 	for _, row := range dataRows {
+		if _, err := scheduledataref.Users(row.Data, row.ScheduleID); err != nil {
+			return errors.Wrap(err, "validate schedule data")
+		}
 		info := getInfo(row.ScheduleID)
 		info.RawScheduleData = row.Data
 
@@ -191,8 +211,14 @@ func (db *DB) update(ctx context.Context) error {
 		return errors.Wrap(err, "load current schedule staffing authority")
 	}
 
+	scheduleIDs := make([]uuid.UUID, 0, len(updateData))
+	for id := range updateData {
+		scheduleIDs = append(scheduleIDs, id)
+	}
+	slices.SortFunc(scheduleIDs, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
 updateLoop:
-	for scheduleID, info := range updateData {
+	for _, scheduleID := range scheduleIDs {
+		info := updateData[scheduleID]
 		result, err := info.calcUpdates(now)
 		if err != nil {
 			log.Log(log.WithField(ctx, "ScheduleID", scheduleID), errors.Wrap(err, "calc updates"))
@@ -227,6 +253,9 @@ updateLoop:
 		}
 
 		if result.NewRawScheduleData != nil {
+			if err := scheduledataref.Lock(ctx, tx, info.ScheduleID, result.NewRawScheduleData, nil); err != nil {
+				return errors.Wrap(err, "lock final schedule data references")
+			}
 			err = q.SchedMgrSetData(ctx, gadb.SchedMgrSetDataParams{
 				ScheduleID: info.ScheduleID,
 				Data:       result.NewRawScheduleData,
@@ -254,7 +283,7 @@ updateLoop:
 		}
 	}
 
-	return tx.Commit()
+	return commit()
 }
 
 func equalTimePtr(a, b *time.Time) bool {

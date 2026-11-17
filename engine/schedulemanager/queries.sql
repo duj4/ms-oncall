@@ -11,7 +11,8 @@ FROM
 SELECT
     schedule_id
 FROM
-    schedule_data;
+    schedule_data
+ORDER BY schedule_id;
 
 -- name: SchedMgrGetData :one
 -- Returns the data for a single schedule.
@@ -20,7 +21,8 @@ SELECT
 FROM
     schedule_data
 WHERE
-    schedule_id = $1;
+    schedule_id = $1
+FOR UPDATE;
 
 -- name: SchedMgrSetDataV1Rules :exec
 -- Sets the .V1.OnCallNotificationRules for a schedule.
@@ -61,6 +63,7 @@ FROM
     schedule_data
 WHERE
     data NOTNULL
+ORDER BY schedule_id
 FOR UPDATE;
 
 -- name: SchedMgrSetData :exec

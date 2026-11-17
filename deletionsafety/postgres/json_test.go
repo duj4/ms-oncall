@@ -61,7 +61,7 @@ func TestRawTemporaryScheduleMalformedAndUnknown(t *testing.T) {
 	base := v1JSON(observed.Add(-time.Hour), observed.Add(time.Hour), observed.Add(-time.Hour), observed.Add(time.Hour), testUser)
 	for name, raw := range map[string]string{
 		"empty": "", "null": "null", "array": "[]", "empty-object": "{}",
-		"temporary-null": `{"TemporarySchedules":null}`, "temporary-object": `{"TemporarySchedules":{}}`,
+		"temporary-object": `{"TemporarySchedules":{}}`,
 		"temporary-scalar": `{"TemporarySchedules":[1]}`, "shift-null": strings.Replace(base, `"Shifts":[{`, `"Shifts":null,"Unused":[{`, 1),
 		"missing-user":    strings.Replace(base, `"UserID":"`+testUser+`"`, `"UserID":null`, 1),
 		"absent-user":     strings.Replace(base, `,"UserID":"`+testUser+`"`, "", 1),
@@ -69,7 +69,7 @@ func TestRawTemporaryScheduleMalformedAndUnknown(t *testing.T) {
 		"zero-user":       strings.Replace(base, testUser, "00000000-0000-0000-0000-000000000000", 1),
 		"invalid-time":    strings.Replace(base, observed.Add(-time.Hour).Format(time.RFC3339Nano), "invalid-time", 1),
 		"missing-time":    strings.Replace(base, `"Start":`, `"Other":`, 1),
-		"unknown-version": `{"V2":{},"TemporarySchedules":[]}`, "oncall-null": `{"TemporarySchedules":[],"OnCallNotificationRules":null}`,
+		"unknown-version": `{"V2":{},"TemporarySchedules":[]}`, "oncall-object": `{"TemporarySchedules":[],"OnCallNotificationRules":{}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps, n, err := projectV1(12, testSchedule, []byte(raw), observed, 20)
@@ -136,4 +136,22 @@ func TestLargeRawFragmentsAreBounded(t *testing.T) {
 	var typed *ds.DeletionSafetyError
 	require.True(t, errors.As(err, &typed))
 	require.Equal(t, ds.DeletionPreviewLimitExceeded, typed.Code)
+}
+
+func TestRawScheduleKnownNilSlices(t *testing.T) {
+	for _, raw := range []string{
+		`{"TemporarySchedules":null}`,
+		`{"TemporarySchedules":null,"OnCallNotificationRules":null}`,
+		`{"TemporarySchedules":[],"OnCallNotificationRules":null}`,
+		`{"TemporarySchedules":[],"OnCallNotificationRules":[]}`,
+	} {
+		deps, n, err := projectV1(1, testSchedule, []byte(raw), observed, 10)
+		require.NoError(t, err)
+		require.Empty(t, deps)
+		require.Zero(t, n)
+	}
+	for _, value := range []string{`{}`, `"bad"`, `1`, `true`, `[null]`} {
+		_, _, err := projectV1(1, testSchedule, []byte(`{"TemporarySchedules":`+value+`}`), observed, 10)
+		require.Error(t, err)
+	}
 }

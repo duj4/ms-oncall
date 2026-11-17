@@ -5539,6 +5539,7 @@ func (q *Queries) SchedFindOneScoped(ctx context.Context, arg SchedFindOneScoped
 const schedInsertData = `-- name: SchedInsertData :exec
 INSERT INTO schedule_data (schedule_id, data)
 VALUES ($1, '{}')
+ON CONFLICT (schedule_id) DO NOTHING
 `
 
 // Inserts empty schedule data for a given schedule ID.
@@ -5555,6 +5556,7 @@ FROM
     schedule_data
 WHERE
     data NOTNULL
+ORDER BY schedule_id
 FOR UPDATE
 `
 
@@ -5591,6 +5593,7 @@ SELECT
     schedule_id
 FROM
     schedule_data
+ORDER BY schedule_id
 `
 
 // Returns all schedule IDs that have an entry in the schedule_data table.
@@ -5645,6 +5648,7 @@ FROM
     schedule_data
 WHERE
     schedule_id = $1
+FOR UPDATE
 `
 
 // Returns the data for a single schedule.

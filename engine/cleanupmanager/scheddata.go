@@ -15,6 +15,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/target/goalert/config"
 	"github.com/target/goalert/gadb"
+	"github.com/target/goalert/internal/scheduledataref"
 	"github.com/target/goalert/schedule"
 )
 
@@ -92,6 +93,9 @@ func (db *DB) CleanupScheduleData(ctx context.Context, j *river.Job[SchedDataArg
 			return fmt.Errorf("get schedule data: %w", err)
 		}
 		gdb := gadb.New(tx)
+		if _, err := scheduledataref.Users(rawData, j.Args.ScheduleID); err != nil {
+			return fmt.Errorf("validate schedule data: %w", err)
+		}
 
 		var data schedule.Data
 		err = json.Unmarshal(rawData, &data)
@@ -115,12 +119,19 @@ func (db *DB) CleanupScheduleData(ctx context.Context, j *river.Job[SchedDataArg
 		}
 		changed := cleanupData(&data, validUsers, now)
 		if !changed {
+			// Skip only updates cleanup metadata, but it retains the entire JSON.
+			if err := scheduledataref.Lock(ctx, tx, j.Args.ScheduleID, rawData, nil); err != nil {
+				return fmt.Errorf("lock retained schedule data references: %w", err)
+			}
 			return gdb.CleanupMgrScheduleDataSkip(ctx, j.Args.ScheduleID)
 		}
 
 		rawData, err = json.Marshal(data)
 		if err != nil {
 			return fmt.Errorf("marshal schedule data: %w", err)
+		}
+		if err := scheduledataref.Lock(ctx, tx, j.Args.ScheduleID, rawData, nil); err != nil {
+			return fmt.Errorf("lock final schedule data references: %w", err)
 		}
 
 		log.InfoContext(ctx, "Updated schedule data.")

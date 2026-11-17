@@ -69,7 +69,8 @@ FOR UPDATE;
 -- name: SchedInsertData :exec
 -- Inserts empty schedule data for a given schedule ID.
 INSERT INTO schedule_data (schedule_id, data)
-VALUES ($1, '{}');
+VALUES ($1, '{}')
+ON CONFLICT (schedule_id) DO NOTHING;
 
 -- name: SchedUpdateData :exec
 -- Updates the schedule data for a given schedule ID.

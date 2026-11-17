@@ -11,7 +11,6 @@ import (
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user"
-	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
 )
@@ -52,14 +51,6 @@ func (store *Store) TemporarySchedules(ctx context.Context, tx *sql.Tx, schedule
 	data.V1.TemporarySchedules = MergeTemporarySchedules(data.V1.TemporarySchedules)
 
 	return data.V1.TemporarySchedules, nil
-}
-
-func isDataPkeyConflict(err error) bool {
-	dbErr := sqlutil.MapError(err)
-	if dbErr == nil {
-		return false
-	}
-	return dbErr.ConstraintName == "schedule_data_pkey"
 }
 
 func validateFuture(fieldName string, t time.Time) error {
@@ -182,7 +173,7 @@ func (store *Store) ClearTemporarySchedulesScoped(ctx context.Context, tx *sql.T
 
 func (store *Store) validateTemporaryScheduleUsers(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, scope *uuid.UUID, temp *TemporarySchedule) error {
 	if scope == nil {
-		return nil // Trusted internal compatibility; not Human authority.
+		return nil // The complete final envelope is checked under locks by updateScheduleData.
 	}
 	// updateScheduleData has already authorized this parent, before touching
 	// schedule_data. Read its actual Organization in the same transaction.

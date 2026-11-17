@@ -52,11 +52,7 @@ func TestPostgresDeletionEnforcementScheduleMissingEnvelope(t *testing.T) {
 					require.NoError(t, writer.Commit())
 					tx = nrBegin(t, ctx, db)
 					_, err = collector.Enforce(ctx, tx, scheduleProfileSelectors(f.schedule), version, true, authorizeDeletionFixture(scheduleProfileRoot(f.schedule)))
-					if mode == "raw_insert" {
-						enforceCode(t, err, ds.DeletionDependencyChanged)
-					} else {
-						enforceCode(t, err, ds.DeletionUnavailable)
-					} // ordinary Store can persist a null sibling array; frozen raw Collector fails closed
+					enforceCode(t, err, ds.DeletionDependencyChanged)
 					require.NoError(t, tx.Rollback())
 				} else {
 					tx := nrBegin(t, ctx, db)

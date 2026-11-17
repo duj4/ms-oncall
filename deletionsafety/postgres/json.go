@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	ds "github.com/target/goalert/deletionsafety"
+	"github.com/target/goalert/internal/scheduledataref"
 	"github.com/target/goalert/util/sqlutil"
 )
 
@@ -39,10 +40,7 @@ func projectV1(envelope int64, schedule string, raw []byte, asOf time.Time, maxF
 			return nil, 0, errUnsupported
 		}
 	}
-	if !array(members["TemporarySchedules"]) {
-		return nil, 0, unavailable()
-	}
-	data, err := boundedArray(members["TemporarySchedules"], maxFragments)
+	data, err := boundedSlice(members["TemporarySchedules"], maxFragments)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -51,7 +49,7 @@ func projectV1(envelope int64, schedule string, raw []byte, asOf time.Time, maxF
 	sched := ds.Resource{Kind: ds.ResourceSchedule, ID: schedule}
 	for i, rawTemporary := range data {
 		var fields map[string]json.RawMessage
-		if json.Unmarshal(rawTemporary, &fields) != nil || fields == nil || !array(fields["Shifts"]) {
+		if json.Unmarshal(rawTemporary, &fields) != nil || fields == nil {
 			return nil, 0, unavailable()
 		}
 		for key := range fields {
@@ -67,7 +65,7 @@ func projectV1(envelope int64, schedule string, raw []byte, asOf time.Time, maxF
 		if err != nil {
 			return nil, 0, unavailable()
 		}
-		rawShifts, err := boundedArray(fields["Shifts"], maxFragments-units-1)
+		rawShifts, err := boundedSlice(fields["Shifts"], maxFragments-units-1)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -125,10 +123,7 @@ func projectV1(envelope int64, schedule string, raw []byte, asOf time.Time, maxF
 		}
 	}
 	if value, ok := members["OnCallNotificationRules"]; ok {
-		if !array(value) {
-			return nil, 0, unavailable()
-		}
-		rules, err := boundedArray(value, maxFragments-units)
+		rules, err := boundedSlice(value, maxFragments-units)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -158,8 +153,14 @@ func projectV1(envelope int64, schedule string, raw []byte, asOf time.Time, maxF
 	return result, units, nil
 }
 
-func array(raw json.RawMessage) bool {
-	return len(raw) > 0 && strings.HasPrefix(strings.TrimSpace(string(raw)), "[")
+func boundedSlice(raw json.RawMessage, limit int) ([]json.RawMessage, error) {
+	if limit < 0 {
+		return nil, limitExceeded()
+	}
+	if scheduledataref.NilSlice(raw) {
+		return nil, nil
+	}
+	return boundedArray(raw, limit)
 }
 
 // Stop before decoding an over-budget element or allocating a typed roster.
@@ -202,14 +203,14 @@ const scheduleDataProjection = `jsonb_build_object('TemporarySchedules',
  'Start',t.value->'Start','End',t.value->'End','Shifts',
  CASE WHEN jsonb_typeof(t.value->'Shifts')='array' THEN COALESCE((SELECT jsonb_agg(
  CASE WHEN jsonb_typeof(sh.value)='object' THEN jsonb_build_object('Start',sh.value->'Start','End',sh.value->'End','UserID',sh.value->'UserID') ELSE NULL END ORDER BY sh.ordinality)
- FROM jsonb_array_elements(t.value->'Shifts') WITH ORDINALITY sh), '[]'::jsonb) ELSE NULL END)
+ FROM jsonb_array_elements(t.value->'Shifts') WITH ORDINALITY sh), '[]'::jsonb) ELSE COALESCE(t.value->'Shifts','{}'::jsonb) END)
  ELSE NULL END ORDER BY t.ordinality)
  FROM jsonb_array_elements(d.data->'V1'->'TemporarySchedules') WITH ORDINALITY t),'[]'::jsonb)
- ELSE NULL END,
+ ELSE COALESCE(d.data->'V1'->'TemporarySchedules','{}'::jsonb) END,
  'OnCallNotificationRules',CASE WHEN jsonb_typeof(d.data->'V1'->'OnCallNotificationRules')='array' THEN
  COALESCE((SELECT jsonb_agg(jsonb_build_object('ID',r.value->'ID','ChannelID',r.value->'ChannelID') ORDER BY r.ordinality)
  FROM jsonb_array_elements(d.data->'V1'->'OnCallNotificationRules') WITH ORDINALITY r),'[]'::jsonb)
- ELSE NULL END)`
+ ELSE COALESCE(d.data->'V1'->'OnCallNotificationRules','null'::jsonb) END)`
 
 const unknownScheduleData = `CASE WHEN jsonb_typeof(d.data)='object' AND jsonb_typeof(d.data->'V1')='object' THEN
  (d.data-'V1')<>'{}'::jsonb OR ((d.data->'V1')-'TemporarySchedules'-'OnCallNotificationRules')<>'{}'::jsonb OR

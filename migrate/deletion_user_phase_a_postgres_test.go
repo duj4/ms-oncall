@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
@@ -158,32 +159,34 @@ func TestPostgresDeletionUserPhaseAJSONUserLockGap(t *testing.T) {
 		t.Run(first, func(t *testing.T) {
 			id := f.newSchedule(t, ctx)
 			rootTx, writer := userPhaseATx(t, ctx, db), userPhaseATx(t, ctx, db)
-			lock := func() {
+			lock := func() error {
 				var present bool
-				require.NoError(t, rootTx.QueryRowContext(ctx, `SELECT true FROM users WHERE id=$1 FOR UPDATE NOWAIT`, f.user).Scan(&present))
-				require.True(t, present)
+				return rootTx.QueryRowContext(ctx, `SELECT true FROM users WHERE id=$1 FOR UPDATE NOWAIT`, f.user).Scan(&present)
 			}
-			write := func() {
-				require.NoError(t, f.schedules.SetTemporaryScheduleScoped(ctx, writer, id, userPhaseATemp(f.user), &f.org))
+			write := func() error {
+				return f.schedules.SetTemporaryScheduleScoped(ctx, writer, id, userPhaseATemp(f.user), &f.org)
 			}
 			if first == "user_lock_first" {
-				lock()
-				write()
+				require.NoError(t, lock())
+				var pg *pgconn.PgError
+				require.ErrorAs(t, write(), &pg)
+				require.Equal(t, "55P03", pg.Code)
+				require.NoError(t, writer.Commit(), "Store savepoint removes failed initial INSERT")
+				require.Zero(t, enforcementCount(t, ctx, db, `SELECT count(*) FROM schedule_data WHERE schedule_id=$1`, id))
+				require.NoError(t, rootTx.Rollback())
+				require.NoError(t, f.schedules.SetTemporaryScheduleScoped(ctx, nil, id, userPhaseATemp(f.user), &f.org))
 			} else {
-				write()
-				lock()
+				require.NoError(t, write())
+				var pg *pgconn.PgError
+				require.ErrorAs(t, lock(), &pg)
+				require.Equal(t, "55P03", pg.Code)
+				require.NoError(t, rootTx.Rollback())
+				require.NoError(t, writer.Commit())
 			}
-			// Both transactions are still open. No sleep or scheduling inference:
-			// completion of the real Store write and NOWAIT lock is the barrier.
-			var unblocked bool
-			require.NoError(t, writer.QueryRowContext(ctx, `SELECT cardinality(pg_blocking_pids(pg_backend_pid()))=0`).Scan(&unblocked))
-			require.True(t, unblocked)
-			require.NoError(t, writer.Commit())
 			require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM schedule_data WHERE schedule_id=$1 AND data->'V1'->'TemporarySchedules'->0->'Shifts'->0->>'UserID'=$2`, id, f.user.String()))
-			require.NoError(t, rootTx.Rollback())
 		})
 	}
-	t.Log("CONFIRMED GAP: both lock orders allow a real JSON reference write while the User UPDATE lock is held; root was retained, not deleted")
+	t.Log("REGRESSION CLOSED: real Store and User UPDATE locks conflict in both orders; User Root admission remains closed")
 }
 
 func TestPostgresDeletionUserPhaseAJSONOldReadGap(t *testing.T) {
@@ -193,7 +196,7 @@ func TestPostgresDeletionUserPhaseAJSONOldReadGap(t *testing.T) {
 	id := f.newSchedule(t, ctx)
 	conf, err := pgx.ParseConfig(uri)
 	require.NoError(t, err)
-	barrier := &nrQueryBarrier{needle: "-- name: SchedUpdateData", arrived: make(chan struct{}), resume: make(chan struct{})}
+	barrier := &nrQueryBarrier{needle: "SELECT organization_id FROM public.schedules WHERE id=$1 FOR SHARE NOWAIT", arrived: make(chan struct{}), resume: make(chan struct{})}
 	conf.Tracer = barrier
 	traced := sql.OpenDB(stdlib.GetConnector(*conf))
 	defer traced.Close()
@@ -221,10 +224,12 @@ func TestPostgresDeletionUserPhaseAJSONOldReadGap(t *testing.T) {
 	require.NoError(t, rootTx.QueryRowContext(ctx, `SELECT true FROM users WHERE id=$1 FOR UPDATE NOWAIT`, f.user).Scan(&present))
 	require.True(t, present)
 	close(barrier.resume)
-	require.NoError(t, <-done)
-	require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM schedule_data WHERE schedule_id=$1`, id))
+	var pg *pgconn.PgError
+	require.ErrorAs(t, <-done, &pg)
+	require.Equal(t, "55P03", pg.Code)
+	require.Zero(t, enforcementCount(t, ctx, db, `SELECT count(*) FROM schedule_data WHERE schedule_id=$1`, id))
 	require.NoError(t, rootTx.Rollback())
-	t.Log("CONFIRMED GAP: Writer validated the User, then committed JSON after a concurrent User UPDATE lock; no unsafe delete executed")
+	t.Log("REGRESSION CLOSED: ordinary affiliation read completed, then a concurrent User UPDATE lock rejects the final reference check")
 }
 
 func TestPostgresDeletionUserPhaseANormalJSONShape(t *testing.T) {
@@ -238,12 +243,9 @@ func TestPostgresDeletionUserPhaseANormalJSONShape(t *testing.T) {
 	require.True(t, normalNull)
 	root := ds.Resource{Kind: ds.ResourceUser, ID: f.user.String()}
 	facts, err := collectDeletion(t, ctx, db, root, collector.Limits{})
-	if err == nil {
-		require.NotEqual(t, ds.DependenciesComplete, facts.Collection.Completeness)
-	} else {
-		enforceCode(t, err, ds.DeletionUnavailable)
-	}
-	t.Log("CONFIRMED LIMIT: a normal Store emits a null TemporarySchedules slice; the existing global User JSON collector fails closed")
+	require.NoError(t, err)
+	require.Equal(t, ds.DependenciesComplete, facts.Collection.Completeness)
+	t.Log("REGRESSION CLOSED: normal Store null TemporarySchedules is complete and contains no User reference")
 }
 
 func TestPostgresDeletionUserPhaseACatalog(t *testing.T) {

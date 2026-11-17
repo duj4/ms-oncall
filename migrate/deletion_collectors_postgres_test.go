@@ -275,7 +275,7 @@ func TestPostgresDeletionCollectorsCompletenessAndBounds(t *testing.T) {
 		require.Empty(t, result.Collection.Dependencies)
 		require.Empty(t, result.Collection.Checked)
 	}
-	for _, raw := range []string{`null`, `{}`, `{"V1":null}`, `{"V1":{"TemporarySchedules":null}}`, `{"V1":{"TemporarySchedules":{}}}`, `{"V1":{"TemporarySchedules":[{"Shifts":null}]}}`} {
+	for _, raw := range []string{`null`, `{}`, `{"V1":null}`, `{"V1":{"TemporarySchedules":{}}}`, `{"V1":{"TemporarySchedules":[{"Shifts":null}]}}`} {
 		_, err := db.ExecContext(ctx, `UPDATE schedule_data SET data=$1::jsonb WHERE schedule_id=$2`, raw, f.schedule)
 		require.NoError(t, err)
 		result, err := collectDeletion(t, ctx, db, root, collector.Limits{})
