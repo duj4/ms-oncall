@@ -118,6 +118,21 @@ func AppendReceipt(ctx context.Context, tx *sql.Tx, r Receipt) error {
 			if f.ResourceKey != row.key || f.ResourceType != row.typ || ordinal >= r.Event.EffectCount {
 				return ErrInvalid
 			}
+			// A committed v2 Session has outlived its transaction-local identity
+			// mapping. Compare before INSERT: even ON CONFLICT runs BEFORE triggers.
+			// Missing rows still require the original database write gate below.
+			existingSession := false
+			if f.ResourceType == "user_session" && f.ValidateForWrite(*r.Event.RootID) == nil {
+				var same bool
+				err = tx.QueryRowContext(ctx, `SELECT declared_effect_count=$3 AND effect_id=$4 AND resource_type=$5 AND resource_key=$6 AND transition_slot=$7 AND payload=$8::jsonb FROM user_delete_audit_effects WHERE event_id=$1 AND effect_ordinal=$2`, r.Event.EventID, ordinal, r.Event.EffectCount, f.EffectID, f.ResourceType, f.ResourceKey, f.TransitionSlot, row.raw).Scan(&same)
+				if err != nil && err != sql.ErrNoRows {
+					return ErrUnavailable
+				}
+				existingSession = err == nil
+				if existingSession && !same {
+					return ErrConflict
+				}
+			}
 			// Historical Session replay is comparison-only. Never issue an INSERT
 			// for a v1 Session, including ON CONFLICT (BEFORE triggers still run).
 			if f.ResourceType == "user_session" && f.ValidateForWrite(*r.Event.RootID) != nil {
@@ -129,7 +144,7 @@ func AppendReceipt(ctx context.Context, tx *sql.Tx, r Receipt) error {
 				if !same {
 					return ErrInvalid
 				}
-			} else {
+			} else if !existingSession {
 				result, err := tx.ExecContext(ctx, `INSERT INTO user_delete_audit_effects(event_id,effect_ordinal,declared_effect_count,effect_id,resource_type,resource_key,transition_slot,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT(event_id,effect_ordinal) DO NOTHING`, r.Event.EventID, ordinal, r.Event.EffectCount, f.EffectID, f.ResourceType, f.ResourceKey, f.TransitionSlot, row.raw)
 				if err != nil {
 					return ErrUnavailable
