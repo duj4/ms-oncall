@@ -106,11 +106,6 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 		if result.Collection.Completeness != ds.DependenciesComplete || !slices.Contains(result.Collection.Checked, root) {
 			return ctx, unavailable()
 		}
-		if root.Kind == ds.ResourceSchedule {
-			if err := scheduleAuditShape(collectCtx, tx, root); err != nil {
-				return ctx, safeError(err)
-			}
-		}
 		fingerprints = append(fingerprints, result.ScopeFingerprint)
 		collection.Checked = append(collection.Checked, result.Collection.Checked...)
 		collection.Dependencies = append(collection.Dependencies, result.Collection.Dependencies...)
@@ -143,16 +138,11 @@ func Enforce(ctx context.Context, tx *sql.Tx, raw []Selector, expected string, a
 		if !plan.CanProceed() {
 			return ctx, plan.Check(expected, acknowledged)
 		}
-		if err := plan.Check(expected, acknowledged); err != nil {
+		if err := CheckDeleteFeasibility(collectCtx, tx, plan); err != nil {
 			return ctx, err
 		}
-		for _, root := range targets {
-			if root.Kind == ds.ResourceUser {
-				var unsupported bool
-				if err := tx.QueryRowContext(collectCtx, `SELECT EXISTS(SELECT FROM public.notification_policy_cycles WHERE user_id=$1)`, root.ID).Scan(&unsupported); err != nil || unsupported {
-					return ctx, unavailable()
-				}
-			}
+		if err := plan.Check(expected, acknowledged); err != nil {
+			return ctx, err
 		}
 	}
 	return guard.Bind(ctx, tx, collectCtx, raw, plan, expected, acknowledged)

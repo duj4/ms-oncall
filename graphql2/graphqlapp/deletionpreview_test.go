@@ -69,6 +69,28 @@ func TestDeletionPreviewInput(t *testing.T) {
 	require.Equal(t, previewLimit(), err)
 }
 
+func TestDeletionPreviewImpactDescription(t *testing.T) {
+	for _, tc := range []struct {
+		relation ds.RelationshipKind
+		change   ds.DeletionChangeKind
+		word     string
+	}{
+		{ds.RelationshipNotificationConfiguration, ds.ChangeDeleted, "deleted"},
+		{ds.RelationshipFavorite, ds.ChangeDeleted, "deleted"},
+		{ds.RelationshipUserOrganization, ds.ChangeDeleted, "deleted"},
+		{ds.RelationshipRetainedPolicy, ds.ChangePreserved, "preserved"},
+		{ds.RelationshipKeyCreator, ds.ChangeRelationRemoved, "relationship would be removed"},
+	} {
+		d := ds.DeletionImpact{Dependency: ds.Dependency{Relationship: tc.relation}, Decision: ds.Decision{Policy: ds.PolicyInformational, Change: tc.change}}
+		require.Contains(t, deletionImpactDescription(d), tc.word)
+		if tc.change != ds.ChangePreserved {
+			require.NotContains(t, deletionImpactDescription(d), "preserved")
+		}
+	}
+	d := ds.DeletionImpact{Decision: ds.Decision{Policy: ds.PolicyBlock, Change: ds.ChangePreserved}}
+	require.Contains(t, deletionImpactDescription(d), "blocking dependency")
+}
+
 func TestDeletionPreviewCursorSecurity(t *testing.T) {
 	targets := []ds.Resource{{Kind: ds.ResourceService, ID: uuid.NewString()}}
 	binding := newDeletionPreviewCursor(targets, strings.Repeat("a", 64), strings.Repeat("b", 64))

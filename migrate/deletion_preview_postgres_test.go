@@ -161,6 +161,12 @@ func TestPostgresDeletionPreviewPoliciesPaginationAndReadOnly(t *testing.T) {
 			for _, private := range []string{f.key.String(), f.session.String(), "SYNTHETIC_PRIVATE_ALERT", "SYNTHETIC_PRIVATE_SIGNAL", "SYNTHETIC_NOT_A_REAL_PASSWORD_HASH"} {
 				require.NotContains(t, string(raw), private)
 			}
+			for _, edge := range full.Impacts.Edges {
+				if edge.Node.Policy == graphql2.DeletionPolicyInformational && edge.Node.Change == "DELETED" {
+					require.Contains(t, edge.Node.Impact, "deleted")
+					require.NotContains(t, edge.Node.Impact, "preserved")
+				}
+			}
 			if tc.typ == graphql2.DeletionTargetTypeService {
 				states := map[string]graphql2.DeletionPolicy{}
 				for _, e := range full.Impacts.Edges {
@@ -193,16 +199,11 @@ func TestPostgresDeletionPreviewPoliciesPaginationAndReadOnly(t *testing.T) {
 	for _, p := range graphql2.AllDeletionPolicy {
 		require.True(t, policies[p], string(p))
 	}
-	// Overlapping roots preserve co-deletion provenance and open-alert blockers.
+	// Mixed native profiles cannot promise executable deletion, even when the
+	// domain planner can describe their overlapping ownership closure.
 	batch := previewInput(graphql2.DeletionTargetTypeService, f.service)
 	batch.Targets = append(batch.Targets, graphql2.DeletionResourceInput{Type: graphql2.DeletionTargetTypeEscalationPolicy, ID: f.policy.String()})
-	combined := previewOK(t, previewHTTP(t, ctx, app, batch, 100, nil))
-	require.False(t, combined.CanProceed)
-	coDeleted := false
-	for _, edge := range combined.Impacts.Edges {
-		coDeleted = coDeleted || edge.Node.IsPlannedCoDeletion
-	}
-	require.True(t, coDeleted)
+	previewRejected(t, previewHTTP(t, ctx, app, batch, 100, nil), string(ds.DeletionUnavailable))
 	// The real populated closure is complete; its incoming references still block.
 	populated := previewOK(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeRotation, f.rotation), 50, nil))
 	require.True(t, populated.Complete)
@@ -258,6 +259,11 @@ func TestPostgresDeletionPreviewEmptyBatchAndBounds(t *testing.T) {
 	require.True(t, found)
 	batch := input
 	batch.Targets = append(slices.Clone(batch.Targets), graphql2.DeletionResourceInput{Type: graphql2.DeletionTargetTypeIntegrationKey, ID: f.keyAudit.String()})
+	previewRejected(t, previewHTTP(t, ctx, app, batch, 100, nil), string(ds.DeletionUnavailable))
+	second := uuid.New()
+	_, err = db.ExecContext(ctx, `INSERT INTO escalation_policies(id,organization_id,name) VALUES($1,$2,($1::uuid)::text)`, second, f.org)
+	require.NoError(t, err)
+	batch.Targets[1] = graphql2.DeletionResourceInput{Type: graphql2.DeletionTargetTypeEscalationPolicy, ID: second.String()}
 	p = previewOK(t, previewHTTP(t, ctx, app, batch, 100, nil))
 	require.Len(t, p.Targets, 2)
 	// Pure CASCADE and INFORMATIONAL cases have different confirmation behavior.

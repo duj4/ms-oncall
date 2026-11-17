@@ -335,6 +335,7 @@ func TestPostgresDeletionEnforcementScheduleUnsupported(t *testing.T) {
 		case "label":
 			enforcementExec(t, ctx, db, `INSERT INTO labels(key,value,tgt_schedule_id) VALUES('synthetic','unsupported',$1)`, f.schedule)
 		}
+		previewRejected(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeSchedule, f.schedule), 1, nil), string(ds.DeletionUnavailable))
 		_, err := app.Mutation().DeleteAll(ctx, scheduleProfileInput(f.schedule, f.otherSchedule), nil)
 		enforceCode(t, err, ds.DeletionUnavailable)
 		require.Equal(t, 2, enforcementCount(t, ctx, db, `SELECT count(*) FROM schedules WHERE id=ANY($1::uuid[])`, pq.Array([]uuid.UUID{f.schedule, f.otherSchedule})))

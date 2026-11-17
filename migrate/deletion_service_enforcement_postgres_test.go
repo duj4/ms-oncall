@@ -224,6 +224,7 @@ func TestPostgresDeletionEnforcementServiceUnsupported(t *testing.T) {
 				aid := serviceProfileAlert(t, ctx, db, f.service, "closed")
 				enforcementExec(t, ctx, db, `INSERT INTO outgoing_messages(channel_id,message_type,last_status,status_alert_ids) VALUES($1,'alert_status_update_bundle','failed',ARRAY[$2::bigint])`, channel, aid)
 			}
+			previewRejected(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeService, f.service), 1, nil), string(ds.DeletionUnavailable))
 			ok, err := app.Mutation().DeleteAll(ctx, serviceProfileInput(good.service, f.service), nil)
 			require.False(t, ok)
 			enforceCode(t, err, ds.DeletionUnavailable)

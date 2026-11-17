@@ -105,14 +105,13 @@ func projectDeletionPreview(ctx context.Context, tx *sql.Tx, a previewAuthority,
 		response.Targets = append(response.Targets, *resources[r])
 	}
 	policies := map[ds.DeletionPolicy]graphql2.DeletionPolicy{ds.PolicyBlock: graphql2.DeletionPolicyBlock, ds.PolicyCascade: graphql2.DeletionPolicyCascade, ds.PolicyWarning: graphql2.DeletionPolicyWarning, ds.PolicyInformational: graphql2.DeletionPolicyInformational}
-	descriptions := map[ds.DeletionPolicy]string{ds.PolicyBlock: "Resolve the blocking dependency before deletion.", ds.PolicyCascade: "The related resource would be removed.", ds.PolicyWarning: "Review the configuration impact before deletion.", ds.PolicyInformational: "The related resource is preserved."}
 	for _, d := range page {
 		binding.Position = d.EdgeID
 		cursor, err := encodeDeletionPreviewCursor(signer, binding)
 		if err != nil {
 			return nil, err
 		}
-		node := &graphql2.DeletionImpact{EdgeID: d.EdgeID, Target: resources[d.Target], ReferencingResource: resources[d.Referencing], Parent: resources[d.Parent], Relation: previewRelationshipNames[d.Relationship], Change: previewChangeNames[d.Change], Policy: policies[d.Policy], Impact: descriptions[d.Policy], RequiredAction: previewActionNames[d.RequiredAction], CanModifyReference: a.canModify(d.Referencing, d.Owner), IsDerived: d.IsDerived, IsPlannedCoDeletion: d.IsPlannedCoDeletion}
+		node := &graphql2.DeletionImpact{EdgeID: d.EdgeID, Target: resources[d.Target], ReferencingResource: resources[d.Referencing], Parent: resources[d.Parent], Relation: previewRelationshipNames[d.Relationship], Change: previewChangeNames[d.Change], Policy: policies[d.Policy], Impact: deletionImpactDescription(d), RequiredAction: previewActionNames[d.RequiredAction], CanModifyReference: a.canModify(d.Referencing, d.Owner), IsDerived: d.IsDerived, IsPlannedCoDeletion: d.IsPlannedCoDeletion}
 		if node.Target == nil || node.ReferencingResource == nil || node.Relation == "" || node.Change == "" || node.Policy == "" || node.RequiredAction == "" {
 			return nil, previewUnavailable()
 		}
@@ -120,4 +119,24 @@ func projectDeletionPreview(ctx context.Context, tx *sql.Tx, a previewAuthority,
 		response.Impacts.PageInfo.EndCursor = &cursor
 	}
 	return response, nil
+}
+
+func deletionImpactDescription(d ds.DeletionImpact) string {
+	if d.Policy == ds.PolicyBlock {
+		return "Resolve the blocking dependency before deletion."
+	}
+	switch d.Change {
+	case ds.ChangeDeleted:
+		return "The affected resource would be deleted."
+	case ds.ChangeRelationRemoved:
+		return "The affected relationship would be removed."
+	case ds.ChangeRelationReplaced:
+		return "The affected relationship would be replaced."
+	case ds.ChangeConfigTrimmed:
+		return "The affected configuration would be reduced."
+	case ds.ChangePreserved:
+		return "The affected resource is preserved."
+	default:
+		return "Review the configuration impact before deletion."
+	}
 }

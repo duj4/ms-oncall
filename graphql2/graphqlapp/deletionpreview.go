@@ -181,6 +181,11 @@ func (q *Query) DeletionPreview(ctx context.Context, input graphql2.DeletionPlan
 			return nil, previewUnavailable()
 		}
 	}
+	// The policy plan alone cannot promise native execution. Check all
+	// authorized effects, including those outside the requested display page.
+	if err := collector.CheckDeleteFeasibility(ctx, tx, plan); err != nil {
+		return nil, safePreviewError(err)
+	}
 	binding := newDeletionPreviewCursor(targets, fingerprint, plan.ImpactVersion())
 	if cursor != nil {
 		if cursor.Operation != binding.Operation || cursor.Selection != binding.Selection || cursor.Scope != binding.Scope {

@@ -844,7 +844,9 @@ func TestPostgresDeletionEnforcementRotationFailClosed(t *testing.T) {
 	}
 	for _, kind := range []assignment.TargetType{assignment.TargetTypeUser, assignment.TargetTypeUserSession, assignment.TargetTypeCalendarSubscription} {
 		_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: kind, ID: uuid.NewString()}}, nil)
-		if kind == assignment.TargetTypeUser {
+		// Missing User and selected UserSession revocation are existing no-ops.
+		// UserSession remains outside the generic Rotation/root profile.
+		if kind == assignment.TargetTypeUser || kind == assignment.TargetTypeUserSession {
 			require.NoError(t, err)
 		} else {
 			require.Error(t, err)

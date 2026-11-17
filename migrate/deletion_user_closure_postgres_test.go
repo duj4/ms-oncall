@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/deletionsafety/postgres"
+	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/user"
 )
@@ -100,7 +101,12 @@ func TestPostgresDeletionEnforcementUserBlockAndHistory(t *testing.T) {
 			facts, err := collectDeletion(t, ctx, db, userProfileRoot(f.user), collector.Limits{})
 			require.NoError(t, err)
 			plan := deletionPlan(t, userProfileRoot(f.user), facts)
-			confirm := enforcementPreview(t, ctx, app, userProfilePreview(f.user)...)
+			confirm := &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: plan.ImpactVersion(), AcknowledgeImpacts: true}
+			if kind == "closed_cycle" {
+				previewRejected(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeUser, f.user), 1, nil), string(ds.DeletionUnavailable))
+			} else {
+				confirm = enforcementPreview(t, ctx, app, userProfilePreview(f.user)...)
+			}
 			_, err = app.Mutation().DeleteAll(ctx, userProfileInput(f.user), confirm)
 			switch kind {
 			case "closed_cycle":

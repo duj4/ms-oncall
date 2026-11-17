@@ -648,6 +648,7 @@ func TestPostgresDeletionEnforcementCMBundleBoundary(t *testing.T) {
 				other := newDeletionFixture(t, ctx, db)
 				enforcementExec(t, ctx, db, `UPDATE outgoing_messages SET last_status='bundled',status_details=$2 WHERE contact_method_id=$1`, other.cm, msg.String())
 			}
+			previewRejected(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeContactMethod, f.cm), 1, nil), string(ds.DeletionUnavailable))
 			_, err := app.Mutation().DeleteAll(ctx, cmInput(f.cm), nil)
 			enforceCode(t, err, ds.DeletionUnavailable)
 			require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, f.cm))

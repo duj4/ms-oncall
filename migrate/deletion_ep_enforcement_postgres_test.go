@@ -459,6 +459,9 @@ func TestPostgresDeletionEnforcementEPUnsupported(t *testing.T) {
 				}
 				enforcementExec(t, ctx, db, `INSERT INTO escalation_policy_state(service_id,alert_id,escalation_policy_id,escalation_policy_step_id) VALUES($1,$2,$3,$4) ON CONFLICT(alert_id) DO UPDATE SET escalation_policy_step_id=excluded.escalation_policy_step_id`, svc, aid, f.policy, step)
 			}
+			if shape == "open_history" || shape == "closed_history" || shape == "message" || shape == "channel" || shape == "label" {
+				previewRejected(t, previewHTTP(t, ctx, app, previewInput(graphql2.DeletionTargetTypeEscalationPolicy, f.policy), 1, nil), string(ds.DeletionUnavailable))
+			}
 			_, err := app.Mutation().DeleteAll(ctx, epProfileInput(good.policy, f.policy), &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: "guessed", AcknowledgeImpacts: true})
 			code := ds.DeletionUnavailable
 			if shape == "active_state" || shape == "closed_state" {
