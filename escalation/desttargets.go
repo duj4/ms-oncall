@@ -6,7 +6,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/gadb"
+	"github.com/target/goalert/internal/updateguard"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rotation"
@@ -67,11 +69,8 @@ func (s *Store) AddStepActionTx(ctx context.Context, tx *sql.Tx, stepID uuid.UUI
 }
 
 func (s *Store) DeleteStepActionTx(ctx context.Context, tx *sql.Tx, stepID uuid.UUID, dest gadb.DestV1) error {
-	params, err := s.stepActionDeleteParams(ctx, tx, stepID, dest)
-	if err != nil {
-		return err
-	}
-	return gadb.New(tx).EPStepActionsDeleteAction(ctx, params)
+	_, err := s.DeleteStepActionReceiptTx(ctx, tx, stepID, dest)
+	return err
 }
 
 // DeleteStepActionReceiptTx uses the same destination matching and validation as
@@ -82,7 +81,42 @@ func (s *Store) DeleteStepActionReceiptTx(ctx context.Context, tx *sql.Tx, stepI
 	if err != nil {
 		return nil, err
 	}
-	return gadb.New(tx).EPStepActionsDeleteReceipt(ctx, gadb.EPStepActionsDeleteReceiptParams(params))
+	if err := updateguard.Require(ctx, tx); err != nil {
+		return nil, err
+	}
+	rows, err := gadb.New(tx).EPStepActionsDeleteReceipt(ctx, gadb.EPStepActionsDeleteReceiptParams(params))
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if err := updateguard.Consume(ctx, tx, ds.Resource{Kind: ds.ResourceEscalationPolicyAction, ID: r.ID.String()}); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
+}
+
+// StepActionDeleteIDsTx resolves the existing deletion predicate without DML.
+// Preview and Update use the same destination equality and persisted identities.
+func (s *Store) StepActionDeleteIDsTx(ctx context.Context, tx *sql.Tx, stepID uuid.UUID, dest gadb.DestV1) ([]uuid.UUID, error) {
+	p, err := s.stepActionDeleteParams(ctx, tx, stepID, dest)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM escalation_policy_actions WHERE escalation_policy_step_id=$1 AND (user_id=$2 OR schedule_id=$3 OR rotation_id=$4 OR channel_id=$5) ORDER BY id`, p.EscalationPolicyStepID, p.UserID, p.ScheduleID, p.RotationID, p.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *Store) stepActionDeleteParams(ctx context.Context, tx *sql.Tx, stepID uuid.UUID, dest gadb.DestV1) (gadb.EPStepActionsDeleteActionParams, error) {
@@ -112,6 +146,9 @@ func (s *Store) stepActionDeleteParams(ctx context.Context, tx *sql.Tx, stepID u
 		}
 		rotationID = uuid.NullUUID{UUID: id, Valid: true}
 	default:
+		if s.ncStore == nil {
+			return gadb.EPStepActionsDeleteActionParams{}, &ds.DeletionSafetyError{Code: ds.DeletionUnavailable}
+		}
 		id, err := s.ncStore.LookupDestID(ctx, tx, dest)
 		if err != nil {
 			return gadb.EPStepActionsDeleteActionParams{}, err

@@ -781,10 +781,11 @@ type ScheduleTarget struct {
 }
 
 type ScheduleTargetInput struct {
-	ScheduleID  *string               `json:"scheduleID,omitempty"`
-	Target      *assignment.RawTarget `json:"target,omitempty"`
-	NewRotation *CreateRotationInput  `json:"newRotation,omitempty"`
-	Rules       []ScheduleRuleInput   `json:"rules"`
+	ScheduleID   *string                          `json:"scheduleID,omitempty"`
+	Target       *assignment.RawTarget            `json:"target,omitempty"`
+	NewRotation  *CreateRotationInput             `json:"newRotation,omitempty"`
+	Rules        []ScheduleRuleInput              `json:"rules"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type SendContactMethodVerificationInput struct {
@@ -945,20 +946,36 @@ type UpdateBasicAuthInput struct {
 	UserID      string  `json:"userID"`
 }
 
+// An update removes child relationships; its business root remains present.
+type UpdateDeletionPreview struct {
+	Operation            DeletionOperation  `json:"operation"`
+	Root                 *DeletionResource  `json:"root"`
+	ImpactVersion        string             `json:"impactVersion"`
+	PolicyVersion        string             `json:"policyVersion"`
+	Complete             bool               `json:"complete"`
+	CanProceed           bool               `json:"canProceed"`
+	RequiresConfirmation bool               `json:"requiresConfirmation"`
+	Removed              []DeletionResource `json:"removed"`
+	Impacts              []DeletionImpact   `json:"impacts"`
+}
+
 type UpdateEscalationPolicyInput struct {
 	ID          string   `json:"id"`
 	Name        *string  `json:"name,omitempty"`
 	Description *string  `json:"description,omitempty"`
 	Repeat      *int     `json:"repeat,omitempty"`
 	StepIDs     []string `json:"stepIDs,omitempty"`
+	// Confirmation bound to the complete update input and current state.
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateEscalationPolicyStepInput struct {
-	ID           string                 `json:"id"`
-	DelayMinutes *int                   `json:"delayMinutes,omitempty"`
-	Targets      []assignment.RawTarget `json:"targets,omitempty"`
-	Actions      []gadb.DestV1          `json:"actions,omitempty"`
-	MultiAck     *bool                  `json:"multiAck,omitempty"`
+	ID           string                           `json:"id"`
+	DelayMinutes *int                             `json:"delayMinutes,omitempty"`
+	Targets      []assignment.RawTarget           `json:"targets,omitempty"`
+	Actions      []gadb.DestV1                    `json:"actions,omitempty"`
+	MultiAck     *bool                            `json:"multiAck,omitempty"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateGQLAPIKeyInput struct {

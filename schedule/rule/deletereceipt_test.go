@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
+	"github.com/target/goalert/internal/updateguard"
 	"github.com/target/goalert/permission"
 )
 
@@ -115,6 +117,8 @@ func TestDeleteManyReceiptActualRowsAndClosedIdentity(t *testing.T) {
 						f.lateErr = errors.New("synthetic late row failure")
 					}
 					ctx, tx := receiptTestTx(t, f)
+					ctx, bindErr := updateguard.Bind(ctx, tx, []ds.Resource{{Kind: ds.ResourceScheduleRule, ID: id.String()}})
+					require.NoError(t, bindErr)
 					result, err := new(Store).DeleteManyReceiptTx(ctx, tx, parent.String(), selected, []string{id.String(), uuid.NewString()})
 					switch mode {
 					case "zero":

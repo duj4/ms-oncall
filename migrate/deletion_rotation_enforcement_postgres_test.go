@@ -586,7 +586,8 @@ func TestPostgresDeletionEnforcementRotationReferenceWriters(t *testing.T) {
 						_, err := rules.CreateRuleTx(ctx, writer, rule.NewAlwaysActive(f.otherSchedule.String(), assignment.RotationTarget(f.root.String())))
 						return err
 					case "rule_delete":
-						return rules.DeleteManyTx(ctx, writer, []string{f.rule.String()})
+						_, err := writer.ExecContext(ctx, `DELETE FROM schedule_rules WHERE id=$1`, f.rule)
+						return err
 					case "rule_to", "rule_away", "rule_reparent", "rule_update":
 						dest, parent := f.root, f.schedule
 						if kind == "rule_away" {
@@ -605,7 +606,8 @@ func TestPostgresDeletionEnforcementRotationReferenceWriters(t *testing.T) {
 					case "action_create":
 						return ep.AddStepActionTx(ctx, writer, newStep, rotation.DestFromID(f.root.String()))
 					case "action_delete":
-						return ep.DeleteStepActionTx(ctx, writer, f.step, rotation.DestFromID(f.root.String()))
+						_, err := writer.ExecContext(ctx, `DELETE FROM escalation_policy_actions WHERE escalation_policy_step_id=$1 AND rotation_id=$2`, f.step, f.root)
+						return err
 					case "action_to", "action_away":
 						dest := f.root
 						if kind == "action_away" {

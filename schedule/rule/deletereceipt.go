@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
+	"github.com/target/goalert/internal/updateguard"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation/validate"
@@ -54,7 +56,7 @@ const deleteManyReceiptSQL = `DELETE FROM schedule_rules
  WHERE id=ANY($1::uuid[]) AND schedule_id=$2 AND (tgt_user_id=$3 OR tgt_rotation_id=$4)
  RETURNING id,schedule_id,tgt_user_id,tgt_rotation_id`
 
-// DeleteManyReceiptTx preserves the legacy method for unrelated callers. Its
+// DeleteManyReceiptTx requires the owning update capability. Its
 // additional predicates prevent stale selectors from deleting a different
 // collection. Only actual RETURNING rows are evidence, never the requested IDs.
 // The caller retains the Schedule/child locks and sole Commit ownership.
@@ -72,6 +74,9 @@ func (s *Store) DeleteManyReceiptTx(ctx context.Context, tx *sql.Tx, scheduleID 
 	}
 	if len(ids) == 0 {
 		return nil, nil
+	}
+	if err := updateguard.Require(ctx, tx); err != nil {
+		return nil, err
 	}
 	var user, rotation sql.NullString
 	wantKind := "rotation"
@@ -105,6 +110,9 @@ func (s *Store) DeleteManyReceiptTx(ctx context.Context, tx *sql.Tx, scheduleID 
 			return nil, errors.New("mismatched schedule rule deletion receipt")
 		}
 		result = append(result, r)
+		if err := updateguard.Consume(ctx, tx, ds.Resource{Kind: ds.ResourceScheduleRule, ID: r.ID.String()}); err != nil {
+			return nil, err
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

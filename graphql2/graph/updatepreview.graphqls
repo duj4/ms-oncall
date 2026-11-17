@@ -1,0 +1,31 @@
+extend input UpdateEscalationPolicyInput {
+  "Confirmation bound to the complete update input and current state."
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+extend input UpdateEscalationPolicyStepInput {
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+extend input ScheduleTargetInput {
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+"An update removes child relationships; its business root remains present."
+type UpdateDeletionPreview {
+  operation: DeletionOperation!
+  root: DeletionResource!
+  impactVersion: ID!
+  policyVersion: String!
+  complete: Boolean!
+  canProceed: Boolean!
+  requiresConfirmation: Boolean!
+  removed: [DeletionResource!]!
+  impacts: [DeletionImpact!]!
+}
+
+extend type Query {
+  previewUpdateEscalationPolicy(input: UpdateEscalationPolicyInput!): UpdateDeletionPreview!
+  previewUpdateEscalationPolicyStep(input: UpdateEscalationPolicyStepInput!): UpdateDeletionPreview!
+  previewUpdateScheduleTarget(input: ScheduleTargetInput!): UpdateDeletionPreview!
+}

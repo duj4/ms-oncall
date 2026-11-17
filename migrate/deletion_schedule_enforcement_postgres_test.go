@@ -374,7 +374,10 @@ func scheduleProfileRelatedWrites(t *testing.T, ctx context.Context, db *sql.DB,
 			return err
 		}},
 		{name: "rule_update_store", run: func(c context.Context, tx *sql.Tx) error { return rules.UpdateTx(c, tx, r) }},
-		{name: "rule_delete_store", run: func(c context.Context, tx *sql.Tx) error { return rules.DeleteManyTx(c, tx, []string{f.rule.String()}) }},
+		{name: "rule_delete_raw", run: func(c context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(c, `DELETE FROM schedule_rules WHERE id=$1`, f.rule)
+			return err
+		}},
 		q("rule_retarget", `UPDATE schedule_rules SET tgt_user_id=$2 WHERE id=$1`, f.rule, f.actor),
 		q("rule_reparent", `UPDATE schedule_rules SET schedule_id=$2 WHERE id=$1`, f.rule, f.otherSchedule),
 		{name: "override_create_store", run: func(c context.Context, tx *sql.Tx) error {
@@ -562,7 +565,8 @@ func TestPostgresDeletionEnforcementScheduleActionWriters(t *testing.T) {
 					case "add_store":
 						return store.AddStepActionTx(ctx, writer, f.step, schedule.DestFromID(f.schedule.String()))
 					case "delete_store":
-						return store.DeleteStepActionTx(ctx, writer, f.step, schedule.DestFromID(f.schedule.String()))
+						_, err := writer.ExecContext(ctx, `DELETE FROM escalation_policy_actions WHERE escalation_policy_step_id=$1 AND schedule_id=$2`, f.step, f.schedule)
+						return err
 					default:
 						dest := f.schedule
 						if kind == "retarget_away" {

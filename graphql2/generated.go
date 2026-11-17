@@ -650,59 +650,62 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		ActionInputValidate        func(childComplexity int, input gadb.UIKActionV1) int
-		Alert                      func(childComplexity int, id int) int
-		Alerts                     func(childComplexity int, input *AlertSearchOptions) int
-		AuthSubjectsForProvider    func(childComplexity int, first *int, after *string, providerID string) int
-		CalcRotationHandoffTimes   func(childComplexity int, input *CalcRotationHandoffTimesInput) int
-		Config                     func(childComplexity int, all *bool) int
-		ConfigHints                func(childComplexity int) int
-		CurrentOrganizationContext func(childComplexity int) int
-		DebugMessageStatus         func(childComplexity int, input DebugMessageStatusInput) int
-		DebugMessages              func(childComplexity int, input *DebugMessagesInput) int
-		DeletionPreview            func(childComplexity int, input DeletionPlanInput, first *int, after *string) int
-		DestinationDisplayInfo     func(childComplexity int, input gadb.DestV1) int
-		DestinationFieldSearch     func(childComplexity int, input DestinationFieldSearchInput) int
-		DestinationFieldValidate   func(childComplexity int, input DestinationFieldValidateInput) int
-		DestinationFieldValueName  func(childComplexity int, input DestinationFieldValidateInput) int
-		DestinationTypes           func(childComplexity int, isDynamicAction *bool) int
-		EscalationPolicies         func(childComplexity int, input *EscalationPolicySearchOptions) int
-		EscalationPolicy           func(childComplexity int, id string) int
-		ExperimentalFlags          func(childComplexity int) int
-		Expr                       func(childComplexity int) int
-		GenerateSlackAppManifest   func(childComplexity int) int
-		GqlAPIKeys                 func(childComplexity int) int
-		HeartbeatMonitor           func(childComplexity int, id string) int
-		IntegrationKey             func(childComplexity int, id string) int
-		IntegrationKeyTypes        func(childComplexity int) int
-		IntegrationKeys            func(childComplexity int, input *IntegrationKeySearchOptions) int
-		LabelKeys                  func(childComplexity int, input *LabelKeySearchOptions) int
-		LabelValues                func(childComplexity int, input *LabelValueSearchOptions) int
-		Labels                     func(childComplexity int, input *LabelSearchOptions) int
-		LinkAccountInfo            func(childComplexity int, token string) int
-		ManageableOrganizations    func(childComplexity int, first *int, after *string, search *string) int
-		MessageLogs                func(childComplexity int, input *MessageLogSearchOptions) int
-		MessageStatusHistory       func(childComplexity int, id string) int
-		PhoneNumberInfo            func(childComplexity int, number string) int
-		Rotation                   func(childComplexity int, id string) int
-		Rotations                  func(childComplexity int, input *RotationSearchOptions) int
-		Schedule                   func(childComplexity int, id string) int
-		Schedules                  func(childComplexity int, input *ScheduleSearchOptions) int
-		Service                    func(childComplexity int, id string) int
-		Services                   func(childComplexity int, input *ServiceSearchOptions) int
-		SlackChannel               func(childComplexity int, id string) int
-		SlackChannels              func(childComplexity int, input *SlackChannelSearchOptions) int
-		SlackUserGroup             func(childComplexity int, id string) int
-		SlackUserGroups            func(childComplexity int, input *SlackUserGroupSearchOptions) int
-		SwoStatus                  func(childComplexity int) int
-		SystemLimits               func(childComplexity int) int
-		TimeZones                  func(childComplexity int, input *TimeZoneSearchOptions) int
-		User                       func(childComplexity int, id *string) int
-		UserCalendarSubscription   func(childComplexity int, id string) int
-		UserContactMethod          func(childComplexity int, id string) int
-		UserOverride               func(childComplexity int, id string) int
-		UserOverrides              func(childComplexity int, input *UserOverrideSearchOptions) int
-		Users                      func(childComplexity int, input *UserSearchOptions, first *int, after *string, search *string) int
+		ActionInputValidate               func(childComplexity int, input gadb.UIKActionV1) int
+		Alert                             func(childComplexity int, id int) int
+		Alerts                            func(childComplexity int, input *AlertSearchOptions) int
+		AuthSubjectsForProvider           func(childComplexity int, first *int, after *string, providerID string) int
+		CalcRotationHandoffTimes          func(childComplexity int, input *CalcRotationHandoffTimesInput) int
+		Config                            func(childComplexity int, all *bool) int
+		ConfigHints                       func(childComplexity int) int
+		CurrentOrganizationContext        func(childComplexity int) int
+		DebugMessageStatus                func(childComplexity int, input DebugMessageStatusInput) int
+		DebugMessages                     func(childComplexity int, input *DebugMessagesInput) int
+		DeletionPreview                   func(childComplexity int, input DeletionPlanInput, first *int, after *string) int
+		DestinationDisplayInfo            func(childComplexity int, input gadb.DestV1) int
+		DestinationFieldSearch            func(childComplexity int, input DestinationFieldSearchInput) int
+		DestinationFieldValidate          func(childComplexity int, input DestinationFieldValidateInput) int
+		DestinationFieldValueName         func(childComplexity int, input DestinationFieldValidateInput) int
+		DestinationTypes                  func(childComplexity int, isDynamicAction *bool) int
+		EscalationPolicies                func(childComplexity int, input *EscalationPolicySearchOptions) int
+		EscalationPolicy                  func(childComplexity int, id string) int
+		ExperimentalFlags                 func(childComplexity int) int
+		Expr                              func(childComplexity int) int
+		GenerateSlackAppManifest          func(childComplexity int) int
+		GqlAPIKeys                        func(childComplexity int) int
+		HeartbeatMonitor                  func(childComplexity int, id string) int
+		IntegrationKey                    func(childComplexity int, id string) int
+		IntegrationKeyTypes               func(childComplexity int) int
+		IntegrationKeys                   func(childComplexity int, input *IntegrationKeySearchOptions) int
+		LabelKeys                         func(childComplexity int, input *LabelKeySearchOptions) int
+		LabelValues                       func(childComplexity int, input *LabelValueSearchOptions) int
+		Labels                            func(childComplexity int, input *LabelSearchOptions) int
+		LinkAccountInfo                   func(childComplexity int, token string) int
+		ManageableOrganizations           func(childComplexity int, first *int, after *string, search *string) int
+		MessageLogs                       func(childComplexity int, input *MessageLogSearchOptions) int
+		MessageStatusHistory              func(childComplexity int, id string) int
+		PhoneNumberInfo                   func(childComplexity int, number string) int
+		PreviewUpdateEscalationPolicy     func(childComplexity int, input UpdateEscalationPolicyInput) int
+		PreviewUpdateEscalationPolicyStep func(childComplexity int, input UpdateEscalationPolicyStepInput) int
+		PreviewUpdateScheduleTarget       func(childComplexity int, input ScheduleTargetInput) int
+		Rotation                          func(childComplexity int, id string) int
+		Rotations                         func(childComplexity int, input *RotationSearchOptions) int
+		Schedule                          func(childComplexity int, id string) int
+		Schedules                         func(childComplexity int, input *ScheduleSearchOptions) int
+		Service                           func(childComplexity int, id string) int
+		Services                          func(childComplexity int, input *ServiceSearchOptions) int
+		SlackChannel                      func(childComplexity int, id string) int
+		SlackChannels                     func(childComplexity int, input *SlackChannelSearchOptions) int
+		SlackUserGroup                    func(childComplexity int, id string) int
+		SlackUserGroups                   func(childComplexity int, input *SlackUserGroupSearchOptions) int
+		SwoStatus                         func(childComplexity int) int
+		SystemLimits                      func(childComplexity int) int
+		TimeZones                         func(childComplexity int, input *TimeZoneSearchOptions) int
+		User                              func(childComplexity int, id *string) int
+		UserCalendarSubscription          func(childComplexity int, id string) int
+		UserContactMethod                 func(childComplexity int, id string) int
+		UserOverride                      func(childComplexity int, id string) int
+		UserOverrides                     func(childComplexity int, input *UserOverrideSearchOptions) int
+		Users                             func(childComplexity int, input *UserSearchOptions, first *int, after *string, search *string) int
 	}
 
 	Rotation struct {
@@ -883,6 +886,18 @@ type ComplexityRoot struct {
 	TokenInfo struct {
 		PrimaryHint   func(childComplexity int) int
 		SecondaryHint func(childComplexity int) int
+	}
+
+	UpdateDeletionPreview struct {
+		CanProceed           func(childComplexity int) int
+		Complete             func(childComplexity int) int
+		ImpactVersion        func(childComplexity int) int
+		Impacts              func(childComplexity int) int
+		Operation            func(childComplexity int) int
+		PolicyVersion        func(childComplexity int) int
+		Removed              func(childComplexity int) int
+		RequiresConfirmation func(childComplexity int) int
+		Root                 func(childComplexity int) int
 	}
 
 	User struct {
@@ -1163,6 +1178,9 @@ type QueryResolver interface {
 	Expr(ctx context.Context) (*Expr, error)
 	GqlAPIKeys(ctx context.Context) ([]GQLAPIKey, error)
 	ActionInputValidate(ctx context.Context, input gadb.UIKActionV1) (bool, error)
+	PreviewUpdateEscalationPolicy(ctx context.Context, input UpdateEscalationPolicyInput) (*UpdateDeletionPreview, error)
+	PreviewUpdateEscalationPolicyStep(ctx context.Context, input UpdateEscalationPolicyStepInput) (*UpdateDeletionPreview, error)
+	PreviewUpdateScheduleTarget(ctx context.Context, input ScheduleTargetInput) (*UpdateDeletionPreview, error)
 }
 type RotationResolver interface {
 	Organization(ctx context.Context, obj *rotation.Rotation) (*OrganizationSummary, error)
@@ -4101,6 +4119,39 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.PhoneNumberInfo(childComplexity, args["number"].(string)), true
+	case "Query.previewUpdateEscalationPolicy":
+		if e.ComplexityRoot.Query.PreviewUpdateEscalationPolicy == nil {
+			break
+		}
+
+		args, err := ec.field_Query_previewUpdateEscalationPolicy_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.PreviewUpdateEscalationPolicy(childComplexity, args["input"].(UpdateEscalationPolicyInput)), true
+	case "Query.previewUpdateEscalationPolicyStep":
+		if e.ComplexityRoot.Query.PreviewUpdateEscalationPolicyStep == nil {
+			break
+		}
+
+		args, err := ec.field_Query_previewUpdateEscalationPolicyStep_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.PreviewUpdateEscalationPolicyStep(childComplexity, args["input"].(UpdateEscalationPolicyStepInput)), true
+	case "Query.previewUpdateScheduleTarget":
+		if e.ComplexityRoot.Query.PreviewUpdateScheduleTarget == nil {
+			break
+		}
+
+		args, err := ec.field_Query_previewUpdateScheduleTarget_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.PreviewUpdateScheduleTarget(childComplexity, args["input"].(ScheduleTargetInput)), true
 	case "Query.rotation":
 		if e.ComplexityRoot.Query.Rotation == nil {
 			break
@@ -4998,6 +5049,61 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.TokenInfo.SecondaryHint(childComplexity), true
 
+	case "UpdateDeletionPreview.canProceed":
+		if e.ComplexityRoot.UpdateDeletionPreview.CanProceed == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.CanProceed(childComplexity), true
+	case "UpdateDeletionPreview.complete":
+		if e.ComplexityRoot.UpdateDeletionPreview.Complete == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.Complete(childComplexity), true
+	case "UpdateDeletionPreview.impactVersion":
+		if e.ComplexityRoot.UpdateDeletionPreview.ImpactVersion == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.ImpactVersion(childComplexity), true
+	case "UpdateDeletionPreview.impacts":
+		if e.ComplexityRoot.UpdateDeletionPreview.Impacts == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.Impacts(childComplexity), true
+	case "UpdateDeletionPreview.operation":
+		if e.ComplexityRoot.UpdateDeletionPreview.Operation == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.Operation(childComplexity), true
+	case "UpdateDeletionPreview.policyVersion":
+		if e.ComplexityRoot.UpdateDeletionPreview.PolicyVersion == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.PolicyVersion(childComplexity), true
+	case "UpdateDeletionPreview.removed":
+		if e.ComplexityRoot.UpdateDeletionPreview.Removed == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.Removed(childComplexity), true
+	case "UpdateDeletionPreview.requiresConfirmation":
+		if e.ComplexityRoot.UpdateDeletionPreview.RequiresConfirmation == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.RequiresConfirmation(childComplexity), true
+	case "UpdateDeletionPreview.root":
+		if e.ComplexityRoot.UpdateDeletionPreview.Root == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.Root(childComplexity), true
+
 	case "User.statusUpdateContactMethodID":
 		if e.ComplexityRoot.User.AlertStatusCMID == nil {
 			break
@@ -5517,7 +5623,7 @@ func newExecutionContext(
 	}
 }
 
-//go:embed "schema.graphql" "graph/_Mutation.graphqls" "graph/_Query.graphqls" "graph/_directives.graphqls" "graph/alerts.graphqls" "graph/deletionpreview.graphqls" "graph/destinations.graphqls" "graph/errorcodes.graphqls" "graph/escalationpolicy.graphqls" "graph/expr.graphqls" "graph/gqlapikeys.graphqls" "graph/service.graphqls" "graph/signals.graphqls" "graph/univkeys.graphqls"
+//go:embed "schema.graphql" "graph/_Mutation.graphqls" "graph/_Query.graphqls" "graph/_directives.graphqls" "graph/alerts.graphqls" "graph/deletionpreview.graphqls" "graph/destinations.graphqls" "graph/errorcodes.graphqls" "graph/escalationpolicy.graphqls" "graph/expr.graphqls" "graph/gqlapikeys.graphqls" "graph/service.graphqls" "graph/signals.graphqls" "graph/univkeys.graphqls" "graph/updatepreview.graphqls"
 var sourcesFS embed.FS
 
 func sourceData(filename string) string {
@@ -5543,6 +5649,7 @@ var sources = []*ast.Source{
 	{Name: "graph/service.graphqls", Input: sourceData("graph/service.graphqls"), BuiltIn: false},
 	{Name: "graph/signals.graphqls", Input: sourceData("graph/signals.graphqls"), BuiltIn: false},
 	{Name: "graph/univkeys.graphqls", Input: sourceData("graph/univkeys.graphqls"), BuiltIn: false},
+	{Name: "graph/updatepreview.graphqls", Input: sourceData("graph/updatepreview.graphqls"), BuiltIn: false},
 }
 var parsedSchema = gqlparser.MustLoadSchema(sources...)
 
@@ -6874,6 +6981,30 @@ func (ec *executionContext) childFields_TokenInfo(ctx context.Context, field gra
 		return ec.fieldContext_TokenInfo_secondaryHint(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type TokenInfo", field.Name)
+}
+
+func (ec *executionContext) childFields_UpdateDeletionPreview(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "operation":
+		return ec.fieldContext_UpdateDeletionPreview_operation(ctx, field)
+	case "root":
+		return ec.fieldContext_UpdateDeletionPreview_root(ctx, field)
+	case "impactVersion":
+		return ec.fieldContext_UpdateDeletionPreview_impactVersion(ctx, field)
+	case "policyVersion":
+		return ec.fieldContext_UpdateDeletionPreview_policyVersion(ctx, field)
+	case "complete":
+		return ec.fieldContext_UpdateDeletionPreview_complete(ctx, field)
+	case "canProceed":
+		return ec.fieldContext_UpdateDeletionPreview_canProceed(ctx, field)
+	case "requiresConfirmation":
+		return ec.fieldContext_UpdateDeletionPreview_requiresConfirmation(ctx, field)
+	case "removed":
+		return ec.fieldContext_UpdateDeletionPreview_removed(ctx, field)
+	case "impacts":
+		return ec.fieldContext_UpdateDeletionPreview_impacts(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type UpdateDeletionPreview", field.Name)
 }
 
 func (ec *executionContext) childFields_User(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -8481,6 +8612,48 @@ func (ec *executionContext) field_Query_phoneNumberInfo_args(ctx context.Context
 		return nil, err
 	}
 	args["number"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_previewUpdateEscalationPolicyStep_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (UpdateEscalationPolicyStepInput, error) {
+			return ec.unmarshalNUpdateEscalationPolicyStepInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateEscalationPolicyStepInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_previewUpdateEscalationPolicy_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (UpdateEscalationPolicyInput, error) {
+			return ec.unmarshalNUpdateEscalationPolicyInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateEscalationPolicyInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_previewUpdateScheduleTarget_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (ScheduleTargetInput, error) {
+			return ec.unmarshalNScheduleTargetInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleTargetInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
 	return args, nil
 }
 
@@ -21156,6 +21329,138 @@ func (ec *executionContext) fieldContext_Query_actionInputValidate(ctx context.C
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_previewUpdateEscalationPolicy(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewUpdateEscalationPolicy(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewUpdateEscalationPolicy(ctx, fc.Args["input"].(UpdateEscalationPolicyInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+			return ec.marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewUpdateEscalationPolicy(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UpdateDeletionPreview(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewUpdateEscalationPolicy_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_previewUpdateEscalationPolicyStep(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewUpdateEscalationPolicyStep(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewUpdateEscalationPolicyStep(ctx, fc.Args["input"].(UpdateEscalationPolicyStepInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+			return ec.marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewUpdateEscalationPolicyStep(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UpdateDeletionPreview(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewUpdateEscalationPolicyStep_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_previewUpdateScheduleTarget(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewUpdateScheduleTarget(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewUpdateScheduleTarget(ctx, fc.Args["input"].(ScheduleTargetInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+			return ec.marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewUpdateScheduleTarget(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UpdateDeletionPreview(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewUpdateScheduleTarget_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -24143,6 +24448,240 @@ func (ec *executionContext) _TokenInfo_secondaryHint(ctx context.Context, field 
 }
 func (ec *executionContext) fieldContext_TokenInfo_secondaryHint(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("TokenInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_operation(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_operation(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Operation, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v DeletionOperation) graphql.Marshaler {
+			return ec.marshalNDeletionOperation2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionOperation(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_operation(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UpdateDeletionPreview", field, false, false, errors.New("field of type DeletionOperation does not have child fields"))
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_root(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_root(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Root, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *DeletionResource) graphql.Marshaler {
+			return ec.marshalNDeletionResource2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionResource(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_root(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateDeletionPreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_DeletionResource(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_impactVersion(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_impactVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ImpactVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_impactVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UpdateDeletionPreview", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_policyVersion(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_policyVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PolicyVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_policyVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UpdateDeletionPreview", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_complete(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_complete(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Complete, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_complete(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UpdateDeletionPreview", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_canProceed(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_canProceed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.CanProceed, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_canProceed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UpdateDeletionPreview", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_requiresConfirmation(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_requiresConfirmation(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.RequiresConfirmation, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_requiresConfirmation(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UpdateDeletionPreview", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_removed(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_removed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Removed, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []DeletionResource) graphql.Marshaler {
+			return ec.marshalNDeletionResource2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionResourceᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_removed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateDeletionPreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_DeletionResource(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_impacts(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_impacts(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Impacts, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []DeletionImpact) graphql.Marshaler {
+			return ec.marshalNDeletionImpact2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionImpactᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_impacts(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateDeletionPreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_DeletionImpact(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _User_id(ctx context.Context, field graphql.CollectedField, obj *user.User) (ret graphql.Marshaler) {
@@ -29658,7 +30197,7 @@ func (ec *executionContext) unmarshalInputScheduleTargetInput(ctx context.Contex
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"scheduleID", "target", "newRotation", "rules"}
+	fieldsInOrder := [...]string{"scheduleID", "target", "newRotation", "rules", "confirmation"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -29693,6 +30232,13 @@ func (ec *executionContext) unmarshalInputScheduleTargetInput(ctx context.Contex
 				return it, err
 			}
 			it.Rules = data
+		case "confirmation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("confirmation"))
+			data, err := ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Confirmation = data
 		}
 	}
 	return it, nil
@@ -30605,7 +31151,7 @@ func (ec *executionContext) unmarshalInputUpdateEscalationPolicyInput(ctx contex
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "name", "description", "repeat", "stepIDs"}
+	fieldsInOrder := [...]string{"id", "name", "description", "repeat", "stepIDs", "confirmation"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -30647,6 +31193,13 @@ func (ec *executionContext) unmarshalInputUpdateEscalationPolicyInput(ctx contex
 				return it, err
 			}
 			it.StepIDs = data
+		case "confirmation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("confirmation"))
+			data, err := ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Confirmation = data
 		}
 	}
 	return it, nil
@@ -30663,7 +31216,7 @@ func (ec *executionContext) unmarshalInputUpdateEscalationPolicyStepInput(ctx co
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "delayMinutes", "targets", "actions", "multiAck"}
+	fieldsInOrder := [...]string{"id", "delayMinutes", "targets", "actions", "multiAck", "confirmation"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -30707,6 +31260,13 @@ func (ec *executionContext) unmarshalInputUpdateEscalationPolicyStepInput(ctx co
 				return it, err
 			}
 			it.MultiAck = data
+		case "confirmation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("confirmation"))
+			data, err := ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Confirmation = data
 		}
 	}
 	return it, nil
@@ -38289,6 +38849,72 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewUpdateEscalationPolicy":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewUpdateEscalationPolicy(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewUpdateEscalationPolicyStep":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewUpdateEscalationPolicyStep(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewUpdateScheduleTarget":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewUpdateScheduleTarget(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -40705,6 +41331,85 @@ func (ec *executionContext) _TokenInfo(ctx context.Context, sel ast.SelectionSet
 	return out
 }
 
+var updateDeletionPreviewImplementors = []string{"UpdateDeletionPreview"}
+
+func (ec *executionContext) _UpdateDeletionPreview(ctx context.Context, sel ast.SelectionSet, obj *UpdateDeletionPreview) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, updateDeletionPreviewImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("UpdateDeletionPreview")
+		case "operation":
+			out.Values[i] = ec._UpdateDeletionPreview_operation(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "root":
+			out.Values[i] = ec._UpdateDeletionPreview_root(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "impactVersion":
+			out.Values[i] = ec._UpdateDeletionPreview_impactVersion(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "policyVersion":
+			out.Values[i] = ec._UpdateDeletionPreview_policyVersion(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "complete":
+			out.Values[i] = ec._UpdateDeletionPreview_complete(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "canProceed":
+			out.Values[i] = ec._UpdateDeletionPreview_canProceed(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "requiresConfirmation":
+			out.Values[i] = ec._UpdateDeletionPreview_requiresConfirmation(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "removed":
+			out.Values[i] = ec._UpdateDeletionPreview_removed(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "impacts":
+			out.Values[i] = ec._UpdateDeletionPreview_impacts(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var userImplementors = []string{"User"}
 
 func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj *user.User) graphql.Marshaler {
@@ -42939,6 +43644,26 @@ func (ec *executionContext) unmarshalNDebugSendSMSInput2githubᚗcomᚋtargetᚋ
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) marshalNDeletionImpact2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionImpact(ctx context.Context, sel ast.SelectionSet, v DeletionImpact) graphql.Marshaler {
+	return ec._DeletionImpact(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNDeletionImpact2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionImpactᚄ(ctx context.Context, sel ast.SelectionSet, v []DeletionImpact) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNDeletionImpact2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionImpact(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) marshalNDeletionImpact2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionImpact(ctx context.Context, sel ast.SelectionSet, v *DeletionImpact) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -44799,6 +45524,20 @@ func (ec *executionContext) unmarshalNUpdateAlertsInput2githubᚗcomᚋtargetᚋ
 func (ec *executionContext) unmarshalNUpdateBasicAuthInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateBasicAuthInput(ctx context.Context, v any) (UpdateBasicAuthInput, error) {
 	res, err := ec.unmarshalInputUpdateBasicAuthInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNUpdateDeletionPreview2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx context.Context, sel ast.SelectionSet, v UpdateDeletionPreview) graphql.Marshaler {
+	return ec._UpdateDeletionPreview(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx context.Context, sel ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._UpdateDeletionPreview(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNUpdateEscalationPolicyInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateEscalationPolicyInput(ctx context.Context, v any) (UpdateEscalationPolicyInput, error) {

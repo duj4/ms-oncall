@@ -501,13 +501,9 @@ func epProfileRelatedWrites(t *testing.T, ctx context.Context, db *sql.DB, f epP
 			_, err := store.CreateStepTx(c, tx, &escalation.Step{PolicyID: f.policy.String(), DelayMinutes: 1})
 			return err
 		}},
-		{"step_delete_store", func(c context.Context, tx *sql.Tx) error {
-			_, err := store.DeleteStepReceiptTx(c, tx, f.step)
-			if err == sql.ErrNoRows {
-				return nil
-			}
-			return err
-		}},
+		// SD10 child Store deletion now requires update confirmation. Use the
+		// real SQL writer here to continue proving the root's physical fence.
+		sqlWrite("step_delete_raw", `DELETE FROM escalation_policy_steps WHERE id=$1`, f.step),
 		{"step_number_store", func(c context.Context, tx *sql.Tx) error { return store.UpdateStepNumberTx(c, tx, f.step, 0) }},
 		{"step_delay_store", func(c context.Context, tx *sql.Tx) error { return store.UpdateStepDelayTx(c, tx, f.step, 2) }},
 		sqlWrite("step_move", `UPDATE escalation_policy_steps SET escalation_policy_id=$2,step_number=1 WHERE id=$1`, f.step, otherPolicy),

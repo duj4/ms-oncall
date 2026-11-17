@@ -3,6 +3,8 @@ package escalation
 import (
 	"context"
 	"database/sql"
+	ds "github.com/target/goalert/deletionsafety"
+	"github.com/target/goalert/internal/updateguard"
 
 	collector "github.com/target/goalert/internal/deletionguard"
 
@@ -711,24 +713,11 @@ func (s *Store) UpdateStepMultiAckTx(ctx context.Context, tx *sql.Tx, stepID uui
 
 // DeleteStepTx deletes a step from an escalation policy.
 func (s *Store) DeleteStepTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) (string, error) {
-	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
+	r, err := s.DeleteStepReceiptTx(ctx, tx, id)
 	if err != nil {
 		return "", err
 	}
-	stmt := s.deleteStep
-	if tx != nil {
-		stmt = tx.StmtContext(ctx, stmt)
-	}
-	row := stmt.QueryRowContext(ctx, id)
-	var polID string
-	err = row.Scan(&polID)
-	if err != nil {
-		return "", err
-	}
-
-	s.logChange(ctx, tx, polID)
-
-	return polID, nil
+	return r.EscalationPolicyID.String(), nil
 }
 
 // DeleteStepReceiptTx retains the existing permission and business-log behavior
@@ -736,6 +725,9 @@ func (s *Store) DeleteStepTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) (str
 // The caller owns the transaction and any associated cascade capture.
 func (s *Store) DeleteStepReceiptTx(ctx context.Context, tx *sql.Tx, id uuid.UUID) (gadb.EPStepDeleteReceiptRow, error) {
 	if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
+		return gadb.EPStepDeleteReceiptRow{}, err
+	}
+	if err := updateguard.Consume(ctx, tx, ds.Resource{Kind: ds.ResourceEscalationPolicyStep, ID: id.String()}); err != nil {
 		return gadb.EPStepDeleteReceiptRow{}, err
 	}
 	r, err := gadb.New(tx).EPStepDeleteReceipt(ctx, id)

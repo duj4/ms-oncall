@@ -74,6 +74,9 @@ func scheduleTargetUpdateDiagnosticError(ctx context.Context, err error) error {
 }
 
 func scheduleTargetUpdateSafeError(err error) error {
+	if typed, ok := deletionSafetyError(err); ok {
+		return typed
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return sql.ErrNoRows
 	}
@@ -118,7 +121,7 @@ func finishScheduleTargetUpdateAudit(ctx context.Context, db *sql.DB, conn *sql.
 		e.Outcome, e.Reason = "rollback_unconfirmed", "rollback_unconfirmed"
 	} else if e.Outcome == "validation_failed" {
 		safe := scheduleTargetUpdateSafeError(operationErr)
-		if !validation.IsClientError(safe) && !errutil.IsLimitError(safe) && !errors.Is(safe, sql.ErrNoRows) {
+		if _, safetyRefusal := deletionSafetyError(safe); !safetyRefusal && !validation.IsClientError(safe) && !errutil.IsLimitError(safe) && !errors.Is(safe, sql.ErrNoRows) {
 			e.Outcome, e.Reason = "tx_failed", "write_failed"
 		}
 	}
