@@ -68,6 +68,7 @@ type stability struct {
 	generation             uint64
 	rawHash, effectiveHash [32]byte
 	targets                []ds.Resource
+	keySelectors           map[string]string // safe audit ID -> private credential predicate
 	observedAt             time.Time
 }
 type enforcementGuard struct {
@@ -278,7 +279,7 @@ func consume(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string
 }
 
 func certifiedTargets(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids []string, consumeSelection bool) ([]string, error) {
-	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule && kind != ds.ResourceRotation && kind != ds.ResourceUserOverride) {
+	if ctx == nil || tx == nil || (kind != ds.ResourceNotificationRule && kind != ds.ResourceContactMethod && kind != ds.ResourceService && kind != ds.ResourceEscalationPolicy && kind != ds.ResourceSchedule && kind != ds.ResourceRotation && kind != ds.ResourceUserOverride && kind != ds.ResourceIntegrationKey) {
 		return nil, unavailable()
 	}
 	g, _ := ctx.Value(enforcementKey{}).(*enforcementGuard)
@@ -308,8 +309,16 @@ func certifiedTargets(ctx context.Context, tx *sql.Tx, kind ds.ResourceKind, ids
 	}
 	var effective []string
 	for _, target := range g.stable.targets {
-		if unique[Selector{Kind: target.Kind, ID: target.ID}] {
-			effective = append(effective, target.ID)
+		id := target.ID
+		if kind == ds.ResourceIntegrationKey {
+			id = g.stable.keySelectors[target.ID]
+			if g.stable.profile != integrationKeyProfile || id == "" || id == target.ID {
+				g.ready = false
+				return nil, unavailable()
+			}
+		}
+		if unique[Selector{Kind: target.Kind, ID: id}] {
+			effective = append(effective, id)
 		}
 	}
 	if consumeSelection {

@@ -842,7 +842,7 @@ func TestPostgresDeletionEnforcementRotationFailClosed(t *testing.T) {
 		_, err := app.Mutation().DeleteAll(ctx, append(rotationProfileInput(f.root), assignment.RawTarget{Type: kind, ID: uuid.NewString()}), nil)
 		require.Error(t, err)
 	}
-	for _, kind := range []assignment.TargetType{assignment.TargetTypeUser, assignment.TargetTypeIntegrationKey, assignment.TargetTypeUserSession, assignment.TargetTypeCalendarSubscription} {
+	for _, kind := range []assignment.TargetType{assignment.TargetTypeUser, assignment.TargetTypeUserSession, assignment.TargetTypeCalendarSubscription} {
 		_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: kind, ID: uuid.NewString()}}, nil)
 		require.Error(t, err)
 	}

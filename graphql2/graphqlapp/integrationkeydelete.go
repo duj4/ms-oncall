@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/target/goalert/integrationkey"
 	keyaudit "github.com/target/goalert/integrationkey/deleteaudit"
+	guard "github.com/target/goalert/internal/deletionguard"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/validation/validate"
 )
@@ -25,13 +26,13 @@ func (a *Mutation) deleteIntegrationKeysWithAudit(ctx context.Context, tx *sql.T
 	if authority.system && audit == nil {
 		return a.IntKeyStore.DeleteMany(ctx, tx, ids, nil)
 	}
-	keyIDs, err := validate.ParseManyUUID("IntegrationKeyID", ids, 50) // Raw count, before deduplication.
+	_, err = validate.ParseManyUUID("IntegrationKeyID", ids, 50) // Raw count, before deduplication.
 	if err != nil {
 		return err
 	}
-	ids = make([]string, len(keyIDs))
-	for i, id := range keyIDs {
-		ids[i] = id.String()
+	ids, err = guard.IntegrationKeyTargets(ctx, tx, ids)
+	if err != nil {
+		return err
 	}
 	slices.Sort(ids)
 	ids = slices.Compact(ids)

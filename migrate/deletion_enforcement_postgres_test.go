@@ -229,8 +229,8 @@ func TestPostgresDeletionEnforcementNRFailClosed(t *testing.T) {
 			if len(batch) == 1 && root.Type == assignment.TargetTypeRotation {
 				expected = ds.DeletionBlocked // Complete Rotation closure retains its real external blockers.
 			}
-			if len(batch) == 1 && root.Type == assignment.TargetTypeUserOverride {
-				expected = ds.DeletionDependencyChanged // Native Override rejects the guessed version.
+			if len(batch) == 1 && (root.Type == assignment.TargetTypeUserOverride || root.Type == assignment.TargetTypeIntegrationKey) {
+				expected = ds.DeletionDependencyChanged // Native roots reject the guessed version.
 			}
 			enforceCode(t, err, expected)
 		}

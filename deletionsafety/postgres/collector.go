@@ -141,7 +141,7 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	if purpose == Recheck && overrideStable {
 		c.result.ObservedAt = overrideObservation
 	}
-	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root) || guard.StableRotation(ctx, tx, root) || overrideStable)
+	stable := purpose == Recheck && (guard.StableNR(ctx, tx, root) || guard.StableCM(ctx, tx, root) || guard.StableService(ctx, tx, root) || guard.StableEP(ctx, tx, root) || guard.StableSchedule(ctx, tx, root) || guard.StableRotation(ctx, tx, root) || guard.StableIntegrationKey(ctx, tx, root) || overrideStable)
 	if purpose == Preview && readOnly != "on" || !stable && isolation != "repeatable read" && isolation != "serializable" {
 		return bad, unavailable()
 	}
@@ -182,6 +182,14 @@ func Collect(ctx context.Context, tx *sql.Tx, root ds.Resource, purpose Purpose,
 	}
 	if err := authorize(ctx, tx, target); err != nil {
 		return bad, unavailable()
+	}
+	if root.Kind == ds.ResourceIntegrationKey {
+		if err := c.validateIntegrationKeys([]string{root.ID}); err != nil {
+			if err == errUnsupported {
+				bad.Collection.Completeness = ds.DependenciesUnsupported
+			}
+			return bad, safeError(err)
+		}
 	}
 	if root.Kind == ds.ResourceUserOverride {
 		if err := c.validateUserOverrides([]string{root.ID}); err != nil {

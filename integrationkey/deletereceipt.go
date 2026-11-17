@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 
-	ds "github.com/target/goalert/deletionsafety"
 	collector "github.com/target/goalert/internal/deletionguard"
 
 	"github.com/google/uuid"
@@ -24,14 +23,19 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
 		return nil, err
 	}
-	uids, err := validate.ParseManyUUID("IntegrationKeyID", ids, 50)
+	_, err := validate.ParseManyUUID("IntegrationKeyID", ids, 50)
 	if err != nil {
 		return nil, err
 	}
 	if tx == nil {
 		return nil, sql.ErrTxDone
 	}
-	if err := collector.RequireDelete(ctx, tx, ds.ResourceIntegrationKey, ids); err != nil {
+	existing, err := collector.ConsumeIntegrationKey(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	uids, err := validate.ParseManyUUID("IntegrationKeyID", existing, 50)
+	if err != nil {
 		return nil, err
 	}
 	q := `DELETE FROM integration_keys k WHERE k.id=ANY($1::uuid[])`

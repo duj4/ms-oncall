@@ -37,6 +37,20 @@ func TestCertificationEpochCannotBeRestored(t *testing.T) {
 	require.EqualValues(t, 1, otherGen)
 }
 
+func TestIntegrationKeyRequiresExactNativeCarrier(t *testing.T) {
+	ctx, tx := context.Background(), new(sql.Tx)
+	for _, raw := range [][]Selector{{{Kind: ds.ResourceService, ID: "00000000-0000-4000-8000-000000000001"}}, {{Kind: ds.ResourceIntegrationKey, ID: "invalid"}}, make([]Selector, 51)} {
+		_, _, err := StabilizeIntegrationKey(ctx, tx, raw)
+		require.Error(t, err)
+	}
+	ids := []string{"00000000-0000-4000-8000-000000000001"}
+	_, err := ConsumeIntegrationKey(ctx, tx, ids)
+	require.Error(t, err)
+	_, err = IntegrationKeyTargets(ctx, tx, ids)
+	require.Error(t, err)
+	require.False(t, StableIntegrationKey(ctx, tx, ds.Resource{Kind: ds.ResourceIntegrationKey, ID: ids[0]}))
+}
+
 func TestNRStabilityRejectsUnsupportedAndRawOverflow(t *testing.T) {
 	for _, raw := range [][]Selector{{{Kind: ds.ResourceService, ID: "00000000-0000-4000-8000-000000000001"}}, make([]Selector, 51)} {
 		_, _, err := StabilizeNR(context.Background(), new(sql.Tx), raw)
