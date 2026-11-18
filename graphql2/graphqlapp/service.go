@@ -423,18 +423,17 @@ func (a *Mutation) UpdateService(ctx context.Context, input graphql2.UpdateServi
 	event.ServiceID, event.TargetOrganizationID = uuid.MustParse(svc.ID), svc.OrganizationID
 	event.Outcome, event.Reason = "validation_failed", "invalid_fields"
 
-	if input.Name != nil {
-		svc.Name = *input.Name
-	}
-	if input.Description != nil {
-		svc.Description = *input.Description
-	}
-	if input.EscalationPolicyID != nil {
-		svc.EscalationPolicyID = *input.EscalationPolicyID
-	}
+	serviceUpdateFields(svc, input)
 
-	if input.MaintenanceExpiresAt != nil {
-		svc.MaintenanceExpiresAt = *input.MaintenanceExpiresAt
+	if input.EscalationPolicyID != nil || input.Confirmation != nil {
+		assessment, err := (*App)(a).assessServiceUpdate(ctx, tx, input, true)
+		if err != nil {
+			return false, err
+		}
+		ctx, err = assessment.enforceService(ctx, tx, a.PreviewSigner, input.Confirmation)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	if input.EscalationPolicyID != nil && organizationID != nil {

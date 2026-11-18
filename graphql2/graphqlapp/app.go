@@ -215,7 +215,7 @@ func (a *App) Handler() http.Handler {
 	}})
 
 	h.SetRecoverFunc(func(ctx context.Context, recovered any) error {
-		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && (f.Field.Name == "deletionPreview" || f.Field.Name == "previewUpdateEscalationPolicy" || f.Field.Name == "previewUpdateEscalationPolicyStep" || f.Field.Name == "previewUpdateScheduleTarget" || f.Field.Name == "previewUpdateRotation") {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && (f.Field.Name == "deletionPreview" || f.Field.Name == "previewUpdateEscalationPolicy" || f.Field.Name == "previewUpdateEscalationPolicyStep" || f.Field.Name == "previewUpdateScheduleTarget" || f.Field.Name == "previewUpdateRotation" || f.Field.Name == "previewUpdateService") {
 			return previewUnavailable()
 		}
 		if sessionDiagnosticSelected(ctx) {
@@ -276,12 +276,12 @@ func (a *App) Handler() http.Handler {
 	h.Use(&errSkipHandler{})
 
 	h.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
-		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Mutation" && (f.Field.Name == "deleteAll" || f.Field.Name == "updateEscalationPolicy" || f.Field.Name == "updateEscalationPolicyStep" || f.Field.Name == "updateScheduleTarget" || f.Field.Name == "updateRotation") {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Mutation" && (f.Field.Name == "deleteAll" || f.Field.Name == "updateEscalationPolicy" || f.Field.Name == "updateEscalationPolicyStep" || f.Field.Name == "updateScheduleTarget" || f.Field.Name == "updateRotation" || f.Field.Name == "updateService") {
 			if typed, ok := deletionSafetyError(err); ok {
 				return deletionPreviewGraphQLError(ctx, typed)
 			}
 		}
-		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && (f.Field.Name == "deletionPreview" || f.Field.Name == "previewUpdateRotation") {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && (f.Field.Name == "deletionPreview" || f.Field.Name == "previewUpdateRotation" || f.Field.Name == "previewUpdateService") {
 			return deletionPreviewGraphQLError(ctx, err)
 		}
 		if graphql.GetFieldContext(ctx) == nil || sessionDiagnosticOperation(ctx) {

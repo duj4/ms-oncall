@@ -946,7 +946,7 @@ type UpdateBasicAuthInput struct {
 	UserID      string  `json:"userID"`
 }
 
-// An update removes child relationships; its business root remains present.
+// Preview of relationship changes; the business root remains present.
 type UpdateDeletionPreview struct {
 	Operation            DeletionOperation  `json:"operation"`
 	Root                 *DeletionResource  `json:"root"`
@@ -1033,11 +1033,12 @@ type UpdateScheduleInput struct {
 }
 
 type UpdateServiceInput struct {
-	ID                   string     `json:"id"`
-	Name                 *string    `json:"name,omitempty"`
-	Description          *string    `json:"description,omitempty"`
-	EscalationPolicyID   *string    `json:"escalationPolicyID,omitempty"`
-	MaintenanceExpiresAt *time.Time `json:"maintenanceExpiresAt,omitempty"`
+	ID                   string                           `json:"id"`
+	Name                 *string                          `json:"name,omitempty"`
+	Description          *string                          `json:"description,omitempty"`
+	EscalationPolicyID   *string                          `json:"escalationPolicyID,omitempty"`
+	MaintenanceExpiresAt *time.Time                       `json:"maintenanceExpiresAt,omitempty"`
+	Confirmation         *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateUserCalendarSubscriptionInput struct {

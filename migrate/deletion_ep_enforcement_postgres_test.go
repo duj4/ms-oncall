@@ -565,17 +565,34 @@ func TestPostgresDeletionEnforcementEPDeleteFirst(t *testing.T) {
 			writer := epProfileWriter(t, ctx, db)
 			writerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			done := serviceProfileWait(t, writerCtx, db, writer, func() error { return w.run(writerCtx, writer) })
-			close(barrier.resume)
-			require.NoError(t, <-deleted)
-			err = <-done
-			if err != nil {
+			if w.name == "service_retarget_store" {
+				// Service Policy replacement now validates/locks the target EP
+				// NOWAIT before DML. The real competing Delete owns that row:
+				// fail closed immediately, preserving the Service's old routing.
+				var before, after string
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text FROM services s`).Scan(&before))
+				err = w.run(writerCtx, writer)
 				pg := sqlutil.MapError(err)
 				require.NotNil(t, pg)
-				require.Equal(t, "23503", pg.Code)
+				require.Equal(t, "55P03", pg.Code)
 				require.NoError(t, writer.Rollback())
+				close(barrier.resume)
+				require.NoError(t, <-deleted)
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text FROM services s`).Scan(&after))
+				require.Equal(t, before, after, "early refusal must not change any Service")
 			} else {
-				require.NoError(t, writer.Commit())
+				done := serviceProfileWait(t, writerCtx, db, writer, func() error { return w.run(writerCtx, writer) })
+				close(barrier.resume)
+				require.NoError(t, <-deleted)
+				err = <-done
+				if err != nil {
+					pg := sqlutil.MapError(err)
+					require.NotNil(t, pg)
+					require.Equal(t, "23503", pg.Code)
+					require.NoError(t, writer.Rollback())
+				} else {
+					require.NoError(t, writer.Commit())
+				}
 			}
 			require.Zero(t, enforcementCount(t, ctx, db, `SELECT count(*) FROM escalation_policies WHERE id=$1`, f.policy))
 			require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM escalation_policy_delete_audit_events WHERE root_id=$1 AND outcome='committed'`, f.policy))

@@ -93,6 +93,8 @@ func defaultHumanOperation(ctx context.Context, object, field string, args map[s
 	switch object {
 	case "Query":
 		switch field {
+		case "previewUpdateService":
+			return nil // same bounded Normal Service management as updateService
 		case "manageableOrganizations", "service", "services", "escalationPolicy", "escalationPolicies", "schedule", "schedules", "rotation", "rotations", "user", "users", "userOverrides", "integrationKey", "integrationKeyTypes", "destinationTypes", "destinationFieldSearch", "destinationFieldValidate", "destinationFieldValueName", "destinationDisplayInfo", "timeZones", "calcRotationHandoffTimes", "experimentalFlags", "systemLimits":
 			return nil
 		case "config":

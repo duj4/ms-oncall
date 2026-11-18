@@ -15,7 +15,11 @@ extend input UpdateRotationInput {
   confirmation: DeletionSafetyConfirmationInput
 }
 
-"An update removes child relationships; its business root remains present."
+extend input UpdateServiceInput {
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+"Preview of relationship changes; the business root remains present."
 type UpdateDeletionPreview {
   operation: DeletionOperation!
   root: DeletionResource!
@@ -33,4 +37,5 @@ extend type Query {
   previewUpdateEscalationPolicyStep(input: UpdateEscalationPolicyStepInput!): UpdateDeletionPreview!
   previewUpdateScheduleTarget(input: ScheduleTargetInput!): UpdateDeletionPreview!
   previewUpdateRotation(input: UpdateRotationInput!): UpdateDeletionPreview!
+  previewUpdateService(input: UpdateServiceInput!): UpdateDeletionPreview!
 }
