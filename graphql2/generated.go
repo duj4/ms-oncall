@@ -686,6 +686,7 @@ type ComplexityRoot struct {
 		PhoneNumberInfo                   func(childComplexity int, number string) int
 		PreviewUpdateEscalationPolicy     func(childComplexity int, input UpdateEscalationPolicyInput) int
 		PreviewUpdateEscalationPolicyStep func(childComplexity int, input UpdateEscalationPolicyStepInput) int
+		PreviewUpdateRotation             func(childComplexity int, input UpdateRotationInput) int
 		PreviewUpdateScheduleTarget       func(childComplexity int, input ScheduleTargetInput) int
 		Rotation                          func(childComplexity int, id string) int
 		Rotations                         func(childComplexity int, input *RotationSearchOptions) int
@@ -1181,6 +1182,7 @@ type QueryResolver interface {
 	PreviewUpdateEscalationPolicy(ctx context.Context, input UpdateEscalationPolicyInput) (*UpdateDeletionPreview, error)
 	PreviewUpdateEscalationPolicyStep(ctx context.Context, input UpdateEscalationPolicyStepInput) (*UpdateDeletionPreview, error)
 	PreviewUpdateScheduleTarget(ctx context.Context, input ScheduleTargetInput) (*UpdateDeletionPreview, error)
+	PreviewUpdateRotation(ctx context.Context, input UpdateRotationInput) (*UpdateDeletionPreview, error)
 }
 type RotationResolver interface {
 	Organization(ctx context.Context, obj *rotation.Rotation) (*OrganizationSummary, error)
@@ -4141,6 +4143,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.PreviewUpdateEscalationPolicyStep(childComplexity, args["input"].(UpdateEscalationPolicyStepInput)), true
+	case "Query.previewUpdateRotation":
+		if e.ComplexityRoot.Query.PreviewUpdateRotation == nil {
+			break
+		}
+
+		args, err := ec.field_Query_previewUpdateRotation_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.PreviewUpdateRotation(childComplexity, args["input"].(UpdateRotationInput)), true
 	case "Query.previewUpdateScheduleTarget":
 		if e.ComplexityRoot.Query.PreviewUpdateScheduleTarget == nil {
 			break
@@ -8635,6 +8648,20 @@ func (ec *executionContext) field_Query_previewUpdateEscalationPolicy_args(ctx c
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (UpdateEscalationPolicyInput, error) {
 			return ec.unmarshalNUpdateEscalationPolicyInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateEscalationPolicyInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_previewUpdateRotation_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (UpdateRotationInput, error) {
+			return ec.unmarshalNUpdateRotationInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateRotationInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -21461,6 +21488,50 @@ func (ec *executionContext) fieldContext_Query_previewUpdateScheduleTarget(ctx c
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_previewUpdateRotation(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewUpdateRotation(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewUpdateRotation(ctx, fc.Args["input"].(UpdateRotationInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+			return ec.marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewUpdateRotation(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UpdateDeletionPreview(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewUpdateRotation_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -31457,7 +31528,7 @@ func (ec *executionContext) unmarshalInputUpdateRotationInput(ctx context.Contex
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "name", "description", "timeZone", "start", "type", "shiftLength", "userIDs", "activeUserIndex"}
+	fieldsInOrder := [...]string{"id", "name", "description", "timeZone", "start", "type", "shiftLength", "userIDs", "activeUserIndex", "confirmation"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -31527,6 +31598,13 @@ func (ec *executionContext) unmarshalInputUpdateRotationInput(ctx context.Contex
 				return it, err
 			}
 			it.ActiveUserIndex = data
+		case "confirmation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("confirmation"))
+			data, err := ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Confirmation = data
 		}
 	}
 	return it, nil
@@ -38903,6 +38981,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_previewUpdateScheduleTarget(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewUpdateRotation":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewUpdateRotation(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}

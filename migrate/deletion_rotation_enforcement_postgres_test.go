@@ -172,9 +172,9 @@ func TestPostgresDeletionEnforcementRotationLifecycleBoundary(t *testing.T) {
 		}
 		require.NoError(t, rows.Err())
 		rows.Close()
-		// This separate member-edit operation exercises the normal last-member
-		// Trigger. It is never cleanup by the deletion enforcer or a CASCADE proof.
-		require.NoError(t, app.RotationStore.DeleteRotationParticipantsTx(ctx, nil, ids))
+		// A raw database writer exercises the normal last-member Trigger.
+		// Guarded Store refusal is tested separately; this is not Root cleanup.
+		enforcementExec(t, ctx, db, `DELETE FROM rotation_participants WHERE id=ANY($1::uuid[])`, sqlutil.UUIDArray(ids))
 		require.Zero(t, enforcementCount(t, ctx, db, `SELECT count(*) FROM rotation_state WHERE rotation_id=$1`, f.root))
 		require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM users WHERE id=$1`, f.user))
 	}
@@ -694,7 +694,8 @@ func TestPostgresDeletionEnforcementRotationStateWriters(t *testing.T) {
 					case "insert":
 						return app.RotationStore.AddRotationUsersTx(ctx, writer, f.root.String(), []string{f.user.String()})
 					case "delete":
-						return app.RotationStore.DeleteRotationParticipantsTx(ctx, writer, []string{parts[0].ID})
+						_, err := writer.ExecContext(ctx, `DELETE FROM rotation_participants WHERE id=$1`, parts[0].ID)
+						return err
 					case "user":
 						return app.RotationStore.UpdateParticipantUserIDTx(ctx, writer, parts[0].ID, f.actor.String())
 					case "reorder":

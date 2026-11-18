@@ -28,12 +28,31 @@ func Bind(ctx context.Context, tx *sql.Tx, resources []ds.Resource) (context.Con
 	}
 	c := &capability{tx: tx, remaining: make(map[ds.Resource]bool)}
 	for _, r := range resources {
-		if r.ID == "" || (r.Kind != ds.ResourceEscalationPolicyStep && r.Kind != ds.ResourceEscalationPolicyAction && r.Kind != ds.ResourceScheduleRule) || c.remaining[r] {
+		if r.ID == "" || (r.Kind != ds.ResourceEscalationPolicyStep && r.Kind != ds.ResourceEscalationPolicyAction && r.Kind != ds.ResourceScheduleRule && r.Kind != ds.ResourceRotationParticipant && r.Kind != ds.ResourceRotationState) || c.remaining[r] {
 			return ctx, unavailable()
 		}
 		c.remaining[r] = true
 	}
 	return context.WithValue(ctx, key{}, c), nil
+}
+
+// Check validates the requested identities before DML without consuming them.
+// Consume must still corroborate the actual DELETE RETURNING identities.
+func Check(ctx context.Context, tx *sql.Tx, resources ...ds.Resource) error {
+	if err := Require(ctx, tx); err != nil {
+		return err
+	}
+	c := ctx.Value(key{}).(*capability)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seen := make(map[ds.Resource]bool)
+	for _, r := range resources {
+		if !c.remaining[r] || seen[r] {
+			return unavailable()
+		}
+		seen[r] = true
+	}
+	return nil
 }
 
 // Require fails before DML when no transaction-bound owner exists. Actual

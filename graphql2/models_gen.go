@@ -1021,7 +1021,8 @@ type UpdateRotationInput struct {
 	ShiftLength *int           `json:"shiftLength,omitempty"`
 	UserIDs     []string       `json:"userIDs,omitempty"`
 	// The index of the user in `userIDs` to set as the active user. If not provided, the existing active user index will be used.
-	ActiveUserIndex *int `json:"activeUserIndex,omitempty"`
+	ActiveUserIndex *int                             `json:"activeUserIndex,omitempty"`
+	Confirmation    *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateScheduleInput struct {

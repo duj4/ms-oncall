@@ -19,29 +19,34 @@ import (
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/internal/updateguard"
 	"github.com/target/goalert/permission"
+	"github.com/target/goalert/schedule/updateaudit"
 	"github.com/target/goalert/validation/validate"
 )
 
 const updateVersionDomain = "goalert.update-induced-deletion.v1\x00"
 
 type updateAssessment struct {
-	operation ds.Operation
-	root      ds.Resource
-	plan      ds.DeletionPlan
-	removed   []ds.Resource
-	selected  []ds.Resource
-	expected  map[string]updateConsent
-	digest    string
+	operation      ds.Operation
+	root           ds.Resource
+	plan           ds.DeletionPlan
+	removed        []ds.Resource
+	selected       []ds.Resource
+	expected       map[string]updateConsent
+	digest         string
+	rotationBefore *updateaudit.RotationSnapshot
 }
 
 func updateObject(kind ds.ResourceKind, id string) ds.Resource {
 	return ds.Resource{Kind: kind, ID: id}
 }
 
-// These are the same three input types accepted by the existing mutations.
+// These are the input types accepted by the existing mutations.
 // Confirmation is excluded; a preview cannot acknowledge itself.
 func updateIntent(input any) (any, ds.Operation, ds.Resource, error) {
 	switch i := input.(type) {
+	case graphql2.UpdateRotationInput:
+		i.Confirmation = nil
+		return i, ds.OperationUpdateRotation, updateObject(ds.ResourceRotation, i.ID), nil
 	case graphql2.UpdateEscalationPolicyInput:
 		i.Confirmation = nil
 		return i, ds.OperationUpdateEscalationPolicy, updateObject(ds.ResourceEscalationPolicy, i.ID), nil
@@ -79,6 +84,9 @@ func (a *App) assessUpdate(ctx context.Context, tx *sql.Tx, raw any, locked bool
 	}
 	if err := validate.UUID("ID", root.ID); err != nil {
 		return s, err
+	}
+	if i, ok := input.(graphql2.UpdateRotationInput); ok {
+		return a.assessRotationUpdate(ctx, tx, i, locked)
 	}
 	var authorityErr error
 	if op == ds.OperationUpdateScheduleTarget {
@@ -404,7 +412,7 @@ func (q *Query) previewUpdate(ctx context.Context, input any) (_ *graphql2.Updat
 		return nil, previewUnavailable()
 	}
 	response := &graphql2.UpdateDeletionPreview{Root: safeUpdateResource(s.root), PolicyVersion: ds.PolicyVersion, Complete: true, CanProceed: true, ImpactVersion: s.digest + "." + base64.RawURLEncoding.EncodeToString(sig), Removed: []graphql2.DeletionResource{}, Impacts: []graphql2.DeletionImpact{}}
-	response.Operation = map[ds.Operation]graphql2.DeletionOperation{ds.OperationUpdateEscalationPolicy: graphql2.DeletionOperationUpdateEscalationPolicy, ds.OperationUpdateEscalationPolicyStep: graphql2.DeletionOperationUpdateEscalationPolicyStep, ds.OperationUpdateScheduleTarget: graphql2.DeletionOperationUpdateScheduleTarget}[s.operation]
+	response.Operation = map[ds.Operation]graphql2.DeletionOperation{ds.OperationUpdateEscalationPolicy: graphql2.DeletionOperationUpdateEscalationPolicy, ds.OperationUpdateEscalationPolicyStep: graphql2.DeletionOperationUpdateEscalationPolicyStep, ds.OperationUpdateScheduleTarget: graphql2.DeletionOperationUpdateScheduleTarget, ds.OperationUpdateRotation: graphql2.DeletionOperationUpdateRotation}[s.operation]
 	if len(s.removed) > 0 {
 		response.CanProceed = s.plan.CanProceed()
 		response.RequiresConfirmation = response.CanProceed && s.plan.RequiresConfirmation()
@@ -439,6 +447,10 @@ func (q *Query) PreviewUpdateScheduleTarget(ctx context.Context, input graphql2.
 		target.ID = permission.UserID(ctx)
 		input.Target = &target
 	}
+	return q.previewUpdate(ctx, input)
+}
+
+func (q *Query) PreviewUpdateRotation(ctx context.Context, input graphql2.UpdateRotationInput) (*graphql2.UpdateDeletionPreview, error) {
 	return q.previewUpdate(ctx, input)
 }
 

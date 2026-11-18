@@ -93,7 +93,7 @@ func TestPostgresDeletionEnforcementRotationPopulatedVersions(t *testing.T) {
 			case "add":
 				require.NoError(t, app.RotationStore.AddRotationUsersTx(ctx, nil, f.root.String(), []string{f.user.String()}))
 			case "delete":
-				require.NoError(t, app.RotationStore.DeleteRotationParticipantsTx(ctx, nil, []string{parts[1].ID}))
+				enforcementExec(t, ctx, db, `DELETE FROM rotation_participants WHERE id=$1`, parts[1].ID)
 			case "state_identity":
 				current, err := app.RotationStore.FindAllParticipants(ctx, f.root.String())
 				require.NoError(t, err)
@@ -101,7 +101,9 @@ func TestPostgresDeletionEnforcementRotationPopulatedVersions(t *testing.T) {
 				for i, p := range current {
 					ids[i] = p.ID
 				}
-				require.NoError(t, app.RotationStore.DeleteRotationParticipantsTx(ctx, nil, ids))
+				for _, id := range ids {
+					enforcementExec(t, ctx, db, `DELETE FROM rotation_participants WHERE id=$1`, id)
+				}
 				require.NoError(t, app.RotationStore.AddRotationUsersTx(ctx, nil, f.root.String(), []string{f.user.String(), f.actor.String()}))
 			}
 			fresh := enforcementPreview(t, ctx, app, rotationProfilePreviewInput(f.root)...)
@@ -137,7 +139,8 @@ func TestPostgresDeletionEnforcementRotationPopulatedWriters(t *testing.T) {
 					case "add":
 						return app.RotationStore.AddRotationUsersTx(ctx, writer, f.root.String(), []string{f.user.String()})
 					case "delete":
-						return app.RotationStore.DeleteRotationParticipantsTx(ctx, writer, []string{parts[0].ID})
+						_, err := writer.ExecContext(ctx, `DELETE FROM rotation_participants WHERE id=$1`, parts[0].ID)
+						return err
 					case "user":
 						return app.RotationStore.UpdateParticipantUserIDTx(ctx, writer, parts[0].ID, f.actor.String())
 					case "reorder":

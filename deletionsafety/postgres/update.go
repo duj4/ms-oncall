@@ -33,7 +33,7 @@ func CollectUpdate(ctx context.Context, tx *sql.Tx, root ds.Resource, removed []
 		if err := tx.QueryRowContext(ctx, `SELECT escalation_policy_id::text FROM public.escalation_policy_steps WHERE id=$1`, root.ID).Scan(&parent); err != nil {
 			return bad, safeError(err)
 		}
-	} else if root.Kind != ds.ResourceEscalationPolicy && root.Kind != ds.ResourceSchedule {
+	} else if root.Kind != ds.ResourceEscalationPolicy && root.Kind != ds.ResourceSchedule && root.Kind != ds.ResourceRotation {
 		return bad, unavailable()
 	}
 	if err := tx.QueryRowContext(ctx, query, root.ID).Scan(&org); err != nil {
@@ -63,6 +63,14 @@ func CollectUpdate(ctx context.Context, tx *sql.Tx, root ds.Resource, removed []
 		return bad, err
 	}
 	c.global = permission.System(ctx)
+	if root.Kind == ds.ResourceRotation {
+		// This is the surviving Update owner, never a Root Delete selector.
+		// Reuse canonical v2 roster validation, including reverse State FKs.
+		c.rotationRoot = root.ID
+		if err := c.validateRotation([]string{root.ID}); err != nil {
+			return bad, safeError(err)
+		}
+	}
 	for _, r := range removed {
 		var p projection
 		switch {
@@ -72,6 +80,10 @@ func CollectUpdate(ctx context.Context, tx *sql.Tx, root ds.Resource, removed []
 			p = owned(edge(ds.RelationshipRemovedAction, r.Kind, root.Kind, actionFrom, "a.id", "a.id", "st.id", "ep.organization_id"), ds.ResourceEscalationPolicy, ds.ResourceEscalationPolicy, "ep.id", "ep.id")
 		case root.Kind == ds.ResourceSchedule && r.Kind == ds.ResourceScheduleRule:
 			p = edge(ds.RelationshipRemovedRule, r.Kind, root.Kind, ruleFrom, "r.id", "r.id", "s.id", "s.organization_id")
+		case root.Kind == ds.ResourceRotation && r.Kind == ds.ResourceRotationParticipant:
+			p = edge(ds.RelationshipRemovedParticipant, r.Kind, root.Kind, participantFrom, "p.id", "p.id", "r.id", "r.organization_id")
+			p.position = "p.position"
+			p.referenceKind, p.reference = number(ds.ResourceUser), "p.user_id"
 		default:
 			return bad, unavailable()
 		}
