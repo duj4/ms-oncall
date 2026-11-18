@@ -69,3 +69,24 @@ extend type Query {
   previewSetTemporarySchedule(input: SetTemporaryScheduleInput!): UpdateDeletionPreview!
   previewClearTemporarySchedules(input: ClearTemporarySchedulesInput!): UpdateDeletionPreview!
 }
+
+
+extend input SetScheduleOnCallNotificationRulesInput { confirmation: DeletionSafetyConfirmationInput }
+"Minimal rule configuration. Empty time/weekdays denotes on-call change."
+type OnCallJSONRule {
+  ruleID: ID!
+  channelID: ID!
+  time: String!
+  weekdays: String!
+}
+type OnCallJSONEffect { ruleID: ID! change: String! source: String! }
+type OnCallJSONUpdatePreview {
+  contractVersion: Int!
+  before: [OnCallJSONRule!]!
+  after: [OnCallJSONRule!]!
+  effects: [OnCallJSONEffect!]!
+}
+extend type UpdateDeletionPreview { onCallJSONUpdate: OnCallJSONUpdatePreview }
+extend type Query {
+  previewSetScheduleOnCallNotificationRules(input: SetScheduleOnCallNotificationRulesInput!): UpdateDeletionPreview!
+}

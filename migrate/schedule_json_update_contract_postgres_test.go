@@ -23,7 +23,7 @@ func TestPostgresScheduleJSONMigration308AndRawConstraints(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(ctx, old).Scan(&oldBefore))
 	n, err := Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Equal(t, len(Names())-307, n)
 	require.NoError(t, db.QueryRowContext(ctx, old).Scan(&oldAfter))
 	require.Equal(t, oldBefore, oldAfter)
 	require.NoError(t, VerifyAll(ctx, uri))
@@ -113,7 +113,7 @@ func TestPostgresScheduleJSON308AuditCoexistence(t *testing.T) {
 	before := u03HistoryRows(t, db)
 	n, err := Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Equal(t, len(Names())-307, n)
 	require.Equal(t, before, u03HistoryRows(t, db), "old audit rows must be byte-equivalent after 308")
 	for _, e := range []sraudit.Event{scheduleV1, rotationV1, updateV2} {
 		u03SchemaAppend(t, db, e)

@@ -2223,6 +2223,35 @@
           "sha256": "0e8fad831d08057ddb8b631ad6afe4865b148edcfbc79d4e895e90d4e61e6107"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-oncall-json-update-audit-d09-contract-impl1",
+      "first_position": 309,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-DELETION-SAFETY-UPDATE-INDUCED-ONCALL-JSON-CONTRACT-IMPL1 Owner-authorized; local candidate only",
+        "base_commit": "1d02b5e6b0e93dd2ac6f3b6233bc9f46abff0d77",
+        "base_tree": "566511b4759ba3e207416abb52a036ef3d849eb0",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "b4c9ac69a8368ea377c42b6acc4c301a18b49dfb",
+        "authorization_tree": "9e2feb720999c16c18af272258609acdefceba2b"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-schedule-json-update-audit-d09-contract-impl1",
+        "migration_id": "20261118123944-schedule-json-update-audit-v1.sql",
+        "sha256": "0e8fad831d08057ddb8b631ad6afe4865b148edcfbc79d4e895e90d4e61e6107",
+        "evidence": "DIRECT_OWNER_ONCALL_CONTRACT_IMPL1_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_308"
+      },
+      "adaptation_evidence": "INDEPENDENT_ONCALL_JSON_UPDATE_V1_SCOPED_LOCAL_RULE_BEFORE_AFTER_COMPLETE_SEMANTIC_DIFF_SURVIVING_SCHEDULE",
+      "entries": [
+        {
+          "id": "20261118220819-oncall-json-update-audit-v1.sql",
+          "original_id": "20261118220819-oncall-json-update-audit-v1.sql",
+          "sha256": "515ab3df1446babfd63c0b7c2e3fcc51fe8c1d3681c19dc9b735c3671a9009f1"
+        }
+      ]
     }
   ]
 }

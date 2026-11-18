@@ -664,6 +664,27 @@ type NotificationState struct {
 	FormattedSrcValue string              `json:"formattedSrcValue"`
 }
 
+type OnCallJSONEffect struct {
+	RuleID string `json:"ruleID"`
+	Change string `json:"change"`
+	Source string `json:"source"`
+}
+
+// Minimal rule configuration. Empty time/weekdays denotes on-call change.
+type OnCallJSONRule struct {
+	RuleID    string `json:"ruleID"`
+	ChannelID string `json:"channelID"`
+	Time      string `json:"time"`
+	Weekdays  string `json:"weekdays"`
+}
+
+type OnCallJSONUpdatePreview struct {
+	ContractVersion int                `json:"contractVersion"`
+	Before          []OnCallJSONRule   `json:"before"`
+	After           []OnCallJSONRule   `json:"after"`
+	Effects         []OnCallJSONEffect `json:"effects"`
+}
+
 type OnCallOverview struct {
 	ServiceCount       int                       `json:"serviceCount"`
 	ServiceAssignments []OnCallServiceAssignment `json:"serviceAssignments"`
@@ -864,8 +885,9 @@ type SetLabelInput struct {
 }
 
 type SetScheduleOnCallNotificationRulesInput struct {
-	ScheduleID string                        `json:"scheduleID"`
-	Rules      []OnCallNotificationRuleInput `json:"rules"`
+	ScheduleID   string                           `json:"scheduleID"`
+	Rules        []OnCallNotificationRuleInput    `json:"rules"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type SetTemporaryScheduleInput struct {
@@ -983,6 +1005,7 @@ type UpdateDeletionPreview struct {
 	Removed              []DeletionResource         `json:"removed"`
 	Impacts              []DeletionImpact           `json:"impacts"`
 	ScheduleJSONUpdate   *ScheduleJSONUpdatePreview `json:"scheduleJSONUpdate,omitempty"`
+	OnCallJSONUpdate     *OnCallJSONUpdatePreview   `json:"onCallJSONUpdate,omitempty"`
 }
 
 type UpdateEscalationPolicyInput struct {

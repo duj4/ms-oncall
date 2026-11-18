@@ -83,6 +83,20 @@ func (s *Store) LookupDestID(ctx context.Context, tx *sql.Tx, d gadb.DestV1) (uu
 }
 
 func (s *Store) MapDestToID(ctx context.Context, tx gadb.DBTX, d gadb.DestV1) (uuid.UUID, error) {
+	return s.mapDestToID(ctx, tx, d, uuid.New())
+}
+
+// MapDestToPlannedID realizes a read-only OnCall intent inside its owning
+// business transaction. A concurrent destination mapping may return another
+// identity; the caller must reject that mismatch and roll back the transaction.
+func (s *Store) MapDestToPlannedID(ctx context.Context, tx *sql.Tx, d gadb.DestV1, id uuid.UUID) (uuid.UUID, error) {
+	if tx == nil || id == uuid.Nil {
+		return uuid.Nil, errors.New("invalid planned channel mapping")
+	}
+	return s.mapDestToID(ctx, tx, d, id)
+}
+
+func (s *Store) mapDestToID(ctx context.Context, tx gadb.DBTX, d gadb.DestV1, id uuid.UUID) (uuid.UUID, error) {
 	err := permission.LimitCheckAny(ctx, permission.User)
 	if err != nil {
 		return uuid.UUID{}, err
@@ -97,7 +111,7 @@ func (s *Store) MapDestToID(ctx context.Context, tx gadb.DBTX, d gadb.DestV1) (u
 	}
 
 	return gadb.New(tx).NotifChanUpsertDest(ctx, gadb.NotifChanUpsertDestParams{
-		ID:   uuid.New(),
+		ID:   id,
 		Dest: gadb.NullDestV1{Valid: true, DestV1: d},
 		Name: info.Text,
 	})

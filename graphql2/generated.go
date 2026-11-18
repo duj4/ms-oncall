@@ -596,6 +596,26 @@ type ComplexityRoot struct {
 		Status            func(childComplexity int) int
 	}
 
+	OnCallJSONEffect struct {
+		Change func(childComplexity int) int
+		RuleID func(childComplexity int) int
+		Source func(childComplexity int) int
+	}
+
+	OnCallJSONRule struct {
+		ChannelID func(childComplexity int) int
+		RuleID    func(childComplexity int) int
+		Time      func(childComplexity int) int
+		Weekdays  func(childComplexity int) int
+	}
+
+	OnCallJSONUpdatePreview struct {
+		After           func(childComplexity int) int
+		Before          func(childComplexity int) int
+		ContractVersion func(childComplexity int) int
+		Effects         func(childComplexity int) int
+	}
+
 	OnCallNotificationRule struct {
 		Dest          func(childComplexity int) int
 		ID            func(childComplexity int) int
@@ -650,66 +670,67 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		ActionInputValidate               func(childComplexity int, input gadb.UIKActionV1) int
-		Alert                             func(childComplexity int, id int) int
-		Alerts                            func(childComplexity int, input *AlertSearchOptions) int
-		AuthSubjectsForProvider           func(childComplexity int, first *int, after *string, providerID string) int
-		CalcRotationHandoffTimes          func(childComplexity int, input *CalcRotationHandoffTimesInput) int
-		Config                            func(childComplexity int, all *bool) int
-		ConfigHints                       func(childComplexity int) int
-		CurrentOrganizationContext        func(childComplexity int) int
-		DebugMessageStatus                func(childComplexity int, input DebugMessageStatusInput) int
-		DebugMessages                     func(childComplexity int, input *DebugMessagesInput) int
-		DeletionPreview                   func(childComplexity int, input DeletionPlanInput, first *int, after *string) int
-		DestinationDisplayInfo            func(childComplexity int, input gadb.DestV1) int
-		DestinationFieldSearch            func(childComplexity int, input DestinationFieldSearchInput) int
-		DestinationFieldValidate          func(childComplexity int, input DestinationFieldValidateInput) int
-		DestinationFieldValueName         func(childComplexity int, input DestinationFieldValidateInput) int
-		DestinationTypes                  func(childComplexity int, isDynamicAction *bool) int
-		EscalationPolicies                func(childComplexity int, input *EscalationPolicySearchOptions) int
-		EscalationPolicy                  func(childComplexity int, id string) int
-		ExperimentalFlags                 func(childComplexity int) int
-		Expr                              func(childComplexity int) int
-		GenerateSlackAppManifest          func(childComplexity int) int
-		GqlAPIKeys                        func(childComplexity int) int
-		HeartbeatMonitor                  func(childComplexity int, id string) int
-		IntegrationKey                    func(childComplexity int, id string) int
-		IntegrationKeyTypes               func(childComplexity int) int
-		IntegrationKeys                   func(childComplexity int, input *IntegrationKeySearchOptions) int
-		LabelKeys                         func(childComplexity int, input *LabelKeySearchOptions) int
-		LabelValues                       func(childComplexity int, input *LabelValueSearchOptions) int
-		Labels                            func(childComplexity int, input *LabelSearchOptions) int
-		LinkAccountInfo                   func(childComplexity int, token string) int
-		ManageableOrganizations           func(childComplexity int, first *int, after *string, search *string) int
-		MessageLogs                       func(childComplexity int, input *MessageLogSearchOptions) int
-		MessageStatusHistory              func(childComplexity int, id string) int
-		PhoneNumberInfo                   func(childComplexity int, number string) int
-		PreviewClearTemporarySchedules    func(childComplexity int, input ClearTemporarySchedulesInput) int
-		PreviewSetTemporarySchedule       func(childComplexity int, input SetTemporaryScheduleInput) int
-		PreviewUpdateEscalationPolicy     func(childComplexity int, input UpdateEscalationPolicyInput) int
-		PreviewUpdateEscalationPolicyStep func(childComplexity int, input UpdateEscalationPolicyStepInput) int
-		PreviewUpdateRotation             func(childComplexity int, input UpdateRotationInput) int
-		PreviewUpdateScheduleTarget       func(childComplexity int, input ScheduleTargetInput) int
-		PreviewUpdateService              func(childComplexity int, input UpdateServiceInput) int
-		Rotation                          func(childComplexity int, id string) int
-		Rotations                         func(childComplexity int, input *RotationSearchOptions) int
-		Schedule                          func(childComplexity int, id string) int
-		Schedules                         func(childComplexity int, input *ScheduleSearchOptions) int
-		Service                           func(childComplexity int, id string) int
-		Services                          func(childComplexity int, input *ServiceSearchOptions) int
-		SlackChannel                      func(childComplexity int, id string) int
-		SlackChannels                     func(childComplexity int, input *SlackChannelSearchOptions) int
-		SlackUserGroup                    func(childComplexity int, id string) int
-		SlackUserGroups                   func(childComplexity int, input *SlackUserGroupSearchOptions) int
-		SwoStatus                         func(childComplexity int) int
-		SystemLimits                      func(childComplexity int) int
-		TimeZones                         func(childComplexity int, input *TimeZoneSearchOptions) int
-		User                              func(childComplexity int, id *string) int
-		UserCalendarSubscription          func(childComplexity int, id string) int
-		UserContactMethod                 func(childComplexity int, id string) int
-		UserOverride                      func(childComplexity int, id string) int
-		UserOverrides                     func(childComplexity int, input *UserOverrideSearchOptions) int
-		Users                             func(childComplexity int, input *UserSearchOptions, first *int, after *string, search *string) int
+		ActionInputValidate                       func(childComplexity int, input gadb.UIKActionV1) int
+		Alert                                     func(childComplexity int, id int) int
+		Alerts                                    func(childComplexity int, input *AlertSearchOptions) int
+		AuthSubjectsForProvider                   func(childComplexity int, first *int, after *string, providerID string) int
+		CalcRotationHandoffTimes                  func(childComplexity int, input *CalcRotationHandoffTimesInput) int
+		Config                                    func(childComplexity int, all *bool) int
+		ConfigHints                               func(childComplexity int) int
+		CurrentOrganizationContext                func(childComplexity int) int
+		DebugMessageStatus                        func(childComplexity int, input DebugMessageStatusInput) int
+		DebugMessages                             func(childComplexity int, input *DebugMessagesInput) int
+		DeletionPreview                           func(childComplexity int, input DeletionPlanInput, first *int, after *string) int
+		DestinationDisplayInfo                    func(childComplexity int, input gadb.DestV1) int
+		DestinationFieldSearch                    func(childComplexity int, input DestinationFieldSearchInput) int
+		DestinationFieldValidate                  func(childComplexity int, input DestinationFieldValidateInput) int
+		DestinationFieldValueName                 func(childComplexity int, input DestinationFieldValidateInput) int
+		DestinationTypes                          func(childComplexity int, isDynamicAction *bool) int
+		EscalationPolicies                        func(childComplexity int, input *EscalationPolicySearchOptions) int
+		EscalationPolicy                          func(childComplexity int, id string) int
+		ExperimentalFlags                         func(childComplexity int) int
+		Expr                                      func(childComplexity int) int
+		GenerateSlackAppManifest                  func(childComplexity int) int
+		GqlAPIKeys                                func(childComplexity int) int
+		HeartbeatMonitor                          func(childComplexity int, id string) int
+		IntegrationKey                            func(childComplexity int, id string) int
+		IntegrationKeyTypes                       func(childComplexity int) int
+		IntegrationKeys                           func(childComplexity int, input *IntegrationKeySearchOptions) int
+		LabelKeys                                 func(childComplexity int, input *LabelKeySearchOptions) int
+		LabelValues                               func(childComplexity int, input *LabelValueSearchOptions) int
+		Labels                                    func(childComplexity int, input *LabelSearchOptions) int
+		LinkAccountInfo                           func(childComplexity int, token string) int
+		ManageableOrganizations                   func(childComplexity int, first *int, after *string, search *string) int
+		MessageLogs                               func(childComplexity int, input *MessageLogSearchOptions) int
+		MessageStatusHistory                      func(childComplexity int, id string) int
+		PhoneNumberInfo                           func(childComplexity int, number string) int
+		PreviewClearTemporarySchedules            func(childComplexity int, input ClearTemporarySchedulesInput) int
+		PreviewSetScheduleOnCallNotificationRules func(childComplexity int, input SetScheduleOnCallNotificationRulesInput) int
+		PreviewSetTemporarySchedule               func(childComplexity int, input SetTemporaryScheduleInput) int
+		PreviewUpdateEscalationPolicy             func(childComplexity int, input UpdateEscalationPolicyInput) int
+		PreviewUpdateEscalationPolicyStep         func(childComplexity int, input UpdateEscalationPolicyStepInput) int
+		PreviewUpdateRotation                     func(childComplexity int, input UpdateRotationInput) int
+		PreviewUpdateScheduleTarget               func(childComplexity int, input ScheduleTargetInput) int
+		PreviewUpdateService                      func(childComplexity int, input UpdateServiceInput) int
+		Rotation                                  func(childComplexity int, id string) int
+		Rotations                                 func(childComplexity int, input *RotationSearchOptions) int
+		Schedule                                  func(childComplexity int, id string) int
+		Schedules                                 func(childComplexity int, input *ScheduleSearchOptions) int
+		Service                                   func(childComplexity int, id string) int
+		Services                                  func(childComplexity int, input *ServiceSearchOptions) int
+		SlackChannel                              func(childComplexity int, id string) int
+		SlackChannels                             func(childComplexity int, input *SlackChannelSearchOptions) int
+		SlackUserGroup                            func(childComplexity int, id string) int
+		SlackUserGroups                           func(childComplexity int, input *SlackUserGroupSearchOptions) int
+		SwoStatus                                 func(childComplexity int) int
+		SystemLimits                              func(childComplexity int) int
+		TimeZones                                 func(childComplexity int, input *TimeZoneSearchOptions) int
+		User                                      func(childComplexity int, id *string) int
+		UserCalendarSubscription                  func(childComplexity int, id string) int
+		UserContactMethod                         func(childComplexity int, id string) int
+		UserOverride                              func(childComplexity int, id string) int
+		UserOverrides                             func(childComplexity int, input *UserOverrideSearchOptions) int
+		Users                                     func(childComplexity int, input *UserSearchOptions, first *int, after *string, search *string) int
 	}
 
 	Rotation struct {
@@ -919,6 +940,7 @@ type ComplexityRoot struct {
 		Complete             func(childComplexity int) int
 		ImpactVersion        func(childComplexity int) int
 		Impacts              func(childComplexity int) int
+		OnCallJSONUpdate     func(childComplexity int) int
 		Operation            func(childComplexity int) int
 		PolicyVersion        func(childComplexity int) int
 		Removed              func(childComplexity int) int
@@ -1212,6 +1234,7 @@ type QueryResolver interface {
 	PreviewUpdateService(ctx context.Context, input UpdateServiceInput) (*UpdateDeletionPreview, error)
 	PreviewSetTemporarySchedule(ctx context.Context, input SetTemporaryScheduleInput) (*UpdateDeletionPreview, error)
 	PreviewClearTemporarySchedules(ctx context.Context, input ClearTemporarySchedulesInput) (*UpdateDeletionPreview, error)
+	PreviewSetScheduleOnCallNotificationRules(ctx context.Context, input SetScheduleOnCallNotificationRulesInput) (*UpdateDeletionPreview, error)
 }
 type RotationResolver interface {
 	Organization(ctx context.Context, obj *rotation.Rotation) (*OrganizationSummary, error)
@@ -3628,6 +3651,75 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.NotificationState.Status(childComplexity), true
 
+	case "OnCallJSONEffect.change":
+		if e.ComplexityRoot.OnCallJSONEffect.Change == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONEffect.Change(childComplexity), true
+	case "OnCallJSONEffect.ruleID":
+		if e.ComplexityRoot.OnCallJSONEffect.RuleID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONEffect.RuleID(childComplexity), true
+	case "OnCallJSONEffect.source":
+		if e.ComplexityRoot.OnCallJSONEffect.Source == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONEffect.Source(childComplexity), true
+
+	case "OnCallJSONRule.channelID":
+		if e.ComplexityRoot.OnCallJSONRule.ChannelID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONRule.ChannelID(childComplexity), true
+	case "OnCallJSONRule.ruleID":
+		if e.ComplexityRoot.OnCallJSONRule.RuleID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONRule.RuleID(childComplexity), true
+	case "OnCallJSONRule.time":
+		if e.ComplexityRoot.OnCallJSONRule.Time == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONRule.Time(childComplexity), true
+	case "OnCallJSONRule.weekdays":
+		if e.ComplexityRoot.OnCallJSONRule.Weekdays == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONRule.Weekdays(childComplexity), true
+
+	case "OnCallJSONUpdatePreview.after":
+		if e.ComplexityRoot.OnCallJSONUpdatePreview.After == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONUpdatePreview.After(childComplexity), true
+	case "OnCallJSONUpdatePreview.before":
+		if e.ComplexityRoot.OnCallJSONUpdatePreview.Before == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONUpdatePreview.Before(childComplexity), true
+	case "OnCallJSONUpdatePreview.contractVersion":
+		if e.ComplexityRoot.OnCallJSONUpdatePreview.ContractVersion == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONUpdatePreview.ContractVersion(childComplexity), true
+	case "OnCallJSONUpdatePreview.effects":
+		if e.ComplexityRoot.OnCallJSONUpdatePreview.Effects == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OnCallJSONUpdatePreview.Effects(childComplexity), true
+
 	case "OnCallNotificationRule.dest":
 		if e.ComplexityRoot.OnCallNotificationRule.Dest == nil {
 			break
@@ -4161,6 +4253,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.PreviewClearTemporarySchedules(childComplexity, args["input"].(ClearTemporarySchedulesInput)), true
+	case "Query.previewSetScheduleOnCallNotificationRules":
+		if e.ComplexityRoot.Query.PreviewSetScheduleOnCallNotificationRules == nil {
+			break
+		}
+
+		args, err := ec.field_Query_previewSetScheduleOnCallNotificationRules_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.PreviewSetScheduleOnCallNotificationRules(childComplexity, args["input"].(SetScheduleOnCallNotificationRulesInput)), true
 	case "Query.previewSetTemporarySchedule":
 		if e.ComplexityRoot.Query.PreviewSetTemporarySchedule == nil {
 			break
@@ -5229,6 +5332,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.UpdateDeletionPreview.Impacts(childComplexity), true
+	case "UpdateDeletionPreview.onCallJSONUpdate":
+		if e.ComplexityRoot.UpdateDeletionPreview.OnCallJSONUpdate == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.OnCallJSONUpdate(childComplexity), true
 	case "UpdateDeletionPreview.operation":
 		if e.ComplexityRoot.UpdateDeletionPreview.Operation == nil {
 			break
@@ -6679,6 +6788,46 @@ func (ec *executionContext) childFields_NotificationState(ctx context.Context, f
 	return nil, fmt.Errorf("no field named %q was found under type NotificationState", field.Name)
 }
 
+func (ec *executionContext) childFields_OnCallJSONEffect(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "ruleID":
+		return ec.fieldContext_OnCallJSONEffect_ruleID(ctx, field)
+	case "change":
+		return ec.fieldContext_OnCallJSONEffect_change(ctx, field)
+	case "source":
+		return ec.fieldContext_OnCallJSONEffect_source(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OnCallJSONEffect", field.Name)
+}
+
+func (ec *executionContext) childFields_OnCallJSONRule(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "ruleID":
+		return ec.fieldContext_OnCallJSONRule_ruleID(ctx, field)
+	case "channelID":
+		return ec.fieldContext_OnCallJSONRule_channelID(ctx, field)
+	case "time":
+		return ec.fieldContext_OnCallJSONRule_time(ctx, field)
+	case "weekdays":
+		return ec.fieldContext_OnCallJSONRule_weekdays(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OnCallJSONRule", field.Name)
+}
+
+func (ec *executionContext) childFields_OnCallJSONUpdatePreview(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "contractVersion":
+		return ec.fieldContext_OnCallJSONUpdatePreview_contractVersion(ctx, field)
+	case "before":
+		return ec.fieldContext_OnCallJSONUpdatePreview_before(ctx, field)
+	case "after":
+		return ec.fieldContext_OnCallJSONUpdatePreview_after(ctx, field)
+	case "effects":
+		return ec.fieldContext_OnCallJSONUpdatePreview_effects(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OnCallJSONUpdatePreview", field.Name)
+}
+
 func (ec *executionContext) childFields_OnCallNotificationRule(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "id":
@@ -7211,6 +7360,8 @@ func (ec *executionContext) childFields_UpdateDeletionPreview(ctx context.Contex
 		return ec.fieldContext_UpdateDeletionPreview_impacts(ctx, field)
 	case "scheduleJSONUpdate":
 		return ec.fieldContext_UpdateDeletionPreview_scheduleJSONUpdate(ctx, field)
+	case "onCallJSONUpdate":
+		return ec.fieldContext_UpdateDeletionPreview_onCallJSONUpdate(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type UpdateDeletionPreview", field.Name)
 }
@@ -8829,6 +8980,20 @@ func (ec *executionContext) field_Query_previewClearTemporarySchedules_args(ctx 
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (ClearTemporarySchedulesInput, error) {
 			return ec.unmarshalNClearTemporarySchedulesInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐClearTemporarySchedulesInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_previewSetScheduleOnCallNotificationRules_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (SetScheduleOnCallNotificationRulesInput, error) {
+			return ec.unmarshalNSetScheduleOnCallNotificationRulesInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐSetScheduleOnCallNotificationRulesInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -18630,6 +18795,286 @@ func (ec *executionContext) fieldContext_NotificationState_formattedSrcValue(_ c
 	return graphql.NewScalarFieldContext("NotificationState", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _OnCallJSONEffect_ruleID(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONEffect) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONEffect_ruleID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.RuleID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONEffect_ruleID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONEffect", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONEffect_change(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONEffect) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONEffect_change(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Change, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONEffect_change(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONEffect", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONEffect_source(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONEffect) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONEffect_source(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Source, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONEffect_source(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONEffect", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONRule_ruleID(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONRule) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONRule_ruleID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.RuleID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONRule_ruleID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONRule", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONRule_channelID(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONRule) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONRule_channelID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ChannelID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONRule_channelID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONRule", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONRule_time(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONRule) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONRule_time(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Time, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONRule_time(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONRule", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONRule_weekdays(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONRule) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONRule_weekdays(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Weekdays, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONRule_weekdays(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONRule", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONUpdatePreview_contractVersion(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONUpdatePreview_contractVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ContractVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONUpdatePreview_contractVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OnCallJSONUpdatePreview", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OnCallJSONUpdatePreview_before(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONUpdatePreview_before(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Before, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []OnCallJSONRule) graphql.Marshaler {
+			return ec.marshalNOnCallJSONRule2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONRuleᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONUpdatePreview_before(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OnCallJSONUpdatePreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OnCallJSONRule(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OnCallJSONUpdatePreview_after(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONUpdatePreview_after(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.After, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []OnCallJSONRule) graphql.Marshaler {
+			return ec.marshalNOnCallJSONRule2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONRuleᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONUpdatePreview_after(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OnCallJSONUpdatePreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OnCallJSONRule(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OnCallJSONUpdatePreview_effects(ctx context.Context, field graphql.CollectedField, obj *OnCallJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OnCallJSONUpdatePreview_effects(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Effects, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []OnCallJSONEffect) graphql.Marshaler {
+			return ec.marshalNOnCallJSONEffect2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONEffectᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OnCallJSONUpdatePreview_effects(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OnCallJSONUpdatePreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OnCallJSONEffect(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _OnCallNotificationRule_id(ctx context.Context, field graphql.CollectedField, obj *schedule.OnCallNotificationRule) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -21895,6 +22340,50 @@ func (ec *executionContext) fieldContext_Query_previewClearTemporarySchedules(ct
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_previewClearTemporarySchedules_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_previewSetScheduleOnCallNotificationRules(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewSetScheduleOnCallNotificationRules(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewSetScheduleOnCallNotificationRules(ctx, fc.Args["input"].(SetScheduleOnCallNotificationRulesInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+			return ec.marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewSetScheduleOnCallNotificationRules(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UpdateDeletionPreview(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewSetScheduleOnCallNotificationRules_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -25486,6 +25975,38 @@ func (ec *executionContext) fieldContext_UpdateDeletionPreview_scheduleJSONUpdat
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_ScheduleJSONUpdatePreview(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_onCallJSONUpdate(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_onCallJSONUpdate(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.OnCallJSONUpdate, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *OnCallJSONUpdatePreview) graphql.Marshaler {
+			return ec.marshalOOnCallJSONUpdatePreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONUpdatePreview(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_onCallJSONUpdate(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateDeletionPreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OnCallJSONUpdatePreview(ctx, field)
 		},
 	}
 	return fc, nil
@@ -31400,7 +31921,7 @@ func (ec *executionContext) unmarshalInputSetScheduleOnCallNotificationRulesInpu
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"scheduleID", "rules"}
+	fieldsInOrder := [...]string{"scheduleID", "rules", "confirmation"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -31421,6 +31942,13 @@ func (ec *executionContext) unmarshalInputSetScheduleOnCallNotificationRulesInpu
 				return it, err
 			}
 			it.Rules = data
+		case "confirmation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("confirmation"))
+			data, err := ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Confirmation = data
 		}
 	}
 	return it, nil
@@ -37989,6 +38517,163 @@ func (ec *executionContext) _NotificationState(ctx context.Context, sel ast.Sele
 	return out
 }
 
+var onCallJSONEffectImplementors = []string{"OnCallJSONEffect"}
+
+func (ec *executionContext) _OnCallJSONEffect(ctx context.Context, sel ast.SelectionSet, obj *OnCallJSONEffect) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, onCallJSONEffectImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OnCallJSONEffect")
+		case "ruleID":
+			out.Values[i] = ec._OnCallJSONEffect_ruleID(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "change":
+			out.Values[i] = ec._OnCallJSONEffect_change(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "source":
+			out.Values[i] = ec._OnCallJSONEffect_source(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var onCallJSONRuleImplementors = []string{"OnCallJSONRule"}
+
+func (ec *executionContext) _OnCallJSONRule(ctx context.Context, sel ast.SelectionSet, obj *OnCallJSONRule) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, onCallJSONRuleImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OnCallJSONRule")
+		case "ruleID":
+			out.Values[i] = ec._OnCallJSONRule_ruleID(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "channelID":
+			out.Values[i] = ec._OnCallJSONRule_channelID(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "time":
+			out.Values[i] = ec._OnCallJSONRule_time(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "weekdays":
+			out.Values[i] = ec._OnCallJSONRule_weekdays(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var onCallJSONUpdatePreviewImplementors = []string{"OnCallJSONUpdatePreview"}
+
+func (ec *executionContext) _OnCallJSONUpdatePreview(ctx context.Context, sel ast.SelectionSet, obj *OnCallJSONUpdatePreview) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, onCallJSONUpdatePreviewImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OnCallJSONUpdatePreview")
+		case "contractVersion":
+			out.Values[i] = ec._OnCallJSONUpdatePreview_contractVersion(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "before":
+			out.Values[i] = ec._OnCallJSONUpdatePreview_before(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "after":
+			out.Values[i] = ec._OnCallJSONUpdatePreview_after(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "effects":
+			out.Values[i] = ec._OnCallJSONUpdatePreview_effects(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var onCallNotificationRuleImplementors = []string{"OnCallNotificationRule"}
 
 func (ec *executionContext) _OnCallNotificationRule(ctx context.Context, sel ast.SelectionSet, obj *schedule.OnCallNotificationRule) graphql.Marshaler {
@@ -39826,6 +40511,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_previewClearTemporarySchedules(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewSetScheduleOnCallNotificationRules":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewSetScheduleOnCallNotificationRules(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -42479,6 +43186,11 @@ func (ec *executionContext) _UpdateDeletionPreview(ctx context.Context, sel ast.
 			}
 		case "scheduleJSONUpdate":
 			out.Values[i] = ec._UpdateDeletionPreview_scheduleJSONUpdate(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "onCallJSONUpdate":
+			out.Values[i] = ec._UpdateDeletionPreview_onCallJSONUpdate(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
@@ -45788,6 +46500,46 @@ func (ec *executionContext) marshalNNotificationState2ᚖgithubᚗcomᚋtarget�
 	return ec._NotificationState(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNOnCallJSONEffect2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONEffect(ctx context.Context, sel ast.SelectionSet, v OnCallJSONEffect) graphql.Marshaler {
+	return ec._OnCallJSONEffect(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOnCallJSONEffect2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONEffectᚄ(ctx context.Context, sel ast.SelectionSet, v []OnCallJSONEffect) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNOnCallJSONEffect2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONEffect(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNOnCallJSONRule2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONRule(ctx context.Context, sel ast.SelectionSet, v OnCallJSONRule) graphql.Marshaler {
+	return ec._OnCallJSONRule(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOnCallJSONRule2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONRuleᚄ(ctx context.Context, sel ast.SelectionSet, v []OnCallJSONRule) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNOnCallJSONRule2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONRule(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) marshalNOnCallNotificationRule2githubᚗcomᚋtargetᚋgoalertᚋscheduleᚐOnCallNotificationRule(ctx context.Context, sel ast.SelectionSet, v schedule.OnCallNotificationRule) graphql.Marshaler {
 	return ec._OnCallNotificationRule(ctx, sel, &v)
 }
@@ -47867,6 +48619,13 @@ func (ec *executionContext) marshalONotificationStatus2ᚖgithubᚗcomᚋtarget�
 		return graphql.Null
 	}
 	return v
+}
+
+func (ec *executionContext) marshalOOnCallJSONUpdatePreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐOnCallJSONUpdatePreview(ctx context.Context, sel ast.SelectionSet, v *OnCallJSONUpdatePreview) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._OnCallJSONUpdatePreview(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOPhoneNumberInfo2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐPhoneNumberInfo(ctx context.Context, sel ast.SelectionSet, v *PhoneNumberInfo) graphql.Marshaler {

@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/target/goalert/internal/oncalljsonguard"
 	"github.com/target/goalert/permission"
+	audit "github.com/target/goalert/schedule/oncallupdateaudit"
 	"github.com/target/goalert/util/timeutil"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
@@ -32,10 +34,41 @@ func (store *Store) SetOnCallNotificationRulesScoped(ctx context.Context, tx *sq
 		return err
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(_ *sql.Tx, data *Data) error {
+	var before []audit.Rule
+	var envelope int64
+	var actualOrg uuid.UUID
+	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(tx *sql.Tx, data *Data) error {
+		var err error
+		before, err = OnCallSnapshot(scheduleID, data.V1.OnCallNotificationRules)
+		if err != nil {
+			return err
+		}
+		after, err := OnCallSnapshot(scheduleID, rules)
+		if err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT d.id,s.organization_id FROM schedule_data d JOIN schedules s ON s.id=d.schedule_id WHERE s.id=$1`, scheduleID).Scan(&envelope, &actualOrg); err != nil {
+			return err
+		}
+		if err := lockOnCallChannels(ctx, tx, before, after); err != nil {
+			return err
+		}
+		if err := oncalljsonguard.Authorize(ctx, tx, scheduleID, actualOrg, envelope, before, after); err != nil {
+			return err
+		}
+		RetainNextNotifications(data.V1.OnCallNotificationRules, rules)
 		data.V1.OnCallNotificationRules = rules
-
 		return nil
+	}, func(tx *sql.Tx, _ *Data) error {
+		_, actual, err := store.ReadOnCallUpdate(ctx, tx, scheduleID, false)
+		if err != nil {
+			return err
+		}
+		after, err := OnCallSnapshot(scheduleID, actual)
+		if err != nil {
+			return err
+		}
+		return oncalljsonguard.Finish(ctx, tx, scheduleID, actualOrg, envelope, before, after)
 	})
 }
 
@@ -87,7 +120,7 @@ func PrepareOnCallNotificationRules(scheduleID uuid.UUID, rules []OnCallNotifica
 			continue
 		}
 		fieldName := fmt.Sprintf("Rules[%d].ID", i)
-		err = validate.Range(fieldName, r.ID.id, 0, onCallNotificationRuleLimit)
+		err = validate.Range(fieldName, r.ID.id, 0, onCallNotificationRuleLimit-1)
 		if err != nil {
 			return err
 		}
