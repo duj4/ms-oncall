@@ -137,7 +137,7 @@ func TestPostgresUpdateInducedSafetyBusiness(t *testing.T) {
 	var version string
 	require.NoError(t, db.QueryRowContext(ctx, `SHOW server_version`).Scan(&version))
 	require.Equal(t, "17.11", version)
-	require.Equal(t, 307, enforcementCount(t, ctx, db, `SELECT count(*) FROM gorp_migrations`))
+	require.Equal(t, len(Names()), enforcementCount(t, ctx, db, `SELECT count(*) FROM gorp_migrations`))
 	ctx = permission.SystemContext(ctx, "UpdateInducedSafetyTest")
 	app := updateNativeApp(t, ctx, db)
 	observer, err := db.Conn(ctx)

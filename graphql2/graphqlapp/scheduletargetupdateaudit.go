@@ -37,14 +37,16 @@ func scheduleTargetUpdateDiagnosticsSelected(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	selected := func(name string) bool { return name == sraudit.ScheduleTargetUpdate }
-	if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Mutation" && selected(f.Field.Name) {
+	selected := func(name string) bool {
+		return name == sraudit.ScheduleTargetUpdate || name == "setTemporarySchedule" || name == "clearTemporarySchedules" || name == "previewSetTemporarySchedule" || name == "previewClearTemporarySchedules"
+	}
+	if f := graphql.GetFieldContext(ctx); f != nil && (f.Object == "Mutation" || f.Object == "Query") && selected(f.Field.Name) {
 		return true
 	}
 	if graphql.HasOperationContext(ctx) {
 		op := graphql.GetOperationContext(ctx)
 		if op.Operation != nil {
-			for _, f := range graphql.CollectFields(op, op.Operation.SelectionSet, []string{"Mutation"}) {
+			for _, f := range graphql.CollectFields(op, op.Operation.SelectionSet, []string{"Mutation", "Query"}) {
 				if selected(f.Name) {
 					return true
 				}

@@ -684,6 +684,8 @@ type ComplexityRoot struct {
 		MessageLogs                       func(childComplexity int, input *MessageLogSearchOptions) int
 		MessageStatusHistory              func(childComplexity int, id string) int
 		PhoneNumberInfo                   func(childComplexity int, number string) int
+		PreviewClearTemporarySchedules    func(childComplexity int, input ClearTemporarySchedulesInput) int
+		PreviewSetTemporarySchedule       func(childComplexity int, input SetTemporaryScheduleInput) int
 		PreviewUpdateEscalationPolicy     func(childComplexity int, input UpdateEscalationPolicyInput) int
 		PreviewUpdateEscalationPolicyStep func(childComplexity int, input UpdateEscalationPolicyStepInput) int
 		PreviewUpdateRotation             func(childComplexity int, input UpdateRotationInput) int
@@ -777,6 +779,28 @@ type ComplexityRoot struct {
 	ScheduleConnection struct {
 		Nodes    func(childComplexity int) int
 		PageInfo func(childComplexity int) int
+	}
+
+	ScheduleJSONCoverage struct {
+		End    func(childComplexity int) int
+		Kind   func(childComplexity int) int
+		Start  func(childComplexity int) int
+		UserID func(childComplexity int) int
+	}
+
+	ScheduleJSONCoverageChange struct {
+		Change   func(childComplexity int) int
+		Coverage func(childComplexity int) int
+		Source   func(childComplexity int) int
+	}
+
+	ScheduleJSONUpdatePreview struct {
+		After           func(childComplexity int) int
+		Before          func(childComplexity int) int
+		ContractVersion func(childComplexity int) int
+		Effects         func(childComplexity int) int
+		Mode            func(childComplexity int) int
+		Operation       func(childComplexity int) int
 	}
 
 	ScheduleRule struct {
@@ -900,6 +924,7 @@ type ComplexityRoot struct {
 		Removed              func(childComplexity int) int
 		RequiresConfirmation func(childComplexity int) int
 		Root                 func(childComplexity int) int
+		ScheduleJSONUpdate   func(childComplexity int) int
 	}
 
 	User struct {
@@ -1185,6 +1210,8 @@ type QueryResolver interface {
 	PreviewUpdateScheduleTarget(ctx context.Context, input ScheduleTargetInput) (*UpdateDeletionPreview, error)
 	PreviewUpdateRotation(ctx context.Context, input UpdateRotationInput) (*UpdateDeletionPreview, error)
 	PreviewUpdateService(ctx context.Context, input UpdateServiceInput) (*UpdateDeletionPreview, error)
+	PreviewSetTemporarySchedule(ctx context.Context, input SetTemporaryScheduleInput) (*UpdateDeletionPreview, error)
+	PreviewClearTemporarySchedules(ctx context.Context, input ClearTemporarySchedulesInput) (*UpdateDeletionPreview, error)
 }
 type RotationResolver interface {
 	Organization(ctx context.Context, obj *rotation.Rotation) (*OrganizationSummary, error)
@@ -4123,6 +4150,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.PhoneNumberInfo(childComplexity, args["number"].(string)), true
+	case "Query.previewClearTemporarySchedules":
+		if e.ComplexityRoot.Query.PreviewClearTemporarySchedules == nil {
+			break
+		}
+
+		args, err := ec.field_Query_previewClearTemporarySchedules_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.PreviewClearTemporarySchedules(childComplexity, args["input"].(ClearTemporarySchedulesInput)), true
+	case "Query.previewSetTemporarySchedule":
+		if e.ComplexityRoot.Query.PreviewSetTemporarySchedule == nil {
+			break
+		}
+
+		args, err := ec.field_Query_previewSetTemporarySchedule_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.PreviewSetTemporarySchedule(childComplexity, args["input"].(SetTemporaryScheduleInput)), true
 	case "Query.previewUpdateEscalationPolicy":
 		if e.ComplexityRoot.Query.PreviewUpdateEscalationPolicy == nil {
 			break
@@ -4688,6 +4737,87 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.ScheduleConnection.PageInfo(childComplexity), true
 
+	case "ScheduleJSONCoverage.end":
+		if e.ComplexityRoot.ScheduleJSONCoverage.End == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONCoverage.End(childComplexity), true
+	case "ScheduleJSONCoverage.kind":
+		if e.ComplexityRoot.ScheduleJSONCoverage.Kind == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONCoverage.Kind(childComplexity), true
+	case "ScheduleJSONCoverage.start":
+		if e.ComplexityRoot.ScheduleJSONCoverage.Start == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONCoverage.Start(childComplexity), true
+	case "ScheduleJSONCoverage.userID":
+		if e.ComplexityRoot.ScheduleJSONCoverage.UserID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONCoverage.UserID(childComplexity), true
+
+	case "ScheduleJSONCoverageChange.change":
+		if e.ComplexityRoot.ScheduleJSONCoverageChange.Change == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONCoverageChange.Change(childComplexity), true
+	case "ScheduleJSONCoverageChange.coverage":
+		if e.ComplexityRoot.ScheduleJSONCoverageChange.Coverage == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONCoverageChange.Coverage(childComplexity), true
+	case "ScheduleJSONCoverageChange.source":
+		if e.ComplexityRoot.ScheduleJSONCoverageChange.Source == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONCoverageChange.Source(childComplexity), true
+
+	case "ScheduleJSONUpdatePreview.after":
+		if e.ComplexityRoot.ScheduleJSONUpdatePreview.After == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONUpdatePreview.After(childComplexity), true
+	case "ScheduleJSONUpdatePreview.before":
+		if e.ComplexityRoot.ScheduleJSONUpdatePreview.Before == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONUpdatePreview.Before(childComplexity), true
+	case "ScheduleJSONUpdatePreview.contractVersion":
+		if e.ComplexityRoot.ScheduleJSONUpdatePreview.ContractVersion == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONUpdatePreview.ContractVersion(childComplexity), true
+	case "ScheduleJSONUpdatePreview.effects":
+		if e.ComplexityRoot.ScheduleJSONUpdatePreview.Effects == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONUpdatePreview.Effects(childComplexity), true
+	case "ScheduleJSONUpdatePreview.mode":
+		if e.ComplexityRoot.ScheduleJSONUpdatePreview.Mode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONUpdatePreview.Mode(childComplexity), true
+	case "ScheduleJSONUpdatePreview.operation":
+		if e.ComplexityRoot.ScheduleJSONUpdatePreview.Operation == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ScheduleJSONUpdatePreview.Operation(childComplexity), true
+
 	case "ScheduleRule.end":
 		if e.ComplexityRoot.ScheduleRule.End == nil {
 			break
@@ -5129,6 +5259,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.UpdateDeletionPreview.Root(childComplexity), true
+	case "UpdateDeletionPreview.scheduleJSONUpdate":
+		if e.ComplexityRoot.UpdateDeletionPreview.ScheduleJSONUpdate == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UpdateDeletionPreview.ScheduleJSONUpdate(childComplexity), true
 
 	case "User.statusUpdateContactMethodID":
 		if e.ComplexityRoot.User.AlertStatusCMID == nil {
@@ -6787,6 +6923,50 @@ func (ec *executionContext) childFields_ScheduleConnection(ctx context.Context, 
 	return nil, fmt.Errorf("no field named %q was found under type ScheduleConnection", field.Name)
 }
 
+func (ec *executionContext) childFields_ScheduleJSONCoverage(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "kind":
+		return ec.fieldContext_ScheduleJSONCoverage_kind(ctx, field)
+	case "userID":
+		return ec.fieldContext_ScheduleJSONCoverage_userID(ctx, field)
+	case "start":
+		return ec.fieldContext_ScheduleJSONCoverage_start(ctx, field)
+	case "end":
+		return ec.fieldContext_ScheduleJSONCoverage_end(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type ScheduleJSONCoverage", field.Name)
+}
+
+func (ec *executionContext) childFields_ScheduleJSONCoverageChange(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "coverage":
+		return ec.fieldContext_ScheduleJSONCoverageChange_coverage(ctx, field)
+	case "change":
+		return ec.fieldContext_ScheduleJSONCoverageChange_change(ctx, field)
+	case "source":
+		return ec.fieldContext_ScheduleJSONCoverageChange_source(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type ScheduleJSONCoverageChange", field.Name)
+}
+
+func (ec *executionContext) childFields_ScheduleJSONUpdatePreview(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "contractVersion":
+		return ec.fieldContext_ScheduleJSONUpdatePreview_contractVersion(ctx, field)
+	case "operation":
+		return ec.fieldContext_ScheduleJSONUpdatePreview_operation(ctx, field)
+	case "mode":
+		return ec.fieldContext_ScheduleJSONUpdatePreview_mode(ctx, field)
+	case "before":
+		return ec.fieldContext_ScheduleJSONUpdatePreview_before(ctx, field)
+	case "after":
+		return ec.fieldContext_ScheduleJSONUpdatePreview_after(ctx, field)
+	case "effects":
+		return ec.fieldContext_ScheduleJSONUpdatePreview_effects(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type ScheduleJSONUpdatePreview", field.Name)
+}
+
 func (ec *executionContext) childFields_ScheduleRule(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "id":
@@ -7029,6 +7209,8 @@ func (ec *executionContext) childFields_UpdateDeletionPreview(ctx context.Contex
 		return ec.fieldContext_UpdateDeletionPreview_removed(ctx, field)
 	case "impacts":
 		return ec.fieldContext_UpdateDeletionPreview_impacts(ctx, field)
+	case "scheduleJSONUpdate":
+		return ec.fieldContext_UpdateDeletionPreview_scheduleJSONUpdate(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type UpdateDeletionPreview", field.Name)
 }
@@ -8638,6 +8820,34 @@ func (ec *executionContext) field_Query_phoneNumberInfo_args(ctx context.Context
 		return nil, err
 	}
 	args["number"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_previewClearTemporarySchedules_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (ClearTemporarySchedulesInput, error) {
+			return ec.unmarshalNClearTemporarySchedulesInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐClearTemporarySchedulesInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_previewSetTemporarySchedule_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (SetTemporaryScheduleInput, error) {
+			return ec.unmarshalNSetTemporaryScheduleInput2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐSetTemporaryScheduleInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
 	return args, nil
 }
 
@@ -21603,6 +21813,94 @@ func (ec *executionContext) fieldContext_Query_previewUpdateService(ctx context.
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_previewSetTemporarySchedule(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewSetTemporarySchedule(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewSetTemporarySchedule(ctx, fc.Args["input"].(SetTemporaryScheduleInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+			return ec.marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewSetTemporarySchedule(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UpdateDeletionPreview(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewSetTemporarySchedule_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_previewClearTemporarySchedules(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewClearTemporarySchedules(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewClearTemporarySchedules(ctx, fc.Args["input"].(ClearTemporarySchedulesInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UpdateDeletionPreview) graphql.Marshaler {
+			return ec.marshalNUpdateDeletionPreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐUpdateDeletionPreview(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewClearTemporarySchedules(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UpdateDeletionPreview(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewClearTemporarySchedules_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -22976,6 +23274,341 @@ func (ec *executionContext) fieldContext_ScheduleConnection_pageInfo(_ context.C
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScheduleJSONCoverage_kind(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONCoverage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONCoverage_kind(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Kind, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONCoverage_kind(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONCoverage", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONCoverage_userID(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONCoverage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONCoverage_userID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.UserID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOID2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONCoverage_userID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONCoverage", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONCoverage_start(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONCoverage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONCoverage_start(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Start, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v time.Time) graphql.Marshaler {
+			return ec.marshalNISOTimestamp2timeᚐTime(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONCoverage_start(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONCoverage", field, false, false, errors.New("field of type ISOTimestamp does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONCoverage_end(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONCoverage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONCoverage_end(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.End, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v time.Time) graphql.Marshaler {
+			return ec.marshalNISOTimestamp2timeᚐTime(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONCoverage_end(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONCoverage", field, false, false, errors.New("field of type ISOTimestamp does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONCoverageChange_coverage(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONCoverageChange) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONCoverageChange_coverage(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Coverage, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *ScheduleJSONCoverage) graphql.Marshaler {
+			return ec.marshalNScheduleJSONCoverage2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverage(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONCoverageChange_coverage(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScheduleJSONCoverageChange",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_ScheduleJSONCoverage(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScheduleJSONCoverageChange_change(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONCoverageChange) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONCoverageChange_change(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Change, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONCoverageChange_change(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONCoverageChange", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONCoverageChange_source(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONCoverageChange) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONCoverageChange_source(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Source, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONCoverageChange_source(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONCoverageChange", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONUpdatePreview_contractVersion(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONUpdatePreview_contractVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ContractVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONUpdatePreview_contractVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONUpdatePreview", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONUpdatePreview_operation(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONUpdatePreview_operation(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Operation, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONUpdatePreview_operation(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONUpdatePreview", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONUpdatePreview_mode(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONUpdatePreview_mode(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Mode, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONUpdatePreview_mode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ScheduleJSONUpdatePreview", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ScheduleJSONUpdatePreview_before(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONUpdatePreview_before(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Before, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []ScheduleJSONCoverage) graphql.Marshaler {
+			return ec.marshalNScheduleJSONCoverage2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverageᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONUpdatePreview_before(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScheduleJSONUpdatePreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_ScheduleJSONCoverage(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScheduleJSONUpdatePreview_after(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONUpdatePreview_after(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.After, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []ScheduleJSONCoverage) graphql.Marshaler {
+			return ec.marshalNScheduleJSONCoverage2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverageᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONUpdatePreview_after(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScheduleJSONUpdatePreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_ScheduleJSONCoverage(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScheduleJSONUpdatePreview_effects(ctx context.Context, field graphql.CollectedField, obj *ScheduleJSONUpdatePreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ScheduleJSONUpdatePreview_effects(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Effects, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []ScheduleJSONCoverageChange) graphql.Marshaler {
+			return ec.marshalNScheduleJSONCoverageChange2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverageChangeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ScheduleJSONUpdatePreview_effects(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScheduleJSONUpdatePreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_ScheduleJSONCoverageChange(ctx, field)
 		},
 	}
 	return fc, nil
@@ -24821,6 +25454,38 @@ func (ec *executionContext) fieldContext_UpdateDeletionPreview_impacts(_ context
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_DeletionImpact(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UpdateDeletionPreview_scheduleJSONUpdate(ctx context.Context, field graphql.CollectedField, obj *UpdateDeletionPreview) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UpdateDeletionPreview_scheduleJSONUpdate(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ScheduleJSONUpdate, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *ScheduleJSONUpdatePreview) graphql.Marshaler {
+			return ec.marshalOScheduleJSONUpdatePreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONUpdatePreview(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_UpdateDeletionPreview_scheduleJSONUpdate(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateDeletionPreview",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_ScheduleJSONUpdatePreview(ctx, field)
 		},
 	}
 	return fc, nil
@@ -27839,7 +28504,7 @@ func (ec *executionContext) unmarshalInputClearTemporarySchedulesInput(ctx conte
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"scheduleID", "start", "end"}
+	fieldsInOrder := [...]string{"scheduleID", "start", "end", "confirmation"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -27867,6 +28532,13 @@ func (ec *executionContext) unmarshalInputClearTemporarySchedulesInput(ctx conte
 				return it, err
 			}
 			it.End = data
+		case "confirmation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("confirmation"))
+			data, err := ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Confirmation = data
 		}
 	}
 	return it, nil
@@ -30809,7 +31481,7 @@ func (ec *executionContext) unmarshalInputSetTemporaryScheduleInput(ctx context.
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"scheduleID", "clearStart", "clearEnd", "start", "end", "shifts"}
+	fieldsInOrder := [...]string{"scheduleID", "clearStart", "clearEnd", "start", "end", "shifts", "confirmation"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -30858,6 +31530,13 @@ func (ec *executionContext) unmarshalInputSetTemporaryScheduleInput(ctx context.
 				return it, err
 			}
 			it.Shifts = data
+		case "confirmation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("confirmation"))
+			data, err := ec.unmarshalODeletionSafetyConfirmationInput2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionSafetyConfirmationInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Confirmation = data
 		}
 	}
 	return it, nil
@@ -39115,6 +39794,50 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewSetTemporarySchedule":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewSetTemporarySchedule(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewClearTemporarySchedules":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewClearTemporarySchedules(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -40162,6 +40885,173 @@ func (ec *executionContext) _ScheduleConnection(ctx context.Context, sel ast.Sel
 			}
 		case "pageInfo":
 			out.Values[i] = ec._ScheduleConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scheduleJSONCoverageImplementors = []string{"ScheduleJSONCoverage"}
+
+func (ec *executionContext) _ScheduleJSONCoverage(ctx context.Context, sel ast.SelectionSet, obj *ScheduleJSONCoverage) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scheduleJSONCoverageImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScheduleJSONCoverage")
+		case "kind":
+			out.Values[i] = ec._ScheduleJSONCoverage_kind(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "userID":
+			out.Values[i] = ec._ScheduleJSONCoverage_userID(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "start":
+			out.Values[i] = ec._ScheduleJSONCoverage_start(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "end":
+			out.Values[i] = ec._ScheduleJSONCoverage_end(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scheduleJSONCoverageChangeImplementors = []string{"ScheduleJSONCoverageChange"}
+
+func (ec *executionContext) _ScheduleJSONCoverageChange(ctx context.Context, sel ast.SelectionSet, obj *ScheduleJSONCoverageChange) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scheduleJSONCoverageChangeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScheduleJSONCoverageChange")
+		case "coverage":
+			out.Values[i] = ec._ScheduleJSONCoverageChange_coverage(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "change":
+			out.Values[i] = ec._ScheduleJSONCoverageChange_change(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "source":
+			out.Values[i] = ec._ScheduleJSONCoverageChange_source(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferred), math.MaxInt32)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scheduleJSONUpdatePreviewImplementors = []string{"ScheduleJSONUpdatePreview"}
+
+func (ec *executionContext) _ScheduleJSONUpdatePreview(ctx context.Context, sel ast.SelectionSet, obj *ScheduleJSONUpdatePreview) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scheduleJSONUpdatePreviewImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScheduleJSONUpdatePreview")
+		case "contractVersion":
+			out.Values[i] = ec._ScheduleJSONUpdatePreview_contractVersion(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "operation":
+			out.Values[i] = ec._ScheduleJSONUpdatePreview_operation(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "mode":
+			out.Values[i] = ec._ScheduleJSONUpdatePreview_mode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "before":
+			out.Values[i] = ec._ScheduleJSONUpdatePreview_before(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "after":
+			out.Values[i] = ec._ScheduleJSONUpdatePreview_after(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "effects":
+			out.Values[i] = ec._ScheduleJSONUpdatePreview_effects(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -41585,6 +42475,11 @@ func (ec *executionContext) _UpdateDeletionPreview(ctx context.Context, sel ast.
 		case "impacts":
 			out.Values[i] = ec._UpdateDeletionPreview_impacts(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "scheduleJSONUpdate":
+			out.Values[i] = ec._UpdateDeletionPreview_scheduleJSONUpdate(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:
@@ -45177,6 +46072,56 @@ func (ec *executionContext) marshalNScheduleConnection2ᚖgithubᚗcomᚋtarget�
 	return ec._ScheduleConnection(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNScheduleJSONCoverage2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverage(ctx context.Context, sel ast.SelectionSet, v ScheduleJSONCoverage) graphql.Marshaler {
+	return ec._ScheduleJSONCoverage(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNScheduleJSONCoverage2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverageᚄ(ctx context.Context, sel ast.SelectionSet, v []ScheduleJSONCoverage) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNScheduleJSONCoverage2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverage(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNScheduleJSONCoverage2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverage(ctx context.Context, sel ast.SelectionSet, v *ScheduleJSONCoverage) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ScheduleJSONCoverage(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNScheduleJSONCoverageChange2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverageChange(ctx context.Context, sel ast.SelectionSet, v ScheduleJSONCoverageChange) graphql.Marshaler {
+	return ec._ScheduleJSONCoverageChange(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNScheduleJSONCoverageChange2ᚕgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverageChangeᚄ(ctx context.Context, sel ast.SelectionSet, v []ScheduleJSONCoverageChange) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNScheduleJSONCoverageChange2githubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONCoverageChange(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) marshalNScheduleRule2githubᚗcomᚋtargetᚋgoalertᚋscheduleᚋruleᚐRule(ctx context.Context, sel ast.SelectionSet, v rule.Rule) graphql.Marshaler {
 	return ec._ScheduleRule(ctx, sel, &v)
 }
@@ -46986,6 +47931,13 @@ func (ec *executionContext) marshalOSchedule2ᚖgithubᚗcomᚋtargetᚋgoalert�
 		return graphql.Null
 	}
 	return ec._Schedule(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOScheduleJSONUpdatePreview2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleJSONUpdatePreview(ctx context.Context, sel ast.SelectionSet, v *ScheduleJSONUpdatePreview) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._ScheduleJSONUpdatePreview(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalOScheduleSearchOptions2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐScheduleSearchOptions(ctx context.Context, v any) (*ScheduleSearchOptions, error) {

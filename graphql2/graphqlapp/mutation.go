@@ -201,7 +201,7 @@ func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input
 }
 
 func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetTemporaryScheduleInput) (bool, error) {
-	schedID, err := parseUUID("ScheduleID", input.ScheduleID)
+	_, err := parseUUID("ScheduleID", input.ScheduleID)
 	if err != nil {
 		return false, err
 	}
@@ -222,7 +222,7 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 		}
 		clearSet = true
 	}
-	organizationID, authorityErr := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
+	_, authorityErr := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if authorityErr != nil {
 		if a.UserStore == nil {
 			// Missing validation dependencies must not permit unscoped access.
@@ -246,27 +246,15 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 		return false, authorityErr
 	}
 
-	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID)
-		if err != nil {
-			return err
-		}
-		if clearSet {
-			return a.ScheduleStore.SetClearTemporaryScheduleScoped(ctx, tx, schedID, tmp, *input.ClearStart, *input.ClearEnd, organizationID)
-		}
-
-		return a.ScheduleStore.SetTemporaryScheduleScoped(ctx, tx, schedID, tmp, organizationID)
-	})
-
-	return err == nil, err
+	return a.executeScheduleJSON(ctx, input)
 }
 
 func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.ClearTemporarySchedulesInput) (bool, error) {
-	schedID, err := parseUUID("ScheduleID", input.ScheduleID)
+	_, err := parseUUID("ScheduleID", input.ScheduleID)
 	if err != nil {
 		return false, err
 	}
-	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
+	_, err = scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		// Match the Store's safe range checks without accessing Schedule data.
 		var futureErr, rangeErr error
@@ -282,15 +270,7 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 		return false, err
 	}
 
-	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID)
-		if err != nil {
-			return err
-		}
-		return a.ScheduleStore.ClearTemporarySchedulesScoped(ctx, tx, schedID, input.Start, input.End, organizationID)
-	})
-
-	return err == nil, err
+	return a.executeScheduleJSON(ctx, input)
 }
 
 func (a *Mutation) TestContactMethod(ctx context.Context, id string) (bool, error) {

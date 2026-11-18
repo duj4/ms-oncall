@@ -40,7 +40,7 @@ func (store *Store) scheduleData(ctx context.Context, tx *sql.Tx, scheduleID uui
 	return &data, nil
 }
 
-func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, organizationID *uuid.UUID, apply func(*sql.Tx, *Data) error) (retErr error) {
+func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, organizationID *uuid.UUID, apply func(*sql.Tx, *Data) error, finish ...func(*sql.Tx, *Data) error) (retErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var err error
@@ -138,6 +138,22 @@ func (store *Store) updateScheduleData(ctx context.Context, tx *sql.Tx, schedule
 	})
 	if err != nil {
 		return err
+	}
+
+	if len(finish) > 0 {
+		var matches bool
+		if err := tx.QueryRowContext(ctx, `SELECT data=$2::jsonb FROM schedule_data WHERE schedule_id=$1`, scheduleID, rawData).Scan(&matches); err != nil {
+			return err
+		}
+		if !matches {
+			return scheduledataref.ErrInvalid
+		}
+	}
+
+	for _, fn := range finish {
+		if err := fn(tx, &data); err != nil {
+			return err
+		}
 	}
 
 	if !externalTx {

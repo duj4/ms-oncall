@@ -137,9 +137,10 @@ type ClauseInput struct {
 }
 
 type ClearTemporarySchedulesInput struct {
-	ScheduleID string    `json:"scheduleID"`
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
+	ScheduleID   string                           `json:"scheduleID"`
+	Start        time.Time                        `json:"start"`
+	End          time.Time                        `json:"end"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type CloseMatchingAlertInput struct {
@@ -754,6 +755,29 @@ type ScheduleConnection struct {
 	PageInfo *PageInfo           `json:"pageInfo"`
 }
 
+// UTC half-open time coverage; no persistent JSON-element identity.
+type ScheduleJSONCoverage struct {
+	Kind   string    `json:"kind"`
+	UserID *string   `json:"userID,omitempty"`
+	Start  time.Time `json:"start"`
+	End    time.Time `json:"end"`
+}
+
+type ScheduleJSONCoverageChange struct {
+	Coverage *ScheduleJSONCoverage `json:"coverage"`
+	Change   string                `json:"change"`
+	Source   string                `json:"source"`
+}
+
+type ScheduleJSONUpdatePreview struct {
+	ContractVersion int                          `json:"contractVersion"`
+	Operation       string                       `json:"operation"`
+	Mode            string                       `json:"mode"`
+	Before          []ScheduleJSONCoverage       `json:"before"`
+	After           []ScheduleJSONCoverage       `json:"after"`
+	Effects         []ScheduleJSONCoverageChange `json:"effects"`
+}
+
 type ScheduleRuleInput struct {
 	ID    *string         `json:"id,omitempty"`
 	Start *timeutil.Clock `json:"start,omitempty"`
@@ -845,12 +869,13 @@ type SetScheduleOnCallNotificationRulesInput struct {
 }
 
 type SetTemporaryScheduleInput struct {
-	ScheduleID string                `json:"scheduleID"`
-	ClearStart *time.Time            `json:"clearStart,omitempty"`
-	ClearEnd   *time.Time            `json:"clearEnd,omitempty"`
-	Start      time.Time             `json:"start"`
-	End        time.Time             `json:"end"`
-	Shifts     []schedule.FixedShift `json:"shifts"`
+	ScheduleID   string                           `json:"scheduleID"`
+	ClearStart   *time.Time                       `json:"clearStart,omitempty"`
+	ClearEnd     *time.Time                       `json:"clearEnd,omitempty"`
+	Start        time.Time                        `json:"start"`
+	End          time.Time                        `json:"end"`
+	Shifts       []schedule.FixedShift            `json:"shifts"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type SlackChannelConnection struct {
@@ -948,15 +973,16 @@ type UpdateBasicAuthInput struct {
 
 // Preview of relationship changes; the business root remains present.
 type UpdateDeletionPreview struct {
-	Operation            DeletionOperation  `json:"operation"`
-	Root                 *DeletionResource  `json:"root"`
-	ImpactVersion        string             `json:"impactVersion"`
-	PolicyVersion        string             `json:"policyVersion"`
-	Complete             bool               `json:"complete"`
-	CanProceed           bool               `json:"canProceed"`
-	RequiresConfirmation bool               `json:"requiresConfirmation"`
-	Removed              []DeletionResource `json:"removed"`
-	Impacts              []DeletionImpact   `json:"impacts"`
+	Operation            DeletionOperation          `json:"operation"`
+	Root                 *DeletionResource          `json:"root"`
+	ImpactVersion        string                     `json:"impactVersion"`
+	PolicyVersion        string                     `json:"policyVersion"`
+	Complete             bool                       `json:"complete"`
+	CanProceed           bool                       `json:"canProceed"`
+	RequiresConfirmation bool                       `json:"requiresConfirmation"`
+	Removed              []DeletionResource         `json:"removed"`
+	Impacts              []DeletionImpact           `json:"impacts"`
+	ScheduleJSONUpdate   *ScheduleJSONUpdatePreview `json:"scheduleJSONUpdate,omitempty"`
 }
 
 type UpdateEscalationPolicyInput struct {

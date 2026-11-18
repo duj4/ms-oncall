@@ -75,7 +75,7 @@ func TestPostgresRotationUpdateSafetyBusiness(t *testing.T) {
 	var version string
 	require.NoError(t, db.QueryRowContext(ctx, `SHOW server_version`).Scan(&version))
 	require.Equal(t, "17.11", version)
-	require.Equal(t, 307, enforcementCount(t, ctx, db, `SELECT count(*) FROM gorp_migrations`))
+	require.Equal(t, len(Names()), enforcementCount(t, ctx, db, `SELECT count(*) FROM gorp_migrations`))
 	for _, kind := range []string{"scalar", "same", "add", "reorder", "replace_only", "one", "many", "clear", "mixed", "duplicate", "explicit_active"} {
 		t.Run(kind, func(t *testing.T) {
 			f := rotationUpdateFixture(t, ctx, db)

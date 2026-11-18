@@ -29,14 +29,14 @@ import (
 func TestUserDeleteSession307CanonicalAppend(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 307)
+	require.GreaterOrEqual(t, len(h.entries), 307)
 	marker := []byte(",\n    {\n      \"id\": \"ms-oncall-user-delete-session-audit-identity-d09-fix1\",")
 	i := bytes.Index(h.manifest, marker)
 	require.Positive(t, i)
 	prefix := append(append([]byte{}, h.manifest[:i]...), []byte("\n  ]\n}\n")...)
 	// Pins all 306 accepted SQL identities and source/provenance metadata.
 	require.Equal(t, "34bc4e30bd3d95a90f47a265dbe1d6adce70d830933a4974bb66ccc75a5773c5", fmt.Sprintf("%x", sha256.Sum256(prefix)))
-	tail := h.latest()
+	tail := h.entries[306]
 	require.Equal(t, int64(307), tail.Position)
 	require.Equal(t, h.entries[305].ID, tail.PredecessorID)
 	require.Equal(t, "20261117160628-user-delete-session-audit-identity-v2.sql", tail.ID)
@@ -283,7 +283,7 @@ func TestPostgresUserDeleteSession307HistoricalCompatibility(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_jsonb(f),xmin::text FROM user_delete_audit_effects f WHERE event_id=$1`, e.EventID).Scan(&before, &xminBefore))
 	n, err := Up(ctx, uri, "")
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Equal(t, len(Names())-306, n)
 	require.NoError(t, VerifyAll(ctx, uri))
 	require.NoError(t, VerifyIsLatest(ctx, uri))
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_jsonb(f),xmin::text FROM user_delete_audit_effects f WHERE event_id=$1`, e.EventID).Scan(&after, &xminAfter))

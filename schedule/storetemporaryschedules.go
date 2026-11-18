@@ -54,7 +54,11 @@ func (store *Store) TemporarySchedules(ctx context.Context, tx *sql.Tx, schedule
 }
 
 func validateFuture(fieldName string, t time.Time) error {
-	if time.Until(t) > 5*time.Minute {
+	return validateFutureAt(fieldName, t, time.Now())
+}
+
+func validateFutureAt(fieldName string, t, now time.Time) error {
+	if t.Sub(now) > 5*time.Minute {
 		return nil
 	}
 	return validation.NewFieldError(fieldName, "must be at least 5 min the future")
@@ -86,13 +90,7 @@ func (store *Store) SetTemporaryScheduleScoped(ctx context.Context, tx *sql.Tx, 
 		return err
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(tx *sql.Tx, data *Data) error {
-		if err := store.validateTemporaryScheduleUsers(ctx, tx, scheduleID, organizationID, newTemp); err != nil {
-			return err
-		}
-		data.V1.TemporarySchedules = setFixedShifts(data.V1.TemporarySchedules, *newTemp)
-		return nil
-	})
+	return store.updateTemporaryData(ctx, tx, scheduleID, organizationID, TemporaryUpdate{Operation: "setTemporarySchedule", Mode: "set", Temporary: *newTemp})
 }
 
 // SetClearTemporarySchedules works like SetTemporarySchedule after clearing out any existing TemporarySchedules between clearStart and clearEnd.
@@ -131,14 +129,7 @@ func (store *Store) SetClearTemporaryScheduleScoped(ctx context.Context, tx *sql
 		clearStart = now
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(tx *sql.Tx, data *Data) error {
-		if err := store.validateTemporaryScheduleUsers(ctx, tx, scheduleID, organizationID, newTemp); err != nil {
-			return err
-		}
-		data.V1.TemporarySchedules = deleteFixedShifts(data.V1.TemporarySchedules, clearStart, clearEnd)
-		data.V1.TemporarySchedules = setFixedShifts(data.V1.TemporarySchedules, *newTemp)
-		return nil
-	})
+	return store.updateTemporaryData(ctx, tx, scheduleID, organizationID, TemporaryUpdate{Operation: "setTemporarySchedule", Mode: "set_clear", Temporary: *newTemp, ClearStart: clearStart, ClearEnd: clearEnd})
 }
 
 // ClearTemporarySchedules will clear out (or split, if needed) any defined TemporarySchedules that exist between the start and end time.
@@ -165,10 +156,7 @@ func (store *Store) ClearTemporarySchedulesScoped(ctx context.Context, tx *sql.T
 		start = time.Now()
 	}
 
-	return store.updateScheduleData(ctx, tx, scheduleID, organizationID, func(_ *sql.Tx, data *Data) error {
-		data.V1.TemporarySchedules = deleteFixedShifts(data.V1.TemporarySchedules, start, end)
-		return nil
-	})
+	return store.updateTemporaryData(ctx, tx, scheduleID, organizationID, TemporaryUpdate{Operation: "clearTemporarySchedules", Mode: "clear", ClearStart: start, ClearEnd: end})
 }
 
 func (store *Store) validateTemporaryScheduleUsers(ctx context.Context, tx *sql.Tx, scheduleID uuid.UUID, scope *uuid.UUID, temp *TemporarySchedule) error {

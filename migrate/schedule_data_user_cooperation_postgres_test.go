@@ -21,6 +21,7 @@ import (
 	collector "github.com/target/goalert/deletionsafety/postgres"
 	"github.com/target/goalert/engine/cleanupmanager"
 	"github.com/target/goalert/engine/schedulemanager"
+	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/internal/scheduledataref"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
@@ -83,6 +84,17 @@ func TestPostgresUserJSONStoreCooperation(t *testing.T) {
 				require.NoError(t, f.schedules.SetTemporaryScheduleScoped(ctx, nil, id, userPhaseATemp(f.user), &f.org))
 				before := jsonWriterData(t, ctx, db, id)
 				writer, root := userPhaseATx(t, ctx, db), userPhaseATx(t, ctx, db)
+
+				// These legacy direct entry points now stop at the new removal
+				// gate. Guarded Clear's retained/removed User locking is proved
+				// separately through real signed Mutation concurrency tests.
+				if kind == "clear" || kind == "clear_scoped" {
+					enforceCode(t, jsonWriterStore(ctx, writer, f.schedules, f, id, kind), ds.DeletionConfirmationRequired)
+					require.NoError(t, writer.Commit())
+					require.NoError(t, root.Rollback())
+					require.Equal(t, before, jsonWriterData(t, ctx, db, id))
+					return
+				}
 				_, err := root.ExecContext(ctx, `LOCK TABLE rotation_participants,rotation_state,user_overrides IN EXCLUSIVE MODE NOWAIT`)
 				require.NoError(t, err)
 				if strings.HasPrefix(first, "writer") {
@@ -397,19 +409,20 @@ func TestPostgresUserJSONMultipleUsersScopeAndVersion(t *testing.T) {
 	plan, err := build(facts)
 	require.NoError(t, err)
 	beforeVersion := plan.ImpactVersion()
-	require.NoError(t, f.schedules.ClearTemporarySchedulesScoped(ctx, nil, a, one.Start, one.End, &f.org))
+	require.NoError(t, jsonWriterConfirmedClear(t, ctx, db, f, a, one.Start, one.End))
 	facts, err = collectDeletion(t, ctx, db, root, collector.Limits{})
 	require.NoError(t, err)
 	plan, err = build(facts)
 	require.NoError(t, err)
 	require.NotEqual(t, beforeVersion, plan.ImpactVersion())
-	// Replace a complete FixedShift UserID while the removed User is locked.
-	// Only the final surviving User must be retained and locked by this write.
+	// A direct reference replacement now requires consent even when the
+	// removed User would be absent from the final envelope's lock set.
 	require.NoError(t, f.schedules.SetTemporaryScheduleScoped(ctx, nil, a, userPhaseATemp(f.user), &f.org))
 	removed := userPhaseATx(t, ctx, db)
 	require.NoError(t, jsonWriterUserLock(ctx, removed, f.user))
-	require.NoError(t, f.schedules.SetTemporaryScheduleScoped(ctx, nil, a, userPhaseATemp(g.user), &f.org))
+	enforceCode(t, f.schedules.SetTemporaryScheduleScoped(ctx, nil, a, userPhaseATemp(g.user), &f.org), ds.DeletionConfirmationRequired)
 	require.NoError(t, removed.Rollback())
+	require.NoError(t, jsonWriterConfirmedSet(t, ctx, db, f, a, userPhaseATemp(g.user)))
 	remaining, err := scheduledataref.Users([]byte(jsonWriterData(t, ctx, db, a)), a)
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{g.user}, remaining)
@@ -722,15 +735,47 @@ func TestPostgresUserJSONCleanupRetainsValidAndStoreCompetition(t *testing.T) {
 			require.NoError(t, <-secondDone)
 		})
 	}
-	// Removing the complete reference set need not lock the removed User. This
-	// legitimate clear operation can commit while the future delete-side row lock
-	// is held, and it cannot introduce a dangling relationship.
+	// Cleanup keeps its independent lifecycle; an interactive direct Clear
+	// cannot borrow that authority. Confirm explicitly after releasing the
+	// competing User lock, then verify the complete reference set was removed.
 	root := userPhaseATx(t, ctx, db)
 	require.NoError(t, jsonWriterUserLock(ctx, root, f.user))
 	temp := data.V1.TemporarySchedules[0]
-	require.NoError(t, f.schedules.ClearTemporarySchedulesScoped(ctx, nil, id, temp.Start, temp.End, &f.org))
+	enforceCode(t, f.schedules.ClearTemporarySchedulesScoped(ctx, nil, id, temp.Start, temp.End, &f.org), ds.DeletionConfirmationRequired)
 	require.NoError(t, root.Rollback())
+	require.NoError(t, jsonWriterConfirmedClear(t, ctx, db, f, id, temp.Start, temp.End))
 	ids, err := scheduledataref.Users([]byte(jsonWriterData(t, ctx, db, id)), id)
 	require.NoError(t, err)
 	require.Empty(t, ids)
+}
+
+// Use production Preview/confirmation for fixture mutations that intentionally
+// remove coverage. No test-only capability or alternate writer is introduced.
+func jsonWriterConfirmedClear(t *testing.T, ctx context.Context, db *sql.DB, f userPhaseAFixture, id uuid.UUID, start, end time.Time) error {
+	t.Helper()
+	app := updateNativeApp(t, ctx, db)
+	app.ScheduleStore = f.schedules
+	app.UserStore = f.users
+	input := graphql2.ClearTemporarySchedulesInput{ScheduleID: id.String(), Start: start, End: end}
+	preview, err := app.Query().PreviewClearTemporarySchedules(ctx, input)
+	if err != nil {
+		return err
+	}
+	input.Confirmation = updateNativeConfirmation(preview)
+	_, err = app.Mutation().ClearTemporarySchedules(ctx, input)
+	return err
+}
+func jsonWriterConfirmedSet(t *testing.T, ctx context.Context, db *sql.DB, f userPhaseAFixture, id uuid.UUID, temp schedule.TemporarySchedule) error {
+	t.Helper()
+	app := updateNativeApp(t, ctx, db)
+	app.ScheduleStore = f.schedules
+	app.UserStore = f.users
+	input := graphql2.SetTemporaryScheduleInput{ScheduleID: id.String(), Start: temp.Start, End: temp.End, Shifts: temp.Shifts}
+	preview, err := app.Query().PreviewSetTemporarySchedule(ctx, input)
+	if err != nil {
+		return err
+	}
+	input.Confirmation = updateNativeConfirmation(preview)
+	_, err = app.Mutation().SetTemporarySchedule(ctx, input)
+	return err
 }

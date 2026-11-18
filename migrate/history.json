@@ -2194,6 +2194,35 @@
           "sha256": "e509b7b78d098ce7f58e4e80408ea6cfa545ce319573998cd0f26eb80d26126c"
         }
       ]
+    },
+    {
+      "id": "ms-oncall-schedule-json-update-audit-d09-contract-impl1",
+      "first_position": 308,
+      "provenance": "MS_ONCALL",
+      "source": {
+        "kind": "MS_ONCALL_CHECKPOINT_BASE",
+        "repository": "https://github.com/duj4/ms-oncall",
+        "checkpoint": "D09-DELETION-SAFETY-UPDATE-INDUCED-SCHEDULE-JSON-CONTRACT-IMPL1 Owner-authorized; local candidate only",
+        "base_commit": "f4b26b18e4bc02e382e4171a6fc7886142bfc96a",
+        "base_tree": "1a10a1c7b0dedd937768c9fd6d6e29874ed065e7",
+        "authorization_repository": "https://github.com/duj4/ms-oncall-project",
+        "authorization_commit": "b4c9ac69a8368ea377c42b6acc4c301a18b49dfb",
+        "authorization_tree": "9e2feb720999c16c18af272258609acdefceba2b"
+      },
+      "depends_on": {
+        "bundle_id": "ms-oncall-user-delete-session-audit-identity-d09-fix1",
+        "migration_id": "20261117160628-user-delete-session-audit-identity-v2.sql",
+        "sha256": "e509b7b78d098ce7f58e4e80408ea6cfa545ce319573998cd0f26eb80d26126c",
+        "evidence": "DIRECT_OWNER_CONTRACT_IMPL1_APPEND_AFTER_EXACT_IMMUTABLE_POSITION_307"
+      },
+      "adaptation_evidence": "INDEPENDENT_SCHEDULE_JSON_UPDATE_V1_EXACT_HALF_OPEN_COVERAGE_BEFORE_AFTER_SYMMETRIC_DIFF_NO_ROOT_DELETE_SEMANTIC_CHANGE",
+      "entries": [
+        {
+          "id": "20261118123944-schedule-json-update-audit-v1.sql",
+          "original_id": "20261118123944-schedule-json-update-audit-v1.sql",
+          "sha256": "0e8fad831d08057ddb8b631ad6afe4865b148edcfbc79d4e895e90d4e61e6107"
+        }
+      ]
     }
   ]
 }

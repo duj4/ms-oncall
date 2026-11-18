@@ -39,3 +39,33 @@ extend type Query {
   previewUpdateRotation(input: UpdateRotationInput!): UpdateDeletionPreview!
   previewUpdateService(input: UpdateServiceInput!): UpdateDeletionPreview!
 }
+
+
+extend input SetTemporaryScheduleInput { confirmation: DeletionSafetyConfirmationInput }
+extend input ClearTemporarySchedulesInput { confirmation: DeletionSafetyConfirmationInput }
+
+"UTC half-open time coverage; no persistent JSON-element identity."
+type ScheduleJSONCoverage {
+  kind: String!
+  userID: ID
+  start: ISOTimestamp!
+  end: ISOTimestamp!
+}
+type ScheduleJSONCoverageChange {
+  coverage: ScheduleJSONCoverage!
+  change: String!
+  source: String!
+}
+type ScheduleJSONUpdatePreview {
+  contractVersion: Int!
+  operation: String!
+  mode: String!
+  before: [ScheduleJSONCoverage!]!
+  after: [ScheduleJSONCoverage!]!
+  effects: [ScheduleJSONCoverageChange!]!
+}
+extend type UpdateDeletionPreview { scheduleJSONUpdate: ScheduleJSONUpdatePreview }
+extend type Query {
+  previewSetTemporarySchedule(input: SetTemporaryScheduleInput!): UpdateDeletionPreview!
+  previewClearTemporarySchedules(input: ClearTemporarySchedulesInput!): UpdateDeletionPreview!
+}

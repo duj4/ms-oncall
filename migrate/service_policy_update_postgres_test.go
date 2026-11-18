@@ -101,7 +101,7 @@ func TestPostgresServicePolicyUpdateBusiness(t *testing.T) {
 	var version string
 	require.NoError(t, db.QueryRowContext(ctx, `SHOW server_version`).Scan(&version))
 	require.True(t, strings.HasPrefix(version, "17.11"), version)
-	require.Equal(t, 307, enforcementCount(t, ctx, db, `SELECT count(*) FROM ms_oncall_migration_provenance`))
+	require.Equal(t, len(Names()), enforcementCount(t, ctx, db, `SELECT count(*) FROM ms_oncall_migration_provenance`))
 	for _, status := range []string{"none", "closed", "triggered", "active", "mixed"} {
 		t.Run(status, func(t *testing.T) {
 			f := newServicePolicyFixture(t, ctx, db, status)
