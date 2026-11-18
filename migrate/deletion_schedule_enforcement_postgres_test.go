@@ -511,20 +511,69 @@ func TestPostgresDeletionEnforcementScheduleWriterFirst(t *testing.T) {
 		t.Run(w.name, func(t *testing.T) {
 			version := scheduleProfileVersion(t, ctx, db, f.schedule)
 			writer := epProfileWriter(t, ctx, db)
-			require.NoError(t, w.run(ctx, writer))
+			temporary := w.name == "set_clear_temporary_store" || w.name == "clear_temporary_store"
+			var replacement []byte
+			var before string
+			if temporary {
+				before = scheduleJSONInventory(t, ctx, db, f.schedule)
+				// Migration308 requires confirmation for these destructive Store
+				// calls. Rejection must leave both JSON and success audit unchanged,
+				// even when the caller commits after the Store's savepoint rollback.
+				enforceCode(t, w.run(ctx, writer), ds.DeletionConfirmationRequired)
+				require.NoError(t, writer.Commit())
+				require.Equal(t, before, scheduleJSONInventory(t, ctx, db, f.schedule))
+
+				// This private SQL writer tests physical envelope lock contention,
+				// not a protected product mutation. It deliberately creates no
+				// business success audit; approved mutation coverage lives in the
+				// ScheduleJSONUpdate tests using real Preview/Confirmation.
+				temps := []schedule.TemporarySchedule{}
+				if w.name == "set_clear_temporary_store" {
+					start, end := f.now.Add(4*time.Hour), f.now.Add(5*time.Hour)
+					temps = append(temps, schedule.TemporarySchedule{Start: start, End: end, Shifts: []schedule.FixedShift{{Start: start, End: end, UserID: f.user.String()}}})
+				}
+				var err error
+				replacement, err = json.Marshal(temps)
+				require.NoError(t, err)
+				writer = epProfileWriter(t, ctx, db)
+				result, err := writer.ExecContext(ctx, `UPDATE schedule_data SET data=jsonb_set(data,'{V1,TemporarySchedules}',$2::jsonb) WHERE schedule_id=$1`, f.schedule, string(replacement))
+				require.NoError(t, err)
+				rows, err := result.RowsAffected()
+				require.NoError(t, err)
+				require.EqualValues(t, 1, rows)
+				// A separate PostgreSQL transaction proves the actual conflicting
+				// row is locked before Root Delete starts; no timing assumption.
+				probe := epProfileWriter(t, ctx, db)
+				_, err = probe.ExecContext(ctx, `SELECT id FROM schedule_data WHERE schedule_id=$1 FOR UPDATE NOWAIT`, f.schedule)
+				jsonWriterCode(t, err, "55P03")
+				require.NoError(t, probe.Rollback())
+				t.Log("private SQL writer holds schedule_data row lock before Root Delete")
+			} else {
+				require.NoError(t, w.run(ctx, writer))
+			}
 			_, err := app.Mutation().DeleteAll(ctx, scheduleProfileInput(f.schedule), &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: version, AcknowledgeImpacts: true})
 			enforceCode(t, err, ds.DeletionUnavailable)
+			if temporary {
+				require.Equal(t, before, scheduleJSONInventory(t, ctx, db, f.schedule))
+				scheduleProfileNoSuccess(t, ctx, db)
+			}
 			require.NoError(t, writer.Commit())
 			require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM schedules WHERE id=$1`, f.schedule))
+			if temporary {
+				var actual string
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT (data#>'{V1,TemporarySchedules}')::text FROM schedule_data WHERE schedule_id=$1`, f.schedule).Scan(&actual))
+				require.JSONEq(t, string(replacement), actual)
+				require.Zero(t, enforcementCount(t, ctx, db, `SELECT count(*) FROM schedule_json_update_audit_events WHERE schedule_id=$1`, f.schedule))
+			}
 			if w.name == "history_insert" || w.name == "message_insert" {
 				return
 			}
 			facts, err := collectDeletion(t, ctx, db, scheduleProfileRoot(f.schedule), collector.Limits{})
-			if err != nil {
-				require.Contains(t, []string{"clear_temporary_store", "set_clear_temporary_store"}, w.name)
-				return
-			}
+			require.NoError(t, err)
 			fresh := deletionPlan(t, scheduleProfileRoot(f.schedule), facts).ImpactVersion()
+			if temporary {
+				require.NotEqual(t, version, fresh, "committed coverage change must invalidate the old Root impact")
+			}
 			tx := nrBegin(t, ctx, db)
 			_, err = collector.Enforce(ctx, tx, scheduleProfileSelectors(f.schedule), fresh, true, authorizeDeletionFixture(scheduleProfileRoot(f.schedule)))
 			require.NoError(t, err)
