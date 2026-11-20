@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/auth"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
@@ -275,14 +276,32 @@ func TestGraphQLIntegrationKeyDeleteCompatibility(t *testing.T) {
 	ikSetAuthority(t, h, "ORG_ADMIN", false)
 	roots := ikDeleteRoots(t, h)
 	response := stepOrganizationQuery(t, h, `mutation{deleteAll(input:[`+roots+`])}`)
-	require.Empty(t, response.Errors, "authorized non-Key DeleteAll remains unchanged")
+	require.NotEmpty(t, response.Errors, "Mixed-root is unsupported by the current Guard")
+	for _, row := range []struct{ table, id string }{{"rotations", "delete-rotation"}, {"schedules", "delete-schedule"}} {
+		var count int
+		require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM `+row.table+` WHERE id=$1`, h.UUID(row.id)).Scan(&count))
+		require.Equal(t, 1, count, "Mixed-root refusal must preserve both original roots")
+	}
+	for _, target := range []struct{ typ, id string }{{"rotation", "delete-rotation"}, {"schedule", "delete-schedule"}} {
+		response = stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{deleteAll(input:[{type:%s,id:%q}])}`, target.typ, h.UUID(target.id)))
+		require.Empty(t, response.Errors, "each empty homogeneous Root still supports the original authorized deletion")
+	}
 	// Only this previously verified System context keeps nil-scope compatibility,
 	// including duplicates, missing IDs and an existing foreign UIK.
 	ctx := permission.SystemContext(context.Background(), "Engine")
 	app := integrationKeyOrganizationApp(h)
+	before := ikDeleteSnapshot(t, h)
 	ok, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{
 		{Type: assignment.TargetTypeIntegrationKey, ID: h.UUID("generic-a")},
 		{Type: assignment.TargetTypeIntegrationKey, ID: h.UUID("universal-b")},
+	}, nil)
+	var safety *ds.DeletionSafetyError
+	require.ErrorAs(t, err, &safety)
+	require.Equal(t, ds.DeletionUnavailable, safety.Code)
+	require.False(t, ok)
+	require.Equal(t, before, ikDeleteSnapshot(t, h), "unsupported Universal/KeyConfig must preserve the entire batch")
+	ok, err = smokeDeleteAll(t, h, app, ctx, []assignment.RawTarget{
+		{Type: assignment.TargetTypeIntegrationKey, ID: h.UUID("generic-a")},
 		{Type: assignment.TargetTypeIntegrationKey, ID: h.UUID("generic-a")},
 		{Type: assignment.TargetTypeIntegrationKey, ID: h.UUID("missing")},
 	})
@@ -290,7 +309,9 @@ func TestGraphQLIntegrationKeyDeleteCompatibility(t *testing.T) {
 	require.True(t, ok)
 	var remaining int
 	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM integration_keys WHERE id IN ($1,$2)`, h.UUID("generic-a"), h.UUID("universal-b")).Scan(&remaining))
-	require.Zero(t, remaining)
+	require.Equal(t, 1, remaining, "the unsupported Universal key remains")
+	require.Equal(t, 1, serviceManagementCount(t, h, "integration_keys", h.UUID("universal-b")))
+	require.Zero(t, serviceManagementCount(t, h, "integration_keys", h.UUID("generic-a")))
 }
 
 // SVC-B1 closes the Member parent-Service bypass independently of explicit IK-D1.

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
@@ -163,7 +164,20 @@ func TestUserSessionAuditSystemCascadeAndPaging(t *testing.T) {
 	ctx := permission.SystemContext(t.Context(), "Engine")
 	owner := sd7User(t, h)
 	id, safe := usSession(t, h, owner)
-	ok, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}, {Type: assignment.TargetTypeUserSession, ID: id}})
+	// Mixed-root remains fail closed, including the Root and its Session.
+	ok, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}, {Type: assignment.TargetTypeUserSession, ID: id}}, nil)
+	var safety *ds.DeletionSafetyError
+	require.ErrorAs(t, err, &safety)
+	require.Equal(t, ds.DeletionUnavailable, safety.Code)
+	require.False(t, ok)
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, owner))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, owner))
+	// A normal assigned User is a supported homogeneous Root. Retain the
+	// original implicit Session cascade and paging business assertions.
+	sd8Assign(t, h, owner, harness.SmokeOrganizationID)
+	ok, err = smokeDeleteAll(t, h, a, ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
@@ -175,7 +189,7 @@ func TestUserSessionAuditSystemCascadeAndPaging(t *testing.T) {
 		ids = append(ids, assignment.RawTarget{Type: assignment.TargetTypeUserSession, ID: id})
 	}
 	before := usSuccesses(t, h)
-	ok, err = a.Mutation().DeleteAll(ctx, ids)
+	ok, err = a.Mutation().DeleteAll(ctx, ids, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, before+1, usSuccesses(t, h))
@@ -211,6 +225,7 @@ func TestUserSessionAuditRealConcurrentCause(t *testing.T) {
 	for _, mode := range []string{"session_session", "session_user", "user_session", "rollback_session"} {
 		t.Run(mode, func(t *testing.T) {
 			owner := sd7User(t, h)
+			sd8Assign(t, h, owner, harness.SmokeOrganizationID)
 			id, safe := usSession(t, h, owner)
 			ctx, cancel := context.WithTimeout(permission.SystemContext(context.Background(), "Engine"), 15*time.Second)
 			defer cancel()
@@ -243,16 +258,45 @@ func TestUserSessionAuditRealConcurrentCause(t *testing.T) {
 				}
 				return []assignment.RawTarget{{Type: assignment.TargetTypeUserSession, ID: id}}
 			}
+			// Obtain the User version before installing any transaction barrier.
+			confirm, err := smokeDeletionConfirmation(t, h, ctx, targets(true))
+			require.NoError(t, err)
 			done1, done2 := make(chan error, 1), make(chan error, 1)
-			go func() { _, err := a1.Mutation().DeleteAll(ctx, targets(mode == "user_session")); done1 <- err }()
+			go func() {
+				if mode == "user_session" {
+					_, err := a1.Mutation().DeleteAll(ctx, targets(true), confirm)
+					done1 <- err
+					return
+				}
+				_, err := a1.Mutation().DeleteAll(ctx, targets(false), nil)
+				done1 <- err
+			}()
 			<-entered
-			go func() { _, err := a2.Mutation().DeleteAll(ctx, targets(mode == "session_user")); done2 <- err }()
+			go func() {
+				if mode == "session_user" {
+					_, err := a2.Mutation().DeleteAll(ctx, targets(true), confirm)
+					done2 <- err
+					return
+				}
+				_, err := a2.Mutation().DeleteAll(ctx, targets(false), nil)
+				done2 <- err
+			}()
 			// Waiting is observed in PostgreSQL, rather than assumed from a sleep.
 			require.Eventually(t, func() bool {
 				return sd8Scalar(t, h, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'`) > 0
 			}, time.Second, 10*time.Millisecond)
 			unblock()
 			err1, err2 := <-done1, <-done2
+			if mode == "session_user" {
+				var safety *ds.DeletionSafetyError
+				require.ErrorAs(t, err2, &safety)
+				require.Equal(t, ds.DeletionDependencyChanged, safety.Code)
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, owner))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, owner))
+				fresh, previewErr := smokeDeletionConfirmation(t, h, ctx, targets(true))
+				require.NoError(t, previewErr)
+				_, err2 = a2.Mutation().DeleteAll(ctx, targets(true), fresh)
+			}
 			require.NoError(t, err2)
 			if mode == "rollback_session" {
 				require.Error(t, err1)
@@ -260,7 +304,7 @@ func TestUserSessionAuditRealConcurrentCause(t *testing.T) {
 				require.NoError(t, err1)
 			}
 			explicit := sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe)
-			cascade := sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects WHERE resource_type='user_session' AND payload->'before'->>'id'=$1`, id)
+			cascade := sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects WHERE resource_type='user_session' AND resource_key=$1 AND payload#>>'{before,version}'='2'`, safe)
 			require.EqualValues(t, 1, explicit+cascade)
 			if mode == "user_session" {
 				require.Zero(t, explicit)

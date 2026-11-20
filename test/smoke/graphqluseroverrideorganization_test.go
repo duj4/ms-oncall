@@ -2,7 +2,6 @@ package smoke
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/graphql2/graphqlapp"
 	"github.com/target/goalert/organization"
@@ -282,7 +282,7 @@ func TestUserOverrideOrganizationStoreAndNonHumanCompatibility(t *testing.T) {
 	forged.ID = h.UUID("override-a1")
 	forged.Target = assignment.ScheduleTarget(h.UUID("schedule-b"))
 	require.Error(t, s.UpdateUserOverrideTxScoped(ctx, nil, &forged, &org))
-	require.ErrorIs(t, s.DeleteUserOverrideTxScoped(ctx, nil, []string{h.UUID("override-a1"), foreignID}, &org), sql.ErrNoRows)
+	smokeDeletionCode(t, s.DeleteUserOverrideTxScoped(ctx, nil, []string{h.UUID("override-a1"), foreignID}, &org), ds.DeletionUnavailable)
 	require.Equal(t, before, userOverrideOrganizationSnapshot(t, h), "Store-owned transactions roll back on error")
 	// Nil scope retains global access and existing-subset deletion semantics.
 	foreign.End = foreign.End.Add(time.Hour)
@@ -304,13 +304,40 @@ func TestUserOverrideOrganizationStoreAndNonHumanCompatibility(t *testing.T) {
 	ok, err := app.Mutation().UpdateUserOverride(apiCtx, graphql2.UpdateUserOverrideInput{ID: foreignID})
 	require.NoError(t, err)
 	require.True(t, ok)
-	ok, err = app.Mutation().DeleteAll(apiCtx, []assignment.RawTarget{
+	input := []assignment.RawTarget{
 		{Type: assignment.TargetTypeUserOverride, ID: foreignID},
 		{Type: assignment.TargetTypeUserOverride, ID: foreignID},
+		{Type: assignment.TargetTypeUserOverride, ID: h.UUID("missing")},
+	}
+	before = userOverrideOrganizationSnapshot(t, h)
+	_, err = smokeDeletionPreview(t, h, apiCtx, input)
+	smokeDeletionCode(t, err, ds.DeletionUnavailable)
+	ok, err = app.Mutation().DeleteAll(apiCtx, input, nil)
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Equal(t, before, userOverrideOrganizationSnapshot(t, h))
+	require.Zero(t, smokeDeletionSuccesses(t, h))
+	// The original cross-organization endpoints remain an independent negative
+	// control, including under trusted System authority.
+	_, err = smokeDeletionPreview(t, h, ctx, input)
+	smokeDeletionCode(t, err, ds.DeletionUnavailable)
+	ok, err = sd7App(h).Mutation().DeleteAll(ctx, input, nil)
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Equal(t, before, userOverrideOrganizationSnapshot(t, h))
+	require.Zero(t, smokeDeletionSuccesses(t, h))
+	// A distinct same-scope override exercises real duplicate/missing selectors
+	// through Preview and Confirmation without deleting the legacy cross-scope row.
+	ok, err = smokeDeleteAll(t, h, sd7App(h), ctx, []assignment.RawTarget{
+		{Type: assignment.TargetTypeUserOverride, ID: created.ID},
+		{Type: assignment.TargetTypeUserOverride, ID: created.ID},
 		{Type: assignment.TargetTypeUserOverride, ID: h.UUID("missing")},
 	})
 	require.NoError(t, err)
 	require.True(t, ok)
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_override_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, created.ID))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_overrides WHERE id=$1`, foreignID))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_overrides WHERE id=$1`, created.ID))
 }
 
 func TestGraphQLUserOverrideOrganizationNonOperationalAuthority(t *testing.T) {

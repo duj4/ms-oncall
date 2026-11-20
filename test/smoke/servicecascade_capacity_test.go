@@ -22,7 +22,7 @@ func TestServiceCascadePG13BudgetAcrossRoots(t *testing.T) {
 			require.NoError(t, err)
 			_, err = db.Exec(`INSERT INTO alerts(service_id,summary,status) SELECT CASE WHEN n%2=0 THEN $1::uuid ELSE $2::uuid END,'SD3 capacity','closed' FROM generate_series(1,$3) n`, root, other, count)
 			require.NoError(t, err)
-			ok, err := sd3App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root), sd3Target(assignment.TargetTypeService, other)})
+			ok, err := smokeDeleteAll(t, h, sd3App(h), sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root), sd3Target(assignment.TargetTypeService, other)})
 			if count == deleteaudit.MaxEffects {
 				require.NoError(t, err)
 				require.True(t, ok)
@@ -55,7 +55,7 @@ func TestServiceCascadePG03RawInputLimitsBeforeDeduplication(t *testing.T) {
 			for range count {
 				input = append(input, sd3Target(assignment.TargetTypeIntegrationKey, key.String()))
 			}
-			ok, err := sd3App(h).Mutation().DeleteAll(servicePlatformAdminContext(t, h), input)
+			ok, err := smokeDeleteAll(t, h, sd3App(h), servicePlatformAdminContext(t, h), input)
 			if count == 50 {
 				require.NoError(t, err)
 				require.True(t, ok)
@@ -104,7 +104,7 @@ func TestServiceCascadePG13JSONBByteBudgetAcrossRoots(t *testing.T) {
 		 SELECT CASE WHEN n<=$3 THEN 100000000000000000+n ELSE 1000000000000000000+n END,id,CASE WHEN n%2=0 THEN $1::uuid ELSE $2::uuid END
 		 FROM (SELECT id,row_number() OVER(ORDER BY id) n FROM users WHERE name='SD3 byte owner') owners`, root, other, reduce)
 			require.NoError(t, err)
-			ok, err := sd3App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root), sd3Target(assignment.TargetTypeService, other)})
+			ok, err := smokeDeleteAll(t, h, sd3App(h), sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root), sd3Target(assignment.TargetTypeService, other)})
 			if extra == 0 {
 				require.NoError(t, err)
 				require.True(t, ok)

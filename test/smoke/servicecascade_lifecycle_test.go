@@ -46,7 +46,7 @@ func TestServiceCascadePG11LifecycleAndPG12ExcludedResources(t *testing.T) {
 	require.NoError(t, err)
 	var beforeArray string
 	require.NoError(t, db.QueryRow(`SELECT to_jsonb(m)::text FROM outgoing_messages m WHERE id=$1`, arrayOnly).Scan(&beforeArray))
-	ok, err := sd3App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root)})
+	ok, err := smokeDeleteAll(t, h, sd3App(h), sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root)})
 	require.NoError(t, err)
 	require.True(t, ok)
 	effects := sd3Effects(t, h, root)

@@ -20,7 +20,7 @@ func TestUserDeleteAuditRotationTrace(t *testing.T) {
 	for _, shape := range []string{"UVW", "UUVW", "UVUW", "UUU"} {
 		for active := range len(shape) {
 			t.Run(fmt.Sprintf("%s/active_%d", shape, active), func(t *testing.T) {
-				u, v, w := sd7User(t, h), sd7User(t, h), sd7User(t, h)
+				u, v, w := smokeOwnedUser(t, h), smokeOwnedUser(t, h), smokeOwnedUser(t, h)
 				lookup := map[byte]string{'U': u, 'V': v, 'W': w}
 				rot := sd6Root(t, h, "rotation", harness.SmokeOrganizationID)
 				ids := make([]string, len(shape))
@@ -57,7 +57,13 @@ func TestUserDeleteAuditRotationTrace(t *testing.T) {
 				defer controlled.Close()
 				app := sd7App(h)
 				app.DB = controlled
-				ok, err := app.Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+				smokeAssertBlockedUser(t, h, app, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+				connector.mu.Lock()
+				refusedTrace := append([]string{}, connector.trace...)
+				connector.mu.Unlock()
+				require.Empty(t, refusedTrace, "BLOCK cannot mutate any participant")
+				t.Log("HOLD: original UPDATE/reverse DELETE trace is unreachable with a surviving Rotation")
+				ok, err := smokeDeleteAll(t, h, app, permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
 				require.NoError(t, err)
 				require.True(t, ok)
 				connector.mu.Lock()

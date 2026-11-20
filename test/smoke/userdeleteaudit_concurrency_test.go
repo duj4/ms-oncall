@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
 )
@@ -50,7 +51,7 @@ func TestUserDeleteAuditRealTwoSecondWriter(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", mode, iteration), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 				defer cancel()
-				u := sd7User(t, h)
+				u := smokeOwnedUser(t, h)
 				_, nr := sd8CMNR(t, h, u)
 				connector, err := sd8PGConnector(harness.DBURL(name))
 				require.NoError(t, err)
@@ -77,6 +78,10 @@ func TestUserDeleteAuditRealTwoSecondWriter(t *testing.T) {
 						return ctx.Err()
 					}
 				}
+				input := []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}}
+				confirmation, err := smokeDeletionConfirmation(t, h, permission.SystemContext(ctx, "Engine"), input)
+				require.NoError(t, err)
+				before := smokeUserBusinessState(t, h)
 				writer, err := db.Conn(ctx)
 				require.NoError(t, err)
 				defer writer.Close()
@@ -92,34 +97,31 @@ func TestUserDeleteAuditRealTwoSecondWriter(t *testing.T) {
 
 				}
 				if mode == "rollback" {
-					sd8Exec(t, h, `CREATE FUNCTION sd8_business_fail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'SYNTHETIC_PRIVATE';END;$$;CREATE TRIGGER sd8_business_fail BEFORE INSERT ON user_delete_audit_events FOR EACH ROW WHEN (NEW.record_kind='success_witness') EXECUTE FUNCTION sd8_business_fail()`)
+					sd8Exec(t, h, `CREATE SEQUENCE sd8_writer_hits; CREATE FUNCTION sd8_business_fail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM nextval('sd8_writer_hits'); RAISE EXCEPTION 'SYNTHETIC_PRIVATE';END;$$;CREATE TRIGGER sd8_business_fail BEFORE INSERT ON user_delete_audit_events FOR EACH ROW WHEN (NEW.record_kind='success_witness') EXECUTE FUNCTION sd8_business_fail()`)
+					t.Cleanup(func() {
+						sd8Exec(t, h, `DROP TRIGGER sd8_business_fail ON user_delete_audit_events; DROP FUNCTION sd8_business_fail(); DROP SEQUENCE sd8_writer_hits`)
+					})
 				}
 				done := make(chan error, 1)
 				go func() {
-					_, err := app.Mutation().DeleteAll(permission.SystemContext(ctx, "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+					_, err := app.Mutation().DeleteAll(permission.SystemContext(ctx, "Engine"), input, confirmation)
 					done <- err
 				}()
 				if mode == "writer_first" {
-					// Read PID through pg_stat_activity instead of racing with the driver's hook.
-					require.Eventually(t, func() bool {
-						return db.QueryRowContext(ctx, `SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)) LIMIT 1`, wpid).Scan(&dp) == nil
-					}, 5*time.Second, 10*time.Millisecond)
-					start := sd8WaitLock(t, db, dp, wpid)
-					timer := time.NewTimer(2100 * time.Millisecond)
-					<-timer.C
-					sd8WaitLock(t, db, dp, wpid)
-					require.GreaterOrEqual(t, time.Since(start), 2*time.Second)
-					require.NoError(t, writerTx.Commit())
+					// The approved closure collector uses NOWAIT. Keep the real
+					// competing writer, but do not wait for a removed waiter.
+					smokeDeletionCode(t, <-done, ds.DeletionUnavailable)
 					select {
 					case <-beforeDelete:
-					case <-ctx.Done():
-						t.Fatal("delete capture did not finish")
+						t.Fatal("rejected mutation reached DELETE")
+					default:
 					}
-					unblock()
-					require.NoError(t, <-done)
-					var delay int
-					require.NoError(t, db.QueryRow(`SELECT (f.payload->'before'->>'delay_minutes')::integer FROM user_delete_audit_effects f JOIN user_delete_audit_events e USING(event_id) WHERE e.root_id=$1 AND f.resource_type='notification_rule'`, u).Scan(&delay))
-					require.Equal(t, 1, delay)
+					require.Equal(t, before, smokeUserBusinessState(t, h))
+					require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, u))
+					require.NoError(t, writerTx.Commit())
+					require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT delay_minutes FROM user_notification_rules WHERE id=$1`, nr))
+					require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, u))
+					t.Log("writer-first: real writer committed; NOWAIT rejected before DELETE; no partial deletion or success Audit")
 					return
 				}
 				select {
@@ -167,7 +169,7 @@ func TestUserDeleteAuditRealTwoSecondWriter(t *testing.T) {
 					require.EqualValues(t, 1, update.n)
 					require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT delay_minutes FROM user_notification_rules WHERE id=$1`, nr))
 					require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, u))
-					sd8Exec(t, h, `DROP TRIGGER sd8_business_fail ON user_delete_audit_events;DROP FUNCTION sd8_business_fail()`)
+					require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM sd8_writer_hits WHERE is_called`), "real rollback Appender fault was reached")
 				}
 				t.Logf("branch=%s iteration=%d proven_wait=%s writer_rows=%d begins=%d commits=%d", mode, iteration, time.Since(start), update.n, connector.begins.Load(), connector.commits.Load())
 			})

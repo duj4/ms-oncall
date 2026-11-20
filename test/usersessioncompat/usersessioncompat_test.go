@@ -36,9 +36,9 @@ func TestUserSessionCompatUIContract(t *testing.T) {
 	var version string
 	require.NoError(t, h.App().DB().QueryRow(`SHOW server_version`).Scan(&version))
 	require.Equal(t, "17.11", version)
-	require.EqualValues(t, 307, countSQL(t, h, `SELECT max(canonical_position) FROM ms_oncall_migration_provenance`))
-	require.EqualValues(t, 307, countSQL(t, h, `SELECT count(*) FROM gorp_migrations`))
-	t.Log("PostgreSQL 17.11; fresh migration 0 -> 307; provenance tail 307")
+	require.EqualValues(t, 309, countSQL(t, h, `SELECT max(canonical_position) FROM ms_oncall_migration_provenance`))
+	require.EqualValues(t, 309, countSQL(t, h, `SELECT count(*) FROM gorp_migrations`))
+	t.Log("PostgreSQL 17.11; fresh migration 0 -> 309; provenance tail 309")
 	id, safe := createSession(t, h, h.UUID("om"))
 	profile := request(t, h, f.tokens["om"], `{user{sessions{id current}}}`, nil)
 	require.Empty(t, profile["errors"])

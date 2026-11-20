@@ -89,7 +89,7 @@ func TestUserSessionAuditRealReceiptFaults(t *testing.T) {
 			defer db.Close()
 			a := sd7App(h)
 			a.DB = db
-			ok, err := a.Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUserSession, ID: id}})
+			ok, err := a.Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUserSession, ID: id}}, nil)
 			require.False(t, ok)
 			require.Error(t, err)
 			require.NotContains(t, err.Error(), "SYNTHETIC_PRIVATE")

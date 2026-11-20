@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/graphql2/graphqlapp"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/test/smoke/harness"
@@ -157,6 +157,9 @@ func TestIntegrationKeyDeleteAuditPartition(t *testing.T) {
 			h := sd1Harness(t)
 			db := h.App().DB()
 			root := h.UUID("service-b")
+			if mode == "human_suppressed_key" {
+				root = h.UUID("service-a")
+			}
 			key, safe := sd3Key(t, h, root)
 			input := []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())}
 			serviceRoot := root
@@ -186,7 +189,22 @@ func TestIntegrationKeyDeleteAuditPartition(t *testing.T) {
 				ikSetAuthority(t, h, "ORG_MEMBER", true)
 				ctx = servicePlatformAdminContext(t, h)
 			}
-			ok, err := sd3App(h).Mutation().DeleteAll(ctx, input)
+			if len(input) > 1 {
+				before := serviceManagementSnapshot(t, h)
+				ok, err := sd3App(h).Mutation().DeleteAll(ctx, input, nil)
+				smokeDeletionCode(t, err, ds.DeletionUnavailable)
+				require.False(t, ok)
+				require.Equal(t, before, serviceManagementSnapshot(t, h))
+				require.Zero(t, sd1Count(t, h, "committed"))
+				require.Zero(t, sd4Count(t, h))
+				// Keep explicit and cascade partitions as separate legal requests.
+				if mode == "unrelated" || mode == "suppressed_parent" {
+					input = input[:1]
+				} else {
+					input = input[1:]
+				}
+			}
+			ok, err := smokeDeleteAll(t, h, sd3App(h), ctx, input)
 			if mode == "human_suppressed_key" {
 				require.ErrorIs(t, err, sql.ErrNoRows)
 				require.False(t, ok)
@@ -203,8 +221,10 @@ func TestIntegrationKeyDeleteAuditPartition(t *testing.T) {
 			}
 			require.Equal(t, roots, sd4Count(t, h))
 			if roots == 1 {
-				var resource, parent, org string
-				require.NoError(t, db.QueryRow(`SELECT root_resource_id,parent_service_id,target_organization_id FROM integration_key_delete_audit_events WHERE record_kind='success_witness'`).Scan(&resource, &parent, &org))
+				var resource, parent, org, provenance, mechanism string
+				require.NoError(t, db.QueryRow(`SELECT root_resource_id,parent_service_id,target_organization_id,provenance,deletion_mechanism FROM integration_key_delete_audit_events WHERE record_kind='success_witness'`).Scan(&resource, &parent, &org, &provenance, &mechanism))
+				require.Equal(t, "EXPLICIT", provenance)
+				require.Equal(t, "explicit_sql", mechanism)
 				require.Equal(t, safe.String(), resource)
 				require.Equal(t, root, parent)
 				require.Equal(t, h.UUID("org-b"), org)
@@ -220,6 +240,11 @@ func TestIntegrationKeyDeleteAuditPartition(t *testing.T) {
 				require.Zero(t, sd1Count(t, h, "committed"))
 				return
 			}
+			if mode == "unrelated" {
+				ok, err = smokeDeleteAll(t, h, sd3App(h), ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeService, serviceRoot)})
+				require.NoError(t, err)
+				require.True(t, ok)
+			}
 			effects := sd3Effects(t, h, serviceRoot)
 			if mode == "unrelated" {
 				require.Empty(t, effects)
@@ -231,8 +256,8 @@ func TestIntegrationKeyDeleteAuditPartition(t *testing.T) {
 			if mode == "cascade_only" {
 				provenance, mechanism = "CASCADE", "fk_cascade"
 			}
-			if mode == "late_explicit" {
-				mechanism = "fk_cascade"
+			if mode == "late_explicit" || mode == "actual_parent" {
+				provenance, mechanism = "CASCADE", "fk_cascade"
 			}
 			require.Equal(t, provenance, effects[0].Provenance)
 			require.Equal(t, mechanism, effects[0].DeletionMechanism)
@@ -345,7 +370,7 @@ func TestIntegrationKeyDeleteAuditControlledCommitOverPostgres(t *testing.T) {
 			logger := log.NewLogger()
 			logger.SetOutput(&output)
 			ctx := log.WithLogger(sd3System(), logger)
-			ok, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())})
+			ok, err := smokeDeleteAll(t, h, app, ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())})
 			require.Error(t, err)
 			require.False(t, ok)
 			require.False(t, strings.Contains(err.Error(), "SYNTHETIC_"))
@@ -370,75 +395,69 @@ func TestIntegrationKeyDeleteAuditParentLockWait(t *testing.T) {
 	h := sd1Harness(t)
 	db := h.App().DB()
 	key, safe := sd3Key(t, h, h.UUID("service-b"))
-	conn, err := db.Conn(t.Context())
+	input := []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())}
+	confirmation := smokePlanConfirmation(t, h, sd3System(), input)
+	// Exercise actual Parent contention separately from the old Key-retarget case.
+	parent, err := sd5ExternalDB(t, h, "").BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	defer conn.Close()
-	tx, err := conn.BeginTx(t.Context(), nil)
+	defer func() { _ = parent.Rollback() }()
+	_, err = parent.Exec(`SELECT id FROM services WHERE id=$1 FOR UPDATE`, h.UUID("service-b"))
+	require.NoError(t, err)
+	smokeContract4LockPID(t, h, parent)
+	smokeContract4Reject(t, h, sd3App(h), sd3System(), input, confirmation, ds.DeletionUnavailable)
+	require.NoError(t, parent.Rollback())
+	tx, err := sd5ExternalDB(t, h, "").BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	var pid int
-	require.NoError(t, tx.QueryRow(`SELECT pg_backend_pid()`).Scan(&pid))
-	// Move the Key while holding its lock. The delete must capture the new parent
-	// and its new Normal Organization after the observed PostgreSQL lock wait.
 	_, err = tx.Exec(`UPDATE integration_keys SET service_id=$2 WHERE id=$1`, key, h.UUID("service-c"))
 	require.NoError(t, err)
-	gate, err := db.Conn(t.Context())
-	require.NoError(t, err)
-	defer gate.Close()
-	var gatePID int
-	require.NoError(t, gate.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&gatePID))
-	_, err = gate.ExecContext(t.Context(), `SELECT pg_advisory_lock(990094,$1)`, gatePID)
-	require.NoError(t, err)
-	defer func() { _, _ = gate.ExecContext(context.Background(), `SELECT pg_advisory_unlock(990094,$1)`, gatePID) }()
-	_, err = db.Exec(fmt.Sprintf(`CREATE FUNCTION sd4_before_append() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(990094,%d); RETURN NEW; END $$; CREATE TRIGGER sd4_before_append BEFORE INSERT ON integration_key_delete_audit_events FOR EACH ROW EXECUTE FUNCTION sd4_before_append()`, gatePID))
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(sd3System(), 15*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := sd3App(h).Mutation().DeleteAll(ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())})
-		done <- err
-	}()
-	sd3WaitBlocked(t, db, pid)
+	smokeContract4LockPID(t, h, tx)
+	smokeContract4Reject(t, h, sd3App(h), sd3System(), input, confirmation, ds.DeletionUnavailable)
 	require.NoError(t, tx.Commit())
-	sd3WaitBlocked(t, db, gatePID)
-	// At the audit append gate all new safe capture locks must still be held.
-	// Use an independent session to measure PostgreSQL locks, not pool starvation.
-	var database string
-	require.NoError(t, gate.QueryRowContext(t.Context(), `SELECT current_database()`).Scan(&database))
-	cfg, err := pgx.ParseConfig(harness.DBURL(database))
+	smokeContract4Reject(t, h, sd3App(h), sd3System(), input, confirmation, ds.DeletionDependencyChanged)
+	smokeContract4Gate(t, h, sd3App(h), sd3System(), input, "integration_key_delete_audit_events", true, func(ctx context.Context, pid int) {
+		writer := sd5ExternalDB(t, h, "")
+		for _, q := range []string{`SELECT id FROM services WHERE id=$1 FOR UPDATE NOWAIT`, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE NOWAIT`, `SELECT organization_id FROM normal_organizations WHERE organization_id=$1 FOR UPDATE NOWAIT`} {
+			target := h.UUID("org-c")
+			if strings.Contains(q, "FROM services") {
+				target = h.UUID("service-c")
+			}
+			lock, err := writer.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			_, err = lock.ExecContext(ctx, q, target)
+			var pg *pgconn.PgError
+			require.ErrorAs(t, err, &pg)
+			require.Equal(t, "55P03", pg.Code)
+			require.NoError(t, lock.Rollback())
+		}
+		require.Positive(t, pid)
+	})
+	// Every scope lock must be released after Commit.
+	writer, err := sd5ExternalDB(t, h, "").BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	writer := stdlib.OpenDB(*cfg)
-	defer writer.Close()
+	defer func() { _ = writer.Rollback() }()
 	for _, q := range []string{`SELECT id FROM services WHERE id=$1 FOR UPDATE NOWAIT`, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE NOWAIT`, `SELECT organization_id FROM normal_organizations WHERE organization_id=$1 FOR UPDATE NOWAIT`} {
 		target := h.UUID("org-c")
 		if strings.Contains(q, "FROM services") {
 			target = h.UUID("service-c")
 		}
-		lockTx, err := writer.BeginTx(ctx, nil)
+		_, err = writer.Exec(q, target)
 		require.NoError(t, err)
-		_, err = lockTx.ExecContext(ctx, q, target)
-		var pg *pgconn.PgError
-		require.ErrorAs(t, err, &pg)
-		require.Equal(t, "55P03", pg.Code)
-		require.NoError(t, lockTx.Rollback())
 	}
-	_, err = gate.ExecContext(ctx, `SELECT pg_advisory_unlock(990094,$1)`, gatePID)
-	require.NoError(t, err)
-	require.NoError(t, <-done)
-	lockTx, err := writer.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	_, err = lockTx.ExecContext(ctx, `SELECT id FROM services WHERE id=$1 FOR UPDATE NOWAIT`, h.UUID("service-c"))
-	require.NoError(t, err)
-	require.NoError(t, lockTx.Rollback())
-	var parent, org, resource string
-	require.NoError(t, db.QueryRow(`SELECT root_resource_id,parent_service_id,target_organization_id FROM integration_key_delete_audit_events WHERE record_kind='success_witness'`).Scan(&resource, &parent, &org))
+	require.NoError(t, writer.Rollback())
+	var resource, parentID, org string
+	require.NoError(t, db.QueryRow(`SELECT root_resource_id,parent_service_id,target_organization_id FROM integration_key_delete_audit_events WHERE record_kind='success_witness'`).Scan(&resource, &parentID, &org))
 	require.Equal(t, safe.String(), resource)
-	require.Equal(t, h.UUID("service-c"), parent)
+	require.Equal(t, h.UUID("service-c"), parentID)
 	require.Equal(t, h.UUID("org-c"), org)
+	require.Zero(t, serviceManagementCount(t, h, "integration_keys", key.String()))
+	require.Equal(t, 1, sd4Count(t, h))
+	require.Equal(t, 1, serviceManagementCount(t, h, "services", parentID))
+	require.NotContains(t, sd4Rows(t, h), key.String())
+	require.Zero(t, sd1Count(t, h, "committed"))
+	t.Log("legacy Key/Parent wait NOT REACHABLE; actual NOWAIT contention, committed parent move, stale-version rejection, Audit append barrier, all three retained scope locks and safe resource identity verified")
 }
 
-// All values here are fixed synthetic sentinels, never usable credentials.
 func sd4SensitiveKey(t *testing.T, h *harness.Harness, root string) uuid.UUID {
 	t.Helper()
 	id := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
@@ -450,14 +469,14 @@ func TestIntegrationKeyDeleteAuditSystemMissingAndNoop(t *testing.T) {
 	h := sd1Harness(t)
 	a := sd3App(h)
 	missing := sd3Target(assignment.TargetTypeIntegrationKey, uuid.NewString())
-	ok, err := a.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{missing})
+	ok, err := smokeDeleteAll(t, h, a, sd3System(), []assignment.RawTarget{missing})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Zero(t, sd4Count(t, h))
 	key := sd4SensitiveKey(t, h, h.UUID("service-b"))
 	target := sd3Target(assignment.TargetTypeIntegrationKey, key.String())
 	for i := 0; i < 2; i++ {
-		ok, err = a.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{missing, target, target})
+		ok, err = smokeDeleteAll(t, h, a, sd3System(), []assignment.RawTarget{missing, target, target})
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Equal(t, 1, sd4Count(t, h))
@@ -469,30 +488,41 @@ func TestIntegrationKeyDeleteAuditSystemMissingAndNoop(t *testing.T) {
 
 func TestIntegrationKeyDeleteAuditIsolationCompatibility(t *testing.T) {
 	h := sd1Harness(t)
-	db := h.App().DB()
-	var database string
-	require.NoError(t, db.QueryRow(`SELECT current_database()`).Scan(&database))
 	for _, isolation := range []string{"read committed", "repeatable read", "serializable"} {
 		t.Run(isolation, func(t *testing.T) {
-			cfg, err := pgx.ParseConfig(harness.DBURL(database))
-			require.NoError(t, err)
-			cfg.RuntimeParams["default_transaction_isolation"] = isolation
-			isolated := stdlib.OpenDB(*cfg)
-			defer isolated.Close()
-			isolated.SetMaxOpenConns(2)
+			isolated := sd5ExternalDB(t, h, isolation)
 			var actual string
 			require.NoError(t, isolated.QueryRow(`SHOW transaction_isolation`).Scan(&actual))
 			require.Equal(t, isolation, actual)
-			key, _ := sd3Key(t, h, h.UUID("service-b"))
+			key, safe := sd3Key(t, h, h.UUID("service-b"))
 			app := &graphqlapp.App{DB: isolated, IntKeyStore: h.App().IntegrationKeyStore}
-			targets := []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())}
-			for i := 0; i < 2; i++ {
-				ok, err := app.Mutation().DeleteAll(sd3System(), targets)
+			input := []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, key.String())}
+			confirmation, err := smokeDeletionConfirmation(t, h, sd3System(), input)
+			require.NoError(t, err)
+			if isolation != "read committed" {
+				smokeContract4IsolationReject(t, h, app, input, confirmation)
+				require.Equal(t, 1, serviceManagementCount(t, h, "integration_keys", key.String()))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM integration_key_delete_audit_events WHERE root_resource_id=$1 AND record_kind='success_witness'`, safe))
+			} else {
+				ok, err := app.Mutation().DeleteAll(sd3System(), input, confirmation)
 				require.NoError(t, err)
 				require.True(t, ok)
+				// Repeating a missing selector remains a genuine no-op, with no extra Audit.
+				ok, err = smokeDeleteAll(t, h, app, sd3System(), input)
+				require.NoError(t, err)
+				require.True(t, ok)
+				require.Zero(t, serviceManagementCount(t, h, "integration_keys", key.String()))
+				var identity, parent, org string
+				require.NoError(t, h.App().DB().QueryRow(`SELECT root_resource_id,parent_service_id,target_organization_id FROM integration_key_delete_audit_events WHERE record_kind='success_witness'`).Scan(&identity, &parent, &org))
+				require.Equal(t, safe.String(), identity)
+				require.Equal(t, h.UUID("service-b"), parent)
+				require.Equal(t, h.UUID("org-b"), org)
 			}
+			require.NotContains(t, sd4Rows(t, h), key.String())
+			require.NotContains(t, sd4Rows(t, h), "SYNTHETIC_")
+			t.Log("actual isolation checked; RR/Serializable old successful delete NOT REACHABLE, RC positive safe identity and duplicate/no-op Audit verified")
 		})
 	}
-	require.Equal(t, 3, sd4Count(t, h))
+	require.Equal(t, 1, sd4Count(t, h))
 	require.Zero(t, sd1Count(t, h, "committed"))
 }

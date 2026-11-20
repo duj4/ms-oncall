@@ -292,7 +292,7 @@ func TestSRDeleteAuditControlledCommit(t *testing.T) {
 				if typ == sraudit.Rotation {
 					target = assignment.TargetTypeRotation
 				}
-				ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(target, root)})
+				ok, err := smokeDeleteAll(t, h, app, sd3System(), []assignment.RawTarget{sd3Target(target, root)})
 				require.Error(t, err)
 				require.False(t, ok)
 				require.EqualValues(t, 2, connector.begins.Load())

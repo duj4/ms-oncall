@@ -785,21 +785,82 @@ func TestPostgresDeletionEnforcementServicePolicyProtection(t *testing.T) {
 	ep := graphql2.DeletionResourceInput{Type: graphql2.DeletionTargetTypeEscalationPolicy, ID: f.policy.String()}
 	svc := graphql2.DeletionResourceInput{Type: graphql2.DeletionTargetTypeService, ID: f.service.String()}
 	svc2 := graphql2.DeletionResourceInput{Type: graphql2.DeletionTargetTypeService, ID: second.String()}
+	// The domain planner still describes co-deletion. Native Preview and
+	// enforcement admit homogeneous roots only, even when a mixed plan is blocked.
+	before := deletionSnapshot(t, ctx, db)
 	for _, tc := range []struct {
+		name    string
 		targets []graphql2.DeletionResourceInput
 		can     bool
-	}{{[]graphql2.DeletionResourceInput{ep}, false}, {[]graphql2.DeletionResourceInput{ep, svc}, false}, {[]graphql2.DeletionResourceInput{ep, svc, svc2}, true}} {
-		preview, err := app.Query().DeletionPreview(ctx, graphql2.DeletionPlanInput{Operation: graphql2.DeletionOperationDeleteResources, Targets: tc.targets}, nil, nil)
-		require.NoError(t, err)
-		require.True(t, preview.Complete)
-		require.Equal(t, tc.can, preview.CanProceed)
+	}{
+		{"referenced_policy", []graphql2.DeletionResourceInput{ep}, false},
+		{"mixed_partial", []graphql2.DeletionResourceInput{ep, svc}, false},
+		{"mixed_complete", []graphql2.DeletionResourceInput{ep, svc, svc2}, true},
+	} {
+		require.True(t, t.Run(tc.name, func(t *testing.T) {
+			tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+			require.NoError(t, err)
+			defer func() { _ = tx.Rollback() }()
+			collection := ds.Collection{Completeness: ds.DependenciesComplete}
+			var roots []ds.Resource
+			var intents []ds.DestructiveChange
+			var fingerprints []string
+			for _, target := range tc.targets {
+				kind := ds.ResourceService
+				if target.Type == graphql2.DeletionTargetTypeEscalationPolicy {
+					kind = ds.ResourceEscalationPolicy
+				}
+				root := ds.Resource{Kind: kind, ID: target.ID}
+				facts, err := collector.Collect(ctx, tx, root, collector.Preview, collector.DefaultLimits(), authorizeDeletionFixture(root))
+				require.NoError(t, err)
+				require.Equal(t, ds.DependenciesComplete, facts.Collection.Completeness)
+				collection.Checked = append(collection.Checked, facts.Collection.Checked...)
+				collection.Dependencies = append(collection.Dependencies, facts.Collection.Dependencies...)
+				roots = append(roots, root)
+				intents = append(intents, ds.DestructiveChange{Resource: root, Kind: ds.ChangeDeleted})
+				fingerprints = append(fingerprints, facts.ScopeFingerprint)
+			}
+			fingerprint, err := collector.BatchScopeFingerprint(roots, fingerprints)
+			require.NoError(t, err)
+			plan, err := ds.BuildPlan(ds.PlanInput{Operation: ds.OperationDeleteResources, Targets: roots, Intent: intents, Collection: collection, ScopeFingerprint: fingerprint}, ds.Budget{})
+			require.NoError(t, err)
+			require.Equal(t, tc.can, plan.CanProceed(), "preserve the original domain co-deletion facts")
+			feasibilityErr := collector.CheckDeleteFeasibility(ctx, tx, plan)
+			previewBefore := deletionSnapshot(t, ctx, db)
+			preview, err := app.Query().DeletionPreview(ctx, graphql2.DeletionPlanInput{Operation: graphql2.DeletionOperationDeleteResources, Targets: tc.targets}, nil, nil)
+			require.Equal(t, previewBefore, deletionSnapshot(t, ctx, db), "Preview writes neither business rows nor Audit")
+			if len(tc.targets) > 1 {
+				enforceCode(t, feasibilityErr, ds.DeletionUnavailable)
+				enforceCode(t, err, ds.DeletionUnavailable)
+				require.Nil(t, preview, "unsupported roots publish no partial Preview or Confirmation")
+			} else {
+				require.NoError(t, feasibilityErr)
+				require.NoError(t, err)
+				require.True(t, preview.Complete)
+				require.False(t, preview.CanProceed)
+				confirmation := &graphql2.DeletionSafetyConfirmationInput{ExpectedImpactVersion: preview.ImpactVersion, AcknowledgeImpacts: true}
+				ok, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeEscalationPolicy, ID: f.policy.String()}}, confirmation)
+				require.False(t, ok)
+				enforceCode(t, err, ds.DeletionBlocked)
+			}
+			t.Logf("domain_can_proceed=%v native_mixed=%v", plan.CanProceed(), len(tc.targets) > 1)
+		}))
 	}
-	// Joint deletion is a legal Planner fact, never a supported Store Profile.
+	// Preview and domain assessment never write business rows or success Audit.
+	// A rejected mutation may append a failure observation.
 	mixed := append(serviceProfileInput(f.service, second), assignment.RawTarget{Type: assignment.TargetTypeEscalationPolicy, ID: f.policy.String()})
-	_, err := app.Mutation().DeleteAll(ctx, mixed, nil)
+	ok, err := app.Mutation().DeleteAll(ctx, mixed, nil)
+	require.False(t, ok)
 	enforceCode(t, err, ds.DeletionUnavailable)
-	_, err = app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeEscalationPolicy, ID: f.policy.String()}}, nil)
+	ok, err = app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeEscalationPolicy, ID: f.policy.String()}}, nil)
+	require.False(t, ok)
 	enforceCode(t, err, ds.DeletionBlocked)
+	after := deletionSnapshot(t, ctx, db)
+	for _, table := range []string{"services", "escalation_policies", "escalation_policy_steps", "escalation_policy_actions"} {
+		require.Equal(t, before[table], after[table], "rejected requests preserve %s atomically", table)
+	}
+	serviceProfileNoSuccess(t, ctx, db)
+	require.Zero(t, enforcementCount(t, ctx, db, `SELECT count(*) FROM escalation_policy_delete_audit_events WHERE outcome='committed'`))
 	// PostgreSQL NO ACTION is the last defence, separately from product BLOCK.
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
@@ -830,12 +891,14 @@ func TestPostgresDeletionEnforcementServicePolicyProtection(t *testing.T) {
 	require.Equal(t, 3, enforcementCount(t, ctx, db, `SELECT count(*) FROM services WHERE escalation_policy_id=$1`, f.policy))
 	serviceProfileNoSuccess(t, ctx, db)
 	confirm := enforcementPreview(t, ctx, app, svc)
-	ok, err := app.Mutation().DeleteAll(ctx, serviceProfileInput(f.service), confirm)
+	ok, err = app.Mutation().DeleteAll(ctx, serviceProfileInput(f.service), confirm)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 2, enforcementCount(t, ctx, db, `SELECT count(*) FROM services WHERE escalation_policy_id=$1`, f.policy))
 	require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM escalation_policies WHERE id=$1`, f.policy))
 	require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM escalation_policy_steps WHERE id=$1`, f.step))
+	require.Equal(t, 1, enforcementCount(t, ctx, db, `SELECT count(*) FROM service_delete_audit_events WHERE service_id=$1 AND outcome='committed'`, f.service))
+	require.Zero(t, enforcementCount(t, ctx, db, `SELECT count(*) FROM escalation_policy_delete_audit_events WHERE outcome='committed'`))
 }
 
 func TestPostgresDeletionEnforcementServiceAuthorization(t *testing.T) {

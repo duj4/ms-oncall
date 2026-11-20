@@ -183,13 +183,13 @@ func TestUserSessionAuditU1ConcurrentUserBatch(t *testing.T) {
 	}
 	before := usSuccesses(t, h)
 	done1, done2 := make(chan error, 1), make(chan error, 1)
-	go func() { _, err := a1.Mutation().DeleteAll(ctx, targets); done1 <- err }()
+	go func() { _, err := a1.Mutation().DeleteAll(ctx, targets, nil); done1 <- err }()
 	select {
 	case <-entered:
 	case <-ctx.Done():
 		t.Fatal("first transaction did not acquire shared entry lock")
 	}
-	go func() { _, err := a2.Mutation().DeleteAll(ctx, targets); done2 <- err }()
+	go func() { _, err := a2.Mutation().DeleteAll(ctx, targets, nil); done2 <- err }()
 	require.Eventually(t, func() bool {
 		return sd8Scalar(t, h, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'`) > 0
 	}, time.Second, 10*time.Millisecond)

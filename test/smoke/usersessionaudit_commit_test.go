@@ -81,7 +81,7 @@ func TestUserSessionAuditRealCommitUnknown(t *testing.T) {
 			result := make(chan error, 1)
 			go func() {
 				if mode == "selected" {
-					_, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUserSession, ID: other}})
+					_, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUserSession, ID: other}}, nil)
 					result <- err
 				} else {
 					_, err := a.Mutation().EndAllAuthSessionsByCurrentUser(ctx)

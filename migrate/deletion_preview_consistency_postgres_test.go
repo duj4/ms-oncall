@@ -144,8 +144,8 @@ func TestPostgresDeletionPreviewStaticAuditConsistency(t *testing.T) {
 	var version string
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT current_setting('server_version')`).Scan(&version))
 	require.Equal(t, "17.11", version)
-	require.Equal(t, 307, enforcementCount(t, ctx, db, `SELECT max(canonical_position) FROM ms_oncall_migration_provenance`))
-	require.Equal(t, 307, enforcementCount(t, ctx, db, `SELECT count(*) FROM gorp_migrations`))
+	require.Equal(t, 309, enforcementCount(t, ctx, db, `SELECT max(canonical_position) FROM ms_oncall_migration_provenance`))
+	require.Equal(t, 309, enforcementCount(t, ctx, db, `SELECT count(*) FROM gorp_migrations`))
 	require.Equal(t, 3, enforcementCount(t, ctx, db, `SELECT count(*) FROM pg_constraint WHERE contype='f' AND confdeltype='c' AND (
 	 (conrelid='outgoing_messages'::regclass AND confrelid='services'::regclass) OR
 	 (conrelid='schedule_on_call_users'::regclass AND confrelid='schedules'::regclass) OR

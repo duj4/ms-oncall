@@ -8,6 +8,7 @@ import (
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/limit"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
@@ -16,27 +17,42 @@ import (
 func TestUserDeleteAuditCapacity(t *testing.T) {
 	h := sd1Harness(t)
 	s := sd6Root(t, h, "schedule", harness.SmokeOrganizationID)
-	for _, n := range []int{0, 256, 257, 4095, 4096, 4097, 5000, 20000} {
+	for _, n := range []int{0, 256, 257, 1024, 2048, 4095, 4096, 4097, 5000, 20000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			u := sd7User(t, h)
+			u := smokeOwnedUser(t, h)
 			sd8Exec(t, h, `INSERT INTO schedule_on_call_users(schedule_id,user_id,start_time,end_time) SELECT $1,$2,'2020-01-01'::timestamptz+g*interval '1 second','2020-01-01'::timestamptz+(g+1)*interval '1 second' FROM generate_series(1,$3) g`, s, u, n)
 			// Full ID sets, independently read before deletion and after Commit.
 			var expectedIDs, actualIDs []string
 			require.NoError(t, h.App().DB().QueryRow(`SELECT coalesce(array_agg(id::text ORDER BY id::text),'{}') FROM schedule_on_call_users WHERE user_id=$1`, u).Scan(pq.Array(&expectedIDs)))
-			ok, err := sd7App(h).Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+			input := []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}}
+			if n >= 4095 {
+				// Preserve every original oversized shape and all history rows.
+				// The native Preview budget precedes the older streaming audit limit.
+				before := smokeUserBusinessState(t, h)
+				successes := smokeDeletionSuccesses(t, h)
+				_, err := smokeDeletionPreview(t, h, sd3System(), input)
+				smokeDeletionCode(t, err, ds.DeletionPreviewLimitExceeded)
+				ok, err := sd7App(h).Mutation().DeleteAll(sd3System(), input, nil)
+				require.Error(t, err)
+				require.False(t, ok)
+				require.Equal(t, before, smokeUserBusinessState(t, h))
+				require.Equal(t, successes, smokeDeletionSuccesses(t, h))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects f JOIN user_delete_audit_events e USING(event_id) WHERE e.root_id=$1`, u))
+				t.Logf("history=%d: original scale refused by real Preview; all business rows and prior success audits preserved", n)
+				return
+			}
+			ok, err := smokeDeleteAll(t, h, sd7App(h), permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, u))
-			require.EqualValues(t, n, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects f JOIN user_delete_audit_events e USING(event_id) WHERE e.root_id=$1`, u))
-			require.EqualValues(t, n, sd8Scalar(t, h, `SELECT effect_count FROM user_delete_audit_events WHERE root_id=$1`, u))
-			require.NoError(t, h.App().DB().QueryRow(`SELECT coalesce(array_agg(resource_key ORDER BY resource_key),'{}') FROM user_delete_audit_effects JOIN user_delete_audit_events USING(event_id) WHERE root_id=$1`, u).Scan(pq.Array(&actualIDs)))
+			require.EqualValues(t, n+1, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects f JOIN user_delete_audit_events e USING(event_id) WHERE e.root_id=$1`, u))
+			require.EqualValues(t, n+1, sd8Scalar(t, h, `SELECT effect_count FROM user_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, u))
+			require.NoError(t, h.App().DB().QueryRow(`SELECT coalesce(array_agg(resource_key ORDER BY resource_key),'{}') FROM user_delete_audit_effects JOIN user_delete_audit_events USING(event_id) WHERE root_id=$1 AND resource_type='schedule_on_call_history'`, u).Scan(pq.Array(&actualIDs)))
 			require.Equal(t, expectedIDs, actualIDs)
+			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects f JOIN user_delete_audit_events e USING(event_id) WHERE e.root_id=$1 AND f.resource_type='user_organization_assignment' AND f.resource_key=$1::text`, u))
 			var bytes, maxLeaf int64
-			require.NoError(t, h.App().DB().QueryRow(`SELECT effect_json_bytes,coalesce((SELECT max(octet_length(payload::text)) FROM user_delete_audit_effects WHERE event_id=e.event_id),0) FROM user_delete_audit_events e WHERE root_id=$1`, u).Scan(&bytes, &maxLeaf))
+			require.NoError(t, h.App().DB().QueryRow(`SELECT effect_json_bytes,coalesce((SELECT max(octet_length(payload::text)) FROM user_delete_audit_effects WHERE event_id=e.event_id),0) FROM user_delete_audit_events e WHERE root_id=$1 AND record_kind='success_witness'`, u).Scan(&bytes, &maxLeaf))
 			require.LessOrEqual(t, maxLeaf, int64(4096))
-			if n == 20000 {
-				require.Greater(t, bytes, int64(4194304))
-			}
 			t.Logf("history=%d pages=%d persisted_bytes=%d largest_leaf=%d", n, (n+255)/256, bytes, maxLeaf)
 		})
 	}
@@ -46,7 +62,7 @@ func TestUserDeleteAuditRotationIdentity(t *testing.T) {
 	h := sd1Harness(t)
 	for _, shape := range []string{"UVW", "UUVW", "UVUW", "UUU", "U1U2", "missing_state", "large"} {
 		t.Run(shape, func(t *testing.T) {
-			u, v, w := sd7User(t, h), sd7User(t, h), sd7User(t, h)
+			u, v, w := smokeOwnedUser(t, h), smokeOwnedUser(t, h), smokeOwnedUser(t, h)
 			users := []string{u, v, w}
 			switch shape {
 			case "UUVW":
@@ -80,7 +96,11 @@ func TestUserDeleteAuditRotationIdentity(t *testing.T) {
 			if shape == "U1U2" {
 				input = append(input, assignment.RawTarget{Type: assignment.TargetTypeUser, ID: v})
 			}
-			ok, err := sd7App(h).Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), input)
+			if shape != "large" && shape != "missing_state" {
+				smokeAssertBlockedUser(t, h, sd7App(h), input)
+				t.Log("HOLD: original successful participant identity compaction remains unsupported; negative control is not a recovery claim")
+			}
+			ok, err := smokeDeleteAll(t, h, sd7App(h), permission.SystemContext(t.Context(), "Engine"), input)
 			if shape == "missing_state" {
 				require.Error(t, err)
 				require.False(t, ok)

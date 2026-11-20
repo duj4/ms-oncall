@@ -144,13 +144,13 @@ func TestSRDeleteAuditRawLimitsAndSystem(t *testing.T) {
 			app := sd5App(h)
 			missing := uuid.NewString()
 			for i := 0; i < 2; i++ {
-				ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(targetType, missing)})
+				ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(targetType, missing)}, nil)
 				require.NoError(t, err)
 				require.True(t, ok)
 			}
 			require.Equal(t, 51, sd6Count(t, h))
 			// No authenticated/canonical authority: no resource lookup attribution.
-			_, err := app.Mutation().DeleteAll(context.Background(), []assignment.RawTarget{sd3Target(targetType, uuid.NewString())})
+			_, err := app.Mutation().DeleteAll(context.Background(), []assignment.RawTarget{sd3Target(targetType, uuid.NewString())}, nil)
 			require.Error(t, err)
 			var unknownRoots int
 			require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM escalation_policy_delete_audit_events WHERE actor_kind='unknown' AND root_id IS NOT NULL`).Scan(&unknownRoots))

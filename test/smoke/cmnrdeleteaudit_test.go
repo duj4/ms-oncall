@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
+	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/graphql2/graphqlapp"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
@@ -214,66 +216,62 @@ func TestCMNRDeleteAuditLateExplicitCascade(t *testing.T) {
 	h := cmnrPlatformHarness(t, "ORG_MEMBER")
 	f := cmnrSeed(t, h)
 	db := h.App().DB()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	blocker, err := db.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() {
-		if err := blocker.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			t.Error("blocker transaction cleanup failed")
-		}
-	}()
-	var pid int
-	require.NoError(t, blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
-	_, err = blocker.ExecContext(ctx, `SELECT id FROM user_contact_methods WHERE id=$1 FOR UPDATE`, f.cm[0])
-	require.NoError(t, err)
 	late := uuid.NewString()
 	human := cmnrPlatformHuman(t, h, harness.DefaultGraphQLAdminUserID)
-	cmStore, err := newCMNRAuditStores(t, h)
+	stores, err := newCMNRAuditStores(t, h)
 	require.NoError(t, err)
-	app := &graphqlapp.App{DB: db, CMStore: cmStore.cm, NRStore: cmStore.nr}
-	done := make(chan error, 1)
-	go func() {
-		_, err := app.Mutation().DeleteAll(human, []assignment.RawTarget{{Type: assignment.TargetTypeNotificationRule, ID: late}, {Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}})
-		done <- err
-	}()
-	waited := false
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		var n int
-		err = db.QueryRowContext(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&n)
-		if err != nil || n > 0 {
-			waited = n > 0
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	_, insertErr := blocker.ExecContext(ctx, `INSERT INTO user_notification_rules(id,user_id,contact_method_id,delay_minutes) VALUES($1,$2,$3,8)`, late, cmnrUser("alice"), f.cm[0])
-	_, subjectErr := blocker.ExecContext(ctx, `INSERT INTO auth_subjects(provider_id,subject_id,user_id,cm_id) VALUES('sd2-concurrent','SYNTHETIC_CONCURRENT_SUBJECT',$1,$2)`, cmnrUser("bob"), f.cm[0])
-	_, settingErr := blocker.ExecContext(ctx, `UPDATE users SET alert_status_log_contact_method_id=$2 WHERE id=$1`, cmnrUser("alice"), f.cm[0])
-	_, assignmentErr := blocker.ExecContext(ctx, `UPDATE user_organization_assignments SET effective_organization_id=$2,effective_normal_organization_id=$2 WHERE user_id=$1`, cmnrUser("alice"), cmnrUser("org-b"))
-	commitErr := blocker.Commit()
-	workerErr := <-done
-	require.True(t, waited)
-	require.NoError(t, insertErr)
-	require.NoError(t, subjectErr)
-	require.NoError(t, settingErr)
-	require.NoError(t, assignmentErr)
-	require.NoError(t, commitErr)
-	require.NoError(t, workerErr)
-	var mechanism, cause, parent string
-	require.NoError(t, db.QueryRow(`SELECT deletion_mechanism,cause_event_id,parent_cm_id FROM user_cmnr_delete_audit_events WHERE root_id=$1`, late).Scan(&mechanism, &cause, &parent))
-	require.Equal(t, "fk_cascade", mechanism)
-	require.Equal(t, f.cm[0], parent)
-	var linked bool
-	require.NoError(t, db.QueryRow(`SELECT related_explicit_events @> jsonb_build_array(jsonb_build_object('event_id',(SELECT event_id FROM user_cmnr_delete_audit_events WHERE root_id=$1),'relation','parent_cm')) FROM user_cmnr_delete_audit_events WHERE event_id=$2`, late, cause).Scan(&linked))
-	require.True(t, linked)
-	var home, target string
+	app := &graphqlapp.App{DB: db, CMStore: stores.cm, NRStore: stores.nr}
+	mixed := []assignment.RawTarget{{Type: assignment.TargetTypeNotificationRule, ID: late}, {Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}}
+	before := cmnrSnapshot(t, db)
+	ok, err := app.Mutation().DeleteAll(human, mixed, nil)
+	smokeDeletionCode(t, err, ds.DeletionUnavailable)
+	require.False(t, ok)
+	require.Equal(t, before, cmnrSnapshot(t, db))
+	require.Zero(t, cmnrAuditCount(t, h, "success_witness"))
+	input := mixed[1:]
+	confirmation := smokePlanConfirmation(t, h, sd3System(), input)
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`SELECT id FROM user_contact_methods WHERE id=$1 FOR UPDATE`, f.cm[0])
+	require.NoError(t, err)
+	// CM closure collection uses NOWAIT. It must not reach the old cascade
+	// while a writer owns the CM, nor falsely report a successful deletion.
+	ok, err = app.Mutation().DeleteAll(sd3System(), input, confirmation)
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Equal(t, before, cmnrSnapshot(t, db))
+	require.Zero(t, cmnrAuditCount(t, h, "success_witness"))
+	_, err = tx.Exec(`INSERT INTO user_notification_rules(id,user_id,contact_method_id,delay_minutes) VALUES($1,$2,$3,8)`, late, cmnrUser("alice"), f.cm[0])
+	require.NoError(t, err)
+	// Same-owner Subject is required by the current CM-only profile.
+	_, err = tx.Exec(`INSERT INTO auth_subjects(provider_id,subject_id,user_id,cm_id) VALUES('sd2-concurrent','SYNTHETIC_CONCURRENT_SUBJECT',$1,$2)`, cmnrUser("alice"), f.cm[0])
+	require.NoError(t, err)
+	_, err = tx.Exec(`UPDATE users SET alert_status_log_contact_method_id=$2 WHERE id=$1`, cmnrUser("alice"), f.cm[0])
+	require.NoError(t, err)
+	_, err = tx.Exec(`UPDATE user_organization_assignments SET effective_organization_id=$2,effective_normal_organization_id=$2 WHERE user_id=$1`, cmnrUser("alice"), cmnrUser("org-b"))
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	freshRows := cmnrSnapshot(t, db)
+	ok, err = app.Mutation().DeleteAll(sd3System(), input, confirmation)
+	smokeDeletionCode(t, err, ds.DeletionDependencyChanged)
+	require.False(t, ok)
+	require.Equal(t, freshRows, cmnrSnapshot(t, db))
+	require.Zero(t, cmnrAuditCount(t, h, "success_witness"))
+	// A distinct, newly previewed request is now executable. The late NR is
+	// exactly one implicit effect, never an explicit root or a duplicate.
+	smokeDeleteFencesWriter(t, h, app, input, "user_contact_methods", f.cm[0])
+	require.Equal(t, 1, cmnrAuditCount(t, h, "success_witness"))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness' AND provenance='EXPLICIT' AND deletion_mechanism='explicit_sql' AND request_id IS NOT NULL AND execution_id IS NOT NULL AND attempt_id IS NOT NULL`, f.cm[0]))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, late))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_cmnr_delete_audit_events a CROSS JOIN LATERAL jsonb_array_elements(a.effects) e WHERE a.root_id=$1 AND a.record_kind='success_witness' AND e->>'resource_uuid'=$2 AND e->>'provenance'='IMPLICIT_FK_CASCADE'`, f.cm[0], late))
+	var target string
 	var effects int
-	require.NoError(t, db.QueryRow(`SELECT home_organization_id,target_organization_id,jsonb_array_length(effects) FROM user_cmnr_delete_audit_events WHERE event_id=$1`, cause).Scan(&home, &target, &effects))
-	require.Equal(t, harness.SmokeOrganizationID, home)
+	require.NoError(t, db.QueryRow(`SELECT target_organization_id,jsonb_array_length(effects) FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, f.cm[0]).Scan(&target, &effects))
 	require.Equal(t, cmnrUser("org-b"), target)
-	require.Equal(t, 3, effects, "fresh NR, Subject and setting snapshots after the observed parent lock wait")
+	require.Equal(t, 4, effects, "two NRs, same-owner Subject and status setting")
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_notification_rules WHERE contact_method_id=$1`, f.cm[0]))
+	require.NotContains(t, cmnrAuditRows(t, h), "SYNTHETIC_CONCURRENT_SUBJECT")
 }
 
 func TestCMNRDeleteAuditMixedFailureAtomicity(t *testing.T) {
@@ -402,7 +400,7 @@ func TestCMNRDeleteAuditUserFirstSystemAndSuppressedDelete(t *testing.T) {
 				_, err := db.Exec(`DELETE FROM user_organization_assignments WHERE user_id=$1`, cmnrUser("alice"))
 				require.NoError(t, err)
 				app := &graphqlapp.App{DB: db, CMStore: h.App().ContactMethodStore, NRStore: h.App().NotificationRuleStore}
-				ok, err := app.Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}})
+				ok, err := smokeDeleteAll(t, h, app, permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}})
 				require.NoError(t, err)
 				require.True(t, ok)
 				var kind, resolution string
@@ -430,46 +428,118 @@ func TestCMNRDeleteAuditUserFirstSystemAndSuppressedDelete(t *testing.T) {
 }
 
 func TestCMNRDeleteAuditControlledAcknowledgementsOverPostgres(t *testing.T) {
-	for _, mode := range []string{"commit_then_error", "rollback_then_error", "completion_unknown", "begin_failed"} {
-		t.Run(mode, func(t *testing.T) {
-			h := cmnrHarness(t, true, "ORG_MEMBER")
-			f := cmnrSeed(t, h)
-			db := h.App().DB()
-			var name string
-			require.NoError(t, db.QueryRow(`SELECT current_database()`).Scan(&name))
-			cfg, err := pgx.ParseConfig(harness.DBURL(name))
-			require.NoError(t, err)
-			connector := &serviceAuditFaultConnector{base: stdlib.GetConnector(*cfg), mode: mode}
-			controlled := sql.OpenDB(connector)
-			controlled.SetMaxOpenConns(1)
-			defer controlled.Close()
-			app := &graphqlapp.App{DB: controlled, CMStore: h.App().ContactMethodStore, NRStore: h.App().NotificationRuleStore}
-			ok, err := app.Mutation().DeleteAll(cmnrHuman(t, h, "alice"), []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}, {Type: assignment.TargetTypeNotificationRule, ID: f.nr[0]}})
-			require.Error(t, err)
-			require.False(t, ok)
-			require.NotContains(t, err.Error(), "SYNTHETIC_")
-			require.EqualValues(t, 2, connector.begins.Load(), "one business Begin and one failure transaction, never an unknown replay")
-			want := 0
-			if mode == "commit_then_error" || mode == "completion_unknown" {
-				want = 2
-			}
-			require.Equal(t, want, cmnrAuditCount(t, h, "success_witness"))
-			var roots int
-			require.NoError(t, db.QueryRow(`SELECT count(*) FROM user_contact_methods WHERE id=$1`, f.cm[0]).Scan(&roots))
-			if want > 0 {
-				require.Zero(t, roots)
-			} else {
-				require.Equal(t, 1, roots)
-			}
-			var outcomes string
-			require.NoError(t, db.QueryRow(`SELECT string_agg(DISTINCT outcome,',') FROM user_cmnr_delete_audit_events WHERE record_kind='attempt_observation'`).Scan(&outcomes))
-			if mode == "begin_failed" {
-				require.Equal(t, "tx_failed", outcomes)
-			} else {
-				require.Equal(t, "commit_unknown", outcomes)
-			}
-			t.Log("controlled driver around PostgreSQL, not a native crash/network test:", mode)
-		})
+	t.Run("mixed_root_rejected_before_fault", func(t *testing.T) {
+		h := cmnrHarness(t, true, "ORG_MEMBER")
+		f := cmnrSeed(t, h)
+		ctx := cmnrHuman(t, h, "alice")
+		app := &graphqlapp.App{DB: h.App().DB(), PreviewSigner: h.App().SessionKeyring, CMStore: h.App().ContactMethodStore, NRStore: h.App().NotificationRuleStore}
+		before, audits := cmnrSnapshot(t, h.App().DB()), safetySmokeSuccessState(t, h)
+		_, err := app.Query().DeletionPreview(ctx, graphql2.DeletionPlanInput{Operation: graphql2.DeletionOperationDeleteResources, Targets: []graphql2.DeletionResourceInput{{Type: graphql2.DeletionTargetTypeContactMethod, ID: f.cm[0]}, {Type: graphql2.DeletionTargetTypeNotificationRule, ID: f.nr[0]}}}, nil, nil)
+		smokeDeletionCode(t, err, ds.DeletionUnavailable)
+		ok, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}, {Type: assignment.TargetTypeNotificationRule, ID: f.nr[0]}}, nil)
+		smokeDeletionCode(t, err, ds.DeletionUnavailable)
+		require.False(t, ok)
+		require.Equal(t, before, cmnrSnapshot(t, h.App().DB()))
+		require.Equal(t, audits, safetySmokeSuccessState(t, h))
+		t.Log("real mixed CM+NR Preview and Mutation refuse; this negative control is not an ACK fault PASS")
+	})
+	for _, root := range []string{"CM", "NR"} {
+		for _, mode := range []string{"commit_then_error", "rollback_then_error", "completion_unknown", "begin_failed"} {
+			t.Run(root+"/"+mode, func(t *testing.T) {
+				h := cmnrHarness(t, true, "ORG_MEMBER")
+				f := cmnrSeed(t, h)
+				db := h.App().DB()
+				ctx, cancel := context.WithTimeout(cmnrHuman(t, h, "alice"), 20*time.Second)
+				defer cancel()
+				id, typ, rootType := f.cm[0], assignment.TargetTypeContactMethod, audit.ContactMethod
+				if root == "NR" {
+					id, typ, rootType = f.nr[0], assignment.TargetTypeNotificationRule, audit.NotificationRule
+				}
+				input := []assignment.RawTarget{{Type: typ, ID: id}}
+				confirmation, err := smokeDeletionConfirmation(t, h, ctx, input)
+				require.NoError(t, err)
+				before := cmnrSnapshot(t, db)
+				auditBefore := safetySmokeSuccessState(t, h)
+				sd8Exec(t, h, `CREATE SEQUENCE safety_cmnr_hits;CREATE FUNCTION safety_cmnr_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('safety_cmnr_hits'); RETURN NEW; END $$;CREATE TRIGGER safety_cmnr_probe BEFORE INSERT ON user_cmnr_delete_audit_events FOR EACH ROW WHEN (NEW.record_kind='success_witness') EXECUTE FUNCTION safety_cmnr_probe()`)
+				var name string
+				require.NoError(t, db.QueryRow(`SELECT current_database()`).Scan(&name))
+				cfg, err := pgx.ParseConfig(harness.DBURL(name))
+				require.NoError(t, err)
+				observer := &safetySmokeNativeConnector{base: stdlib.GetConnector(*cfg)}
+				connector := &serviceAuditFaultConnector{base: observer, mode: mode}
+				controlled := sql.OpenDB(connector)
+				controlled.SetMaxOpenConns(1)
+				defer controlled.Close()
+				app := &graphqlapp.App{DB: controlled, CMStore: h.App().ContactMethodStore, NRStore: h.App().NotificationRuleStore}
+				ok, err := app.Mutation().DeleteAll(ctx, input, confirmation)
+				require.Error(t, err)
+				require.False(t, ok)
+				require.NotContains(t, err.Error(), "SYNTHETIC_")
+				require.EqualValues(t, 2, connector.begins.Load(), "one business admission plus one observation, no automatic business replay")
+				native := observer.snapshot()
+				require.NotEmpty(t, native)
+				counts := map[string]int{}
+				for _, e := range native {
+					require.True(t, e.Succeeded, "actual native transaction operation")
+					require.Positive(t, e.PID)
+					counts[e.Operation]++
+				}
+				expected := map[string]int{"begin": 2, "commit": 2}
+				hits := int64(1)
+				if mode == "rollback_then_error" {
+					expected = map[string]int{"begin": 2, "rollback": 1, "commit": 1}
+				}
+				if mode == "begin_failed" {
+					expected = map[string]int{"begin": 1, "commit": 1}
+					hits = 0
+				}
+				require.Equal(t, expected, counts)
+				require.Equal(t, hits, sd8Scalar(t, h, `SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM safety_cmnr_hits`), "nontransactional witness-append proof survives Rollback")
+				committed := mode == "commit_then_error" || mode == "completion_unknown"
+				if committed {
+					require.Equal(t, cmnrWithout(before, f, root, []string{id}), cmnrSnapshot(t, db))
+					require.Equal(t, 1, cmnrAuditCount(t, h, "success_witness"))
+					var owner, org, actualRoot, provenance string
+					var effects, related []byte
+					require.NoError(t, db.QueryRow(`SELECT root_owner_user_id,target_organization_id,root_type,provenance,effects,related_explicit_events FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, id).Scan(&owner, &org, &actualRoot, &provenance, &effects, &related))
+					require.Equal(t, cmnrUser("alice"), owner)
+					require.Equal(t, harness.SmokeOrganizationID, org)
+					require.Equal(t, rootType, actualRoot)
+					require.Equal(t, "EXPLICIT", provenance)
+					require.JSONEq(t, `[]`, string(related))
+					var actual []audit.Effect
+					require.NoError(t, json.Unmarshal(effects, &actual))
+					if root == "CM" {
+						require.Len(t, actual, 1)
+						require.Equal(t, audit.NotificationRule, actual[0].ResourceType)
+						require.Equal(t, uuid.MustParse(f.nr[0]), *actual[0].ResourceUUID)
+						require.Equal(t, "IMPLICIT_FK_CASCADE", actual[0].Provenance)
+						require.Equal(t, uuid.MustParse(cmnrUser("alice")), actual[0].OwnerUserID)
+						require.Equal(t, uuid.MustParse(harness.SmokeOrganizationID), *actual[0].TargetOrganizationID)
+					} else {
+						require.Empty(t, actual)
+					}
+				} else {
+					require.Equal(t, before, cmnrSnapshot(t, db), "business rows and identities rolled back together")
+					require.Equal(t, auditBefore, safetySmokeSuccessState(t, h))
+				}
+				require.Equal(t, 1, cmnrAuditCount(t, h, "attempt_observation"))
+				var outcome string
+				require.NoError(t, db.QueryRow(`SELECT outcome FROM user_cmnr_delete_audit_events WHERE record_kind='attempt_observation'`).Scan(&outcome))
+				if mode == "begin_failed" {
+					require.Equal(t, "tx_failed", outcome)
+				} else {
+					require.Equal(t, "commit_unknown", outcome)
+				}
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(DISTINCT attempt_id) FROM user_cmnr_delete_audit_events`))
+				require.NotContains(t, cmnrAuditRows(t, h), "SYNTHETIC_")
+				require.Zero(t, controlled.Stats().InUse, "database/sql released all task connections")
+				for _, e := range native {
+					require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM pg_stat_activity WHERE pid=$1 AND xact_start IS NOT NULL`, e.PID), "native backend has no transaction left")
+				}
+				t.Logf("root=%s mode=%s native=%+v; success_append_hits=%d durable_success=%t Begin=2 no business replay; pool InUse=0; native backends have no open transaction", root, mode, native, hits, committed)
+			})
+		}
 	}
 }
 
@@ -494,7 +564,7 @@ func TestCMNRDeleteAuditWitnessVisibility(t *testing.T) {
 	human := cmnrHuman(t, h, "alice")
 	done := make(chan error, 1)
 	go func() {
-		_, err := app.Mutation().DeleteAll(human, []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}, {Type: assignment.TargetTypeNotificationRule, ID: f.nr[0]}})
+		_, err := smokeDeleteAll(t, h, app, human, []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: f.cm[0]}, {Type: assignment.TargetTypeNotificationRule, ID: f.nr[0]}})
 		done <- err
 	}()
 	waited := false

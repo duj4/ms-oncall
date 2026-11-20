@@ -188,7 +188,7 @@ func TestUserDeleteAuditConflictingAdmission(t *testing.T) {
 	require.NoError(t, err)
 	// Deliberately contradictory internal admission carriers. This supplements
 	// signed HTTP bad-signature coverage and is not itself an HTTP request.
-	ok, err := sd7App(h).Mutation().DeleteAll(auth.WithRequester(valid, other), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+	ok, err := sd7App(h).Mutation().DeleteAll(auth.WithRequester(valid, other), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}}, nil)
 	require.False(t, ok)
 	require.True(t, permission.IsPermissionError(err))
 	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, u))

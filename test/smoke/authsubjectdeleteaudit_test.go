@@ -568,7 +568,7 @@ func TestAuthSubjectDeleteRealStoreStageAndRecreation(t *testing.T) {
 	h := sd1Harness(t)
 	ctx := permission.SystemContext(t.Context(), "Engine")
 	db := h.App().DB()
-	owner := sd7User(t, h)
+	owner := smokeOwnedUser(t, h)
 	id, subject := asSubject(t, h, owner, nil)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	e := audit.Event{SchemaVersion: 1, EventID: uuid.New(), RequestID: uuid.New(), ExecutionID: uuid.New(), AttemptID: uuid.New(), Operation: "auth_subject.delete", RootType: "auth_subject", ActorKind: "internal_system", AuthoritySource: "trusted_internal_system", AuthorityRole: "internal_system", OrganizationRole: "unknown", TargetOrgResolution: "unknown", OccurredAt: now, RecordedAt: now}
@@ -607,7 +607,7 @@ func TestAuthSubjectDeleteRealStoreStageAndRecreation(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 1, asCount(t, h, id, "audit"))
 	require.Equal(t, 1, asCount(t, h, newID, "audit"))
-	_, err = a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}})
+	_, err = smokeDeleteAll(t, h, a, ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}})
 	require.NoError(t, err)
 	require.Equal(t, 1, asCount(t, h, id, "audit"), "live owner deletion must preserve historical roots")
 }
