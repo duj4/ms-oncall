@@ -49,6 +49,9 @@ func rotationUpdateAuditEvent(ctx context.Context, input graphql2.UpdateRotation
 // Retain existing safe permission/field behavior and error mapping. Never let
 // raw SQL diagnostics reach the outer resolver logger, tracing or HTTP output.
 func rotationUpdateSafeError(err error) error {
+	if typed, ok := deletionSafetyError(err); ok {
+		return typed
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return sql.ErrNoRows
 	}
@@ -121,7 +124,7 @@ func finishRotationUpdateAudit(ctx context.Context, db *sql.DB, conn *sql.Conn, 
 	if commitAttempted {
 		event.Outcome, event.Reason = serviceUpdateCommitOutcome(operationErr)
 	} else {
-		if event.Outcome == "validation_failed" && !validation.IsValidationError(rotationUpdateSafeError(operationErr)) && !errors.Is(operationErr, sql.ErrNoRows) {
+		if _, safetyRefusal := deletionSafetyError(operationErr); event.Outcome == "validation_failed" && !safetyRefusal && !validation.IsValidationError(rotationUpdateSafeError(operationErr)) && !errors.Is(operationErr, sql.ErrNoRows) {
 			event.Outcome, event.Reason = "tx_failed", "write_failed"
 		}
 		if tx != nil {

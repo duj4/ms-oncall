@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/auth"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/graphql2/graphqlapp"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
@@ -395,6 +396,36 @@ func TestServiceDeleteAuditSimulatedAcknowledgementsOverRealPostgres(t *testing.
 		t.Run(mode, func(t *testing.T) {
 			h := sd1Harness(t)
 			ikSetAuthority(t, h, "ORG_MEMBER", true)
+			ctx := servicePlatformAdminContext(t, h)
+			foreign := h.UUID("service-b")
+			foreignKey, _ := sd3Key(t, h, foreign)
+			original := []assignment.RawTarget{sd3Target(assignment.TargetTypeService, foreign)}
+			_, previewErr := smokeDeletionPreview(t, h, ctx, original)
+			smokeDeletionCode(t, previewErr, ds.DeletionUnavailable)
+			smokeContract4Reject(t, h, sd3App(h), ctx, original, nil, ds.DeletionUnavailable)
+			if mode == "rollback_unconfirmed" {
+				// The original missing selector is a successful no-op, not a Rollback fault.
+				before, audit := serviceManagementSnapshot(t, h), smokeContract4SuccessState(t, h)
+				ok, err := smokeDeleteAll(t, h, sd3App(h), ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeService, h.UUID("missing"))})
+				require.NoError(t, err)
+				require.True(t, ok)
+				require.Equal(t, before, serviceManagementSnapshot(t, h))
+				require.Equal(t, audit, smokeContract4SuccessState(t, h))
+			}
+			// Preserve Human authority and use a separate lawful Home Service.
+			id := smokeContract4Service(t, h, true)
+			_, safe := sd3Key(t, h, id)
+			input := []assignment.RawTarget{sd3Target(assignment.TargetTypeService, id)}
+			confirmation, err := smokeDeletionConfirmation(t, h, ctx, input)
+			require.NoError(t, err)
+			sd8Exec(t, h, `CREATE SEQUENCE contract4_delete_hits; CREATE SEQUENCE contract4_append_hits;
+CREATE FUNCTION contract4_delete_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('contract4_delete_hits'); RETURN OLD; END $$;
+CREATE TRIGGER contract4_delete_probe BEFORE DELETE ON services FOR EACH ROW EXECUTE FUNCTION contract4_delete_probe();
+CREATE FUNCTION contract4_append_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('contract4_append_hits'); RETURN NEW; END $$;
+CREATE TRIGGER contract4_append_probe BEFORE INSERT ON service_delete_audit_events FOR EACH ROW WHEN (NEW.outcome='committed') EXECUTE FUNCTION contract4_append_probe()`)
+			if mode == "rollback_unconfirmed" {
+				sd8Exec(t, h, `CREATE FUNCTION contract4_delete_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'SYNTHETIC_PRIVATE_DELETE'; END $$; CREATE TRIGGER z_contract4_delete_failure BEFORE DELETE ON services FOR EACH ROW EXECUTE FUNCTION contract4_delete_failure()`)
+			}
 			var database string
 			require.NoError(t, h.App().DB().QueryRow(`SELECT current_database()`).Scan(&database))
 			cfg, err := pgx.ParseConfig(harness.DBURL(database))
@@ -406,25 +437,26 @@ func TestServiceDeleteAuditSimulatedAcknowledgementsOverRealPostgres(t *testing.
 			store, err := service.NewStore(t.Context(), db)
 			require.NoError(t, err)
 			a := graphqlapp.App{DB: db, ServiceStore: store}
-			id := h.UUID("service-b")
-			if mode == "rollback_unconfirmed" {
-				id = h.UUID("missing")
+			before := serviceManagementSnapshot(t, h)
+			beforeOutcomes := map[string]int{}
+			for _, outcome := range []string{"committed", "commit_unknown", "tx_failed", "rollback_unconfirmed"} {
+				beforeOutcomes[outcome] = sd1Count(t, h, outcome)
 			}
-			_, safe := sd3Key(t, h, h.UUID("service-b"))
-			ok, err := a.Mutation().DeleteAll(servicePlatformAdminContext(t, h), []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: id}})
+			ok, err := a.Mutation().DeleteAll(ctx, input, confirmation)
 			require.Error(t, err)
 			require.False(t, ok)
 			require.NotContains(t, err.Error(), "SYNTHETIC_")
+			require.NotContains(t, sd1Rows(t, h), "SYNTHETIC_")
 			committed := mode == "commit_then_error" || mode == "completion_unknown"
 			if committed {
-				require.Zero(t, serviceManagementCount(t, h, "services", h.UUID("service-b")))
-				require.Equal(t, 1, sd1Count(t, h, "committed"))
-				effects := sd3Effects(t, h, h.UUID("service-b"))
+				require.Zero(t, serviceManagementCount(t, h, "services", id))
+				require.Equal(t, beforeOutcomes["committed"]+1, sd1Count(t, h, "committed"))
+				effects := sd3Effects(t, h, id)
 				require.Len(t, effects, 1)
 				require.Equal(t, safe, *effects[0].ResourceUUID)
 			} else {
-				require.Equal(t, 1, serviceManagementCount(t, h, "services", h.UUID("service-b")))
-				require.Zero(t, sd1Count(t, h, "committed"))
+				require.Equal(t, before, serviceManagementSnapshot(t, h))
+				require.Equal(t, beforeOutcomes["committed"], sd1Count(t, h, "committed"))
 			}
 			outcome := "commit_unknown"
 			if mode == "begin_failed" {
@@ -433,13 +465,26 @@ func TestServiceDeleteAuditSimulatedAcknowledgementsOverRealPostgres(t *testing.
 			if mode == "rollback_unconfirmed" {
 				outcome = "rollback_unconfirmed"
 			}
-			require.Equal(t, 1, sd1Count(t, h, outcome))
+			require.Equal(t, beforeOutcomes[outcome]+1, sd1Count(t, h, outcome))
 			require.EqualValues(t, 2, connector.begins.Load(), "one business attempt and one failure append; no unknown replay")
+			deleteHits, appendHits := int64(1), int64(1)
+			if mode == "begin_failed" {
+				deleteHits, appendHits = 0, 0
+			}
+			if mode == "rollback_unconfirmed" {
+				appendHits = 0
+			}
+			for sequence, want := range map[string]int64{"contract4_delete_hits": deleteHits, "contract4_append_hits": appendHits} {
+				require.Equal(t, want, sd8Scalar(t, h, `SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM `+sequence), "nontransactional proof of actual DML/Fault entry")
+			}
 			var attempts, requests int
-			require.NoError(t, h.App().DB().QueryRow(`SELECT count(DISTINCT attempt_id),count(DISTINCT request_id) FROM service_delete_audit_events`).Scan(&attempts, &requests))
+			require.NoError(t, h.App().DB().QueryRow(`SELECT count(DISTINCT attempt_id),count(DISTINCT request_id) FROM service_delete_audit_events WHERE request_id=(SELECT request_id FROM service_delete_audit_events WHERE outcome=$1 ORDER BY occurred_at DESC LIMIT 1)`, outcome).Scan(&attempts, &requests))
 			require.Equal(t, 1, attempts)
 			require.Equal(t, 1, requests)
-			sd1Save(t, map[string]any{"evidenceKind": "controlled driver acknowledgement around real PostgreSQL; direct resolver, not signed HTTP or native PG transport failure", "mode": mode, "audit": json.RawMessage(sd1Rows(t, h))})
+			require.Equal(t, 1, serviceManagementCount(t, h, "services", foreign))
+			require.Equal(t, 1, serviceManagementCount(t, h, "integration_keys", foreignKey.String()))
+			sd1Save(t, map[string]any{"evidenceKind": "controlled driver acknowledgement around actual admitted PostgreSQL; original cross-Home denial preserved; not a native network fault", "mode": mode, "deleteHits": deleteHits, "appendHits": appendHits, "audit": json.RawMessage(sd1Rows(t, h))})
+			t.Logf("actual controlled %s entered: begins=2, DELETE hits=%d, successful append hits=%d; original cross-Home and no-op semantics preserved", mode, deleteHits, appendHits)
 		})
 	}
 }
@@ -452,7 +497,7 @@ func TestServiceDeleteAuditInternalAndForgedIdentity(t *testing.T) {
 	require.NoError(t, err)
 	for _, ctx := range []context.Context{permission.ServiceContext(context.Background(), h.UUID("service-a")), auth.WithRequester(valid, other)} {
 		before := serviceManagementSnapshot(t, h)
-		ok, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: h.UUID("service-b")}})
+		ok, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: h.UUID("service-b")}}, nil)
 		require.False(t, ok)
 		require.True(t, permission.IsPermissionError(err))
 		require.Equal(t, before, serviceManagementSnapshot(t, h))
@@ -460,7 +505,7 @@ func TestServiceDeleteAuditInternalAndForgedIdentity(t *testing.T) {
 	require.Equal(t, 2, sd1Count(t, h, "denied"))
 	require.Zero(t, sd1Count(t, h, "committed"))
 	sys := permission.SystemContext(context.Background(), "Engine")
-	ok, err := a.Mutation().DeleteAll(sys, []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: h.UUID("service-b")}, {Type: assignment.TargetTypeService, ID: h.UUID("service-b")}, {Type: assignment.TargetTypeService, ID: uuid.NewString()}})
+	ok, err := smokeDeleteAll(t, h, &a, sys, []assignment.RawTarget{{Type: assignment.TargetTypeService, ID: h.UUID("service-b")}, {Type: assignment.TargetTypeService, ID: h.UUID("service-b")}, {Type: assignment.TargetTypeService, ID: uuid.NewString()}})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, sd1Count(t, h, "committed"))

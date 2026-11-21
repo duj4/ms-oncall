@@ -61,7 +61,15 @@ import (
 	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
+// DeletionCursorSigner uses an already initialized application keyring. Sign and
+// Verify must operate in memory; Preview never initializes or rotates keys.
+type DeletionCursorSigner interface {
+	Sign([]byte) ([]byte, error)
+	Verify([]byte, []byte) (bool, bool)
+}
+
 type App struct {
+	PreviewSigner     DeletionCursorSigner
 	DB                *sql.DB
 	AuthBasicStore    *basic.Store
 	UserStore         *user.Store
@@ -207,6 +215,9 @@ func (a *App) Handler() http.Handler {
 	}})
 
 	h.SetRecoverFunc(func(ctx context.Context, recovered any) error {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && (f.Field.Name == "deletionPreview" || f.Field.Name == "previewUpdateEscalationPolicy" || f.Field.Name == "previewUpdateEscalationPolicyStep" || f.Field.Name == "previewUpdateScheduleTarget" || f.Field.Name == "previewUpdateRotation" || f.Field.Name == "previewUpdateService" || f.Field.Name == "previewSetTemporarySchedule" || f.Field.Name == "previewClearTemporarySchedules") {
+			return previewUnavailable()
+		}
 		if sessionDiagnosticSelected(ctx) {
 			selectSessionDiagnostics(ctx)
 			return errors.New("GraphQL operation failed")
@@ -265,6 +276,14 @@ func (a *App) Handler() http.Handler {
 	h.Use(&errSkipHandler{})
 
 	h.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Mutation" && (f.Field.Name == "deleteAll" || f.Field.Name == "updateEscalationPolicy" || f.Field.Name == "updateEscalationPolicyStep" || f.Field.Name == "updateScheduleTarget" || f.Field.Name == "updateRotation" || f.Field.Name == "updateService" || f.Field.Name == "setTemporarySchedule" || f.Field.Name == "clearTemporarySchedules") {
+			if typed, ok := deletionSafetyError(err); ok {
+				return deletionPreviewGraphQLError(ctx, typed)
+			}
+		}
+		if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Query" && (f.Field.Name == "deletionPreview" || f.Field.Name == "previewUpdateRotation" || f.Field.Name == "previewUpdateService" || f.Field.Name == "previewSetTemporarySchedule" || f.Field.Name == "previewClearTemporarySchedules") {
+			return deletionPreviewGraphQLError(ctx, err)
+		}
 		if graphql.GetFieldContext(ctx) == nil || sessionDiagnosticOperation(ctx) {
 			if state, ok := ctx.Value(sessionDiagnosticKey{}).(*atomic.Bool); ok {
 				state.Store(true)

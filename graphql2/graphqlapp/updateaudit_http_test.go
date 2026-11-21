@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
+	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/schedule"
 	"github.com/target/goalert/schedule/rule"
 	"github.com/target/goalert/util/log"
@@ -49,6 +50,14 @@ func (c *updateHTTPConn) Begin() (driver.Tx, error) {
 		return nil, c.fixture.failure
 	}
 	return c.u03ModelConn.Begin()
+}
+
+func (c *updateHTTPConn) BeginTx(_ context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	tx, err := c.Begin()
+	if err == nil {
+		c.tx.readOnly = opts.ReadOnly
+	}
+	return tx, err
 }
 
 func (c *updateHTTPConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
@@ -123,7 +132,8 @@ func TestUpdateAuditHTTPBackendLogs(t *testing.T) {
 			variables := map[string]any{}
 			if strings.Contains(tc.selection+tc.fragment, "$schedule") {
 				declarations = append(declarations, "$schedule:ScheduleTargetInput!")
-				variables["schedule"] = map[string]any{"scheduleID": model.schedule, "target": map[string]any{"type": "user", "id": target.ID}, "rules": []any{}}
+				confirmation := u03ModelConfirmation(t, model, ctx, graphql2.ScheduleTargetInput{ScheduleID: &model.schedule, Target: &target})
+				variables["schedule"] = map[string]any{"scheduleID": model.schedule, "target": map[string]any{"type": "user", "id": target.ID}, "rules": []any{}, "confirmation": confirmation}
 			}
 			if strings.Contains(tc.selection+tc.fragment, "$id") {
 				declarations = append(declarations, "$id:ID!")

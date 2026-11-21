@@ -3,6 +3,10 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
+
+	collector "github.com/target/goalert/internal/deletionguard"
+	"github.com/target/goalert/internal/servicepolicy"
 
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util"
@@ -303,12 +307,23 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err != nil {
 		return nil, err
 	}
-	parsedIDs, err := validate.ParseManyUUID("ServiceID", ids, 50)
+	_, err = validate.ParseManyUUID("ServiceID", ids, 50)
 	if err != nil {
 		return nil, err
 	}
 	if len(ids) == 0 {
 		return nil, nil
+	}
+	ids, err = collector.ConsumeService(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	parsedIDs, err := validate.ParseManyUUID("ServiceID", ids, 50)
+	if err != nil {
+		return nil, err
 	}
 	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
 	for _, id := range parsedIDs {
@@ -370,6 +385,35 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, svc *Service, organiza
 	if err != nil {
 		return err
 	}
+	if organizationID != nil && *organizationID == uuid.Nil {
+		return validation.NewFieldError("OrganizationID", "must be specified")
+	}
+	// A direct caller receives the same atomic lock/recheck boundary. No
+	// external capability can survive being moved into this new transaction.
+	if tx == nil {
+		owned, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = owned.Rollback() }()
+		if err := s.UpdateTx(ctx, owned, svc, organizationID); err != nil {
+			return err
+		}
+		return owned.Commit()
+	}
+	facts, err := servicepolicy.Load(ctx, tx, n.ID, &n.EscalationPolicyID, organizationID, true)
+	if errors.Is(err, sql.ErrNoRows) && organizationID == nil {
+		// Preserve the legacy unscoped missing-row no-op.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if facts.RequiresConfirmation() {
+		if err := servicepolicy.Consume(ctx, tx, facts); err != nil {
+			return err
+		}
+	}
 
 	mExp := sql.NullTime{
 		Time:  n.MaintenanceExpiresAt,
@@ -379,14 +423,11 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, svc *Service, organiza
 	stmt := s.update
 	args := []any{n.ID, n.Name, n.Description, n.EscalationPolicyID, mExp}
 	if organizationID != nil {
-		if *organizationID == uuid.Nil {
-			return validation.NewFieldError("OrganizationID", "must be specified")
-		}
 		stmt = s.updateOrg
 		args = append(args, *organizationID)
 	}
 	result, err := wrap(tx, stmt).ExecContext(ctx, args...)
-	if err != nil || organizationID == nil {
+	if err != nil {
 		return err
 	}
 	rows, err := result.RowsAffected()
@@ -395,6 +436,9 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, svc *Service, organiza
 	}
 	if rows != 1 {
 		return sql.ErrNoRows
+	}
+	if facts.Changed() {
+		return servicepolicy.VerifyResult(ctx, tx, facts)
 	}
 	return nil
 }

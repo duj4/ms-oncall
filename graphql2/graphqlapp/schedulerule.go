@@ -3,6 +3,7 @@ package graphqlapp
 import (
 	context "context"
 	"database/sql"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
@@ -33,13 +34,20 @@ func (r *ScheduleRule) WeekdayFilter(ctx context.Context, raw *rule.Rule) ([]boo
 }
 
 func (m *Mutation) UpdateScheduleTarget(ctx context.Context, input graphql2.ScheduleTargetInput) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	event := scheduleTargetUpdateAuditEvent(ctx)
 	return m.configureScheduleTarget(ctx, input, &event)
 }
 
 // Creation explicitly uses this configuration helper without an Update event.
-// An inherited authorized Update still stages its witness on the outer Tx.
+// Destructive Updates require their top-level audit owner. Initial creation
+// adds configuration without granting removal of an existing relationship.
 func (m *Mutation) configureScheduleTarget(ctx context.Context, input graphql2.ScheduleTargetInput, event *sraudit.Event) (bool, error) {
+	if input.Target == nil {
+		return false, previewUnavailable()
+	}
+	inherited := hasInheritedContextTx(ctx)
 	var schedID string
 	if input.ScheduleID != nil {
 		schedID = *input.ScheduleID
@@ -79,11 +87,28 @@ func (m *Mutation) configureScheduleTarget(ctx context.Context, input graphql2.S
 		if err := m.RuleStore.LockScheduleRulesTx(ctx, tx, schedID); err != nil {
 			return err
 		}
+
 		// Separate post-wait statement preserves the existing created_at,id order.
 		rules, err := m.RuleStore.FindByTargetTx(ctx, tx, schedID, input.Target)
 		if err != nil {
 			return errors.Wrap(err, "fetch existing rules")
 		}
+		var assessment updateAssessment
+		if event != nil && (len(rules) > len(input.Rules) || hasUpdateConfirmation(input.Confirmation)) {
+			var e error
+			assessment, e = (*App)(m).assessUpdate(ctx, tx, input, true)
+			if e != nil {
+				return e
+			}
+			if inherited && len(assessment.removed) > 0 {
+				return previewUnavailable()
+			}
+			ctx, e = assessment.enforce(ctx, tx, m.PreviewSigner, input.Confirmation)
+			if e != nil {
+				return e
+			}
+		}
+
 		if organizationID != nil && input.Target.Type == assignment.TargetTypeUser && len(input.Rules) > 0 {
 			// Target syntax was checked above. Empty rules only remove a
 			// relationship, including an unavailable historical affiliation.
@@ -105,6 +130,10 @@ func (m *Mutation) configureScheduleTarget(ctx context.Context, input graphql2.S
 			if err != nil {
 				return err
 			}
+		}
+		// Initial configuration never authorizes deletion of an existing relation.
+		if event == nil && len(rules) > len(input.Rules) {
+			return previewUnavailable()
 		}
 		for ruleIndex, inputRule := range input.Rules {
 			r := rule.NewAlwaysActive(schedID, input.Target)
@@ -130,12 +159,17 @@ func (m *Mutation) configureScheduleTarget(ctx context.Context, input graphql2.S
 		}
 
 		if len(rules) > len(input.Rules) {
+			if event != nil {
+				if err := assessment.recheck(ctx, tx); err != nil {
+					return err
+				}
+			}
 			toDelete := make([]string, len(rules)-len(input.Rules))
 			for i, r := range rules[len(input.Rules):] {
 				toDelete[i] = r.ID
 			}
 			if event == nil {
-				return errors.Wrap(m.RuleStore.DeleteManyTx(ctx, tx, toDelete), "delete old rules")
+				return previewUnavailable()
 			}
 			receipts, err := m.RuleStore.DeleteManyReceiptTx(ctx, tx, schedID, input.Target, toDelete)
 			if err != nil {
@@ -148,6 +182,9 @@ func (m *Mutation) configureScheduleTarget(ctx context.Context, input graphql2.S
 				}
 				event.Effects = append(event.Effects, effect)
 			}
+		}
+		if len(assessment.removed) > 0 {
+			return assessment.finish(ctx, tx, event.Effects)
 		}
 		return nil
 	})

@@ -15,15 +15,17 @@ func TestEmbeddedCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(history.entries), 306; got != want {
+	if got, want := len(history.entries), 309; got != want {
 		t.Fatalf("canonical entry count = %d, want %d", got, want)
 	}
 	// The exact original manifest, all 1–290 SQL digests and provenance are
 	// pinned by the append-aware A1 prefix check; no old entry is relaxed.
 	TestServiceUpdateAuditCanonicalBundle(t)
-	// Pin the complete accepted 1–305 manifest and the sole 306 append while
-	// retaining the dedicated 305 identity and predecessor regression checks.
+	// Preserve accepted bundles and pin the sole new 309 append.
 	TestEPUpdateDeleteAudit305CanonicalAppend(t)
+	TestUserDeleteSession307CanonicalAppend(t)
+	TestScheduleJSON308CanonicalAppend(t)
+	TestOnCall309CanonicalAppend(t)
 	if got, want := history.provenanceFoundationIndex, 274; got != want {
 		t.Fatalf("provenance Foundation index = %d, want %d", got, want)
 	}

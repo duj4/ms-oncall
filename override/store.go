@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
 	"github.com/target/goalert/organization"
@@ -374,6 +376,10 @@ func (s *Store) DeleteUserOverrideTxScoped(ctx context.Context, tx *sql.Tx, ids 
 		return err
 	}
 
+	ids, err = collector.ConsumeUserOverride(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
 	return s.withTx(ctx, tx, func(tx *sql.Tx) error {
 		result, err := tx.StmtContext(ctx, s.deleteUO).ExecContext(ctx, sqlutil.UUIDArray(ids), scope)
 		if err != nil || organizationID == nil {

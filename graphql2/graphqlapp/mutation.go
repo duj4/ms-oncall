@@ -10,6 +10,7 @@ import (
 	"github.com/target/goalert/expflag"
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
+	guard "github.com/target/goalert/internal/deletionguard"
 	"github.com/target/goalert/keyring"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/retry"
@@ -27,7 +28,7 @@ import (
 
 type Mutation App
 
-func (a *App) Mutation() graphql2.MutationResolver { return (*Mutation)(a) }
+func (a *App) Mutation() graphql2.MutationResolver { return deletionMutationResolver{(*Mutation)(a)} }
 
 func (a *Mutation) ReEncryptKeyringsAndConfig(ctx context.Context) (bool, error) {
 	err := permission.LimitCheckAny(ctx, permission.Admin)
@@ -112,95 +113,11 @@ func (a *Mutation) LinkAccount(ctx context.Context, token string) (bool, error) 
 }
 
 func (a *Mutation) SetScheduleOnCallNotificationRules(ctx context.Context, input graphql2.SetScheduleOnCallNotificationRulesInput) (bool, error) {
-	schedID, err := parseUUID("ScheduleID", input.ScheduleID)
-	if err != nil {
-		return false, err
-	}
-	organizationID, authorityErr := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
-	if authorityErr != nil && a.DestReg == nil {
-		// Without a registry, safe destination validation is unavailable.
-		return false, authorityErr
-	}
-	home := organizationID
-	if authorityErr == nil && home != nil && len(input.Rules) > 0 {
-		target, err := (*App)(a).rootReadScope(ctx, assignment.TargetTypeSchedule, input.ScheduleID)
-		if err != nil {
-			return false, err
-		}
-		if target != nil && *target != *home {
-			return false, validation.NewFieldError("Rules", "Foreign Schedule destination/channel ownership policy is not defined")
-		}
-	}
-
-	rules := make([]schedule.OnCallNotificationRule, 0, len(input.Rules))
-	validationChannels := make(map[gadb.DestHashV1]uuid.UUID)
-	for _, r := range input.Rules {
-		info, err := a.DestReg.TypeInfo(ctx, r.Dest.Type)
-		if err != nil {
-			return false, err
-		}
-		if !info.IsSchedOnCallNotify() {
-			return false, validation.NewFieldError("Rules[%d].Dest.Type", "unsupported destination type")
-		}
-		if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
-			return false, err
-		}
-		if err := a.DestReg.ValidateDest(ctx, r.Dest); err != nil {
-			return false, err
-		}
-		if _, err := a.DestReg.DisplayInfo(ctx, r.Dest); err != nil {
-			return false, err
-		}
-		// Preserve duplicate-rule validation without mapping or writing channels.
-		hash := r.Dest.DestHash()
-		if _, ok := validationChannels[hash]; !ok {
-			validationChannels[hash] = uuid.New()
-		}
-		r.ChannelID = validationChannels[hash]
-		rules = append(rules, r.OnCallNotificationRule)
-	}
-	if err := permission.LimitCheckAny(ctx, permission.User); err != nil {
-		return false, err
-	}
-	if err := schedule.PrepareOnCallNotificationRules(schedID, rules); err != nil {
-		return false, err
-	}
-	if authorityErr != nil {
-		return false, authorityErr
-	}
-	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-		organizationID, err = existingRootTargetOrganizationTx(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID, false)
-		if err != nil {
-			return err
-		}
-		if home != nil && organizationID != nil && *home != *organizationID && len(input.Rules) > 0 {
-			return validation.NewFieldError("Rules", "Foreign Schedule destination/channel ownership policy is not defined")
-		}
-		if organizationID != nil {
-			// Use the existing nonlocking parent check before channel mapping.
-			_, err := gadb.New(tx).SchedCheckOrganization(ctx, gadb.SchedCheckOrganizationParams{ScheduleID: schedID, OrganizationID: *organizationID})
-			if errors.Is(err, sql.ErrNoRows) {
-				return validation.NewFieldError("ScheduleID", "schedule does not exist")
-			}
-			if err != nil {
-				return err
-			}
-		}
-		for i, r := range input.Rules {
-			chID, err := a.NCStore.MapDestToID(ctx, tx, r.Dest)
-			if err != nil {
-				return err
-			}
-			rules[i].ChannelID = chID
-		}
-		return a.ScheduleStore.SetOnCallNotificationRulesScoped(ctx, tx, schedID, rules, organizationID)
-	})
-
-	return err == nil, err
+	return a.executeOnCallJSON(ctx, input)
 }
 
 func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetTemporaryScheduleInput) (bool, error) {
-	schedID, err := parseUUID("ScheduleID", input.ScheduleID)
+	_, err := parseUUID("ScheduleID", input.ScheduleID)
 	if err != nil {
 		return false, err
 	}
@@ -221,7 +138,7 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 		}
 		clearSet = true
 	}
-	organizationID, authorityErr := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
+	_, authorityErr := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if authorityErr != nil {
 		if a.UserStore == nil {
 			// Missing validation dependencies must not permit unscoped access.
@@ -245,27 +162,15 @@ func (a *Mutation) SetTemporarySchedule(ctx context.Context, input graphql2.SetT
 		return false, authorityErr
 	}
 
-	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID)
-		if err != nil {
-			return err
-		}
-		if clearSet {
-			return a.ScheduleStore.SetClearTemporaryScheduleScoped(ctx, tx, schedID, tmp, *input.ClearStart, *input.ClearEnd, organizationID)
-		}
-
-		return a.ScheduleStore.SetTemporaryScheduleScoped(ctx, tx, schedID, tmp, organizationID)
-	})
-
-	return err == nil, err
+	return a.executeScheduleJSON(ctx, input)
 }
 
 func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.ClearTemporarySchedulesInput) (bool, error) {
-	schedID, err := parseUUID("ScheduleID", input.ScheduleID)
+	_, err := parseUUID("ScheduleID", input.ScheduleID)
 	if err != nil {
 		return false, err
 	}
-	organizationID, err := scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
+	_, err = scheduleRotationManagementAuthority(ctx, scheduleRotationManagementUpdate)
 	if err != nil {
 		// Match the Store's safe range checks without accessing Schedule data.
 		var futureErr, rangeErr error
@@ -281,15 +186,7 @@ func (a *Mutation) ClearTemporarySchedules(ctx context.Context, input graphql2.C
 		return false, err
 	}
 
-	err = withContextTx(ctx, a.DB, func(ctx context.Context, tx *sql.Tx) error {
-		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeSchedule, input.ScheduleID)
-		if err != nil {
-			return err
-		}
-		return a.ScheduleStore.ClearTemporarySchedulesScoped(ctx, tx, schedID, input.Start, input.End, organizationID)
-	})
-
-	return err == nil, err
+	return a.executeScheduleJSON(ctx, input)
 }
 
 func (a *Mutation) TestContactMethod(ctx context.Context, id string) (bool, error) {
@@ -341,10 +238,21 @@ func (a *Mutation) EndAllAuthSessionsByCurrentUser(ctx context.Context) (bool, e
 	return a.endOtherSessionsAudited(ctx)
 }
 
-func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (ok bool, err error) {
+func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) (bool, error) {
+	return a.deleteAllConfirmed(ctx, input, nil)
+}
+
+func (a *Mutation) deleteAllConfirmed(ctx context.Context, input []assignment.RawTarget, confirmation *graphql2.DeletionSafetyConfirmationInput) (ok bool, err error) {
 	audit := newDeleteAllAudit(ctx, a.DB, input)
+	if audit != nil {
+		audit.confirmation = confirmation
+	}
 	if audit != nil && audit.hasSession {
-		defer func() { err = sessionAuditSafeError(err) }()
+		defer func() {
+			if _, ok := deletionSafetyError(err); !ok {
+				err = sessionAuditSafeError(err)
+			}
+		}()
 		if hasInheritedContextTx(ctx) {
 			return false, sessionAuditSafeError(errors.New("transaction ownership unavailable"))
 		}
@@ -355,6 +263,13 @@ func (a *Mutation) DeleteAll(ctx context.Context, input []assignment.RawTarget) 
 			err = audit.nextAttempt().finish(err)
 		}
 	}()
+	// Preserve User Store admission before any existence lookup, including
+	// missing selectors, so incapable callers cannot distinguish User identities.
+	if audit != nil && audit.hasUser {
+		if err := permission.LimitCheckAny(ctx, permission.System, permission.Admin); err != nil {
+			return false, err
+		}
+	}
 	isDefault, err := isDefaultHuman(ctx)
 	if err != nil {
 		return false, err
@@ -482,11 +397,6 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		m[tgt.TargetType()] = append(m[tgt.TargetType()], tgt.TargetID())
 	}
 	if isDefault {
-		for _, id := range m[assignment.TargetTypeUser] {
-			if err := authorizeDefaultUserTarget(ctx, tx, id); err != nil {
-				return err
-			}
-		}
 		for _, id := range m[assignment.TargetTypeUserSession] {
 			var owner string
 			err := tx.QueryRowContext(ctx, `SELECT user_id FROM auth_user_sessions WHERE id=$1 FOR UPDATE`, id).Scan(&owner)
@@ -502,21 +412,9 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		}
 	}
 
-	// Resolve Rotation before Schedule to retain the existing table/root lock
-	// order. These are independent group scopes, never a shared global scope.
+	// Native enforcement already stabilized both profiles before this point.
+	// Resolve scopes from their certified existing subsets in the original group order.
 	rootScopes := make(map[assignment.TargetType]*uuid.UUID)
-	for _, typ := range []assignment.TargetType{assignment.TargetTypeRotation, assignment.TargetTypeSchedule} {
-		if len(m[typ]) == 0 {
-			continue
-		}
-		rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, m[typ])
-		if err != nil {
-			return err
-		}
-	}
-	if err := validateScheduleRotationDeleteTx(ctx, tx, m, rootScopes[assignment.TargetTypeRotation], rootScopes[assignment.TargetTypeSchedule]); err != nil {
-		return err
-	}
 
 	order := []assignment.TargetType{
 		assignment.TargetTypeRotation,
@@ -531,6 +429,27 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		assignment.TargetTypeNotificationRule,
 		assignment.TargetTypeContactMethod,
 		assignment.TargetTypeUserSession,
+	}
+
+	var confirmation *graphql2.DeletionSafetyConfirmationInput
+	if audit != nil {
+		confirmation = audit.plan.confirmation
+	}
+	ctx, err = enforceDeleteAll(ctx, tx, input, confirmation)
+	if err != nil {
+		return err
+	}
+
+	if isDefault && len(m[assignment.TargetTypeUser]) > 0 {
+		existing, err := guard.UserTargets(ctx, tx, m[assignment.TargetTypeUser])
+		if err != nil {
+			return err
+		}
+		for _, id := range existing {
+			if err := authorizeDefaultUserTarget(ctx, tx, id); err != nil {
+				return err
+			}
+		}
 	}
 
 	if audit != nil {
@@ -564,9 +483,13 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			// Resolve only this group's scope. In particular, a Foreign Service
 			// must not grant its Organization to Schedule/Rotation/EP deletion.
 			var serviceOrg *uuid.UUID
-			serviceOrg, err = serviceDeleteTargetOrganization(ctx, tx, ids)
+			var existing []string
+			existing, err = guard.ServiceTargets(ctx, tx, ids)
+			if err == nil {
+				serviceOrg, err = serviceDeleteTargetOrganization(ctx, tx, existing)
+			}
 			if err == nil && audit != nil {
-				err = audit.capture(ctx, ids, serviceOrg)
+				err = audit.capture(ctx, existing, serviceOrg)
 			}
 			if err == nil {
 				if audit != nil {
@@ -581,9 +504,13 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 			err = errors.Wrap(err, "delete services")
 		case assignment.TargetTypeEscalationPolicy:
 			var policyOrg *uuid.UUID
-			policyOrg, err = existingRootDeleteTargetOrganization(ctx, tx, typ, ids)
+			var existing []string
+			existing, err = guard.EPTargets(ctx, tx, ids)
+			if err == nil {
+				policyOrg, err = existingRootDeleteTargetOrganization(ctx, tx, typ, existing)
+			}
 			if err == nil && audit != nil {
-				err = audit.captureEP(ctx, ids, policyOrg)
+				err = audit.captureEP(ctx, existing, policyOrg)
 			}
 			if err == nil {
 				if audit == nil {
@@ -603,11 +530,20 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeIntegrationKey:
 			err = errors.Wrap(a.deleteIntegrationKeysWithAudit(ctx, tx, ids, audit), "delete integration keys")
 		case assignment.TargetTypeSchedule:
-			if audit == nil {
-				err = a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
-			} else {
-				err = audit.captureSR(ctx, sraudit.Schedule, ids, rootScopes[typ])
-				if err == nil {
+			var existing []string
+			existing, err = guard.ScheduleTargets(ctx, tx, ids)
+			if err == nil {
+				rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, existing)
+			}
+			// Stabilization already locked and checked the real closure with
+			// NOWAIT. The raw missing selectors never enter scope or capture.
+			if err == nil && audit != nil {
+				err = audit.captureSR(ctx, sraudit.Schedule, existing, rootScopes[typ])
+			}
+			if err == nil {
+				if audit == nil {
+					err = a.ScheduleStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
+				} else {
 					var receipts []sraudit.Receipt
 					receipts, err = a.ScheduleStore.DeleteManyForAuditTx(ctx, tx, ids, rootScopes[typ])
 					if err == nil {
@@ -619,11 +555,21 @@ func (a *Mutation) tryDeleteAll(ctx context.Context, input []assignment.RawTarge
 		case assignment.TargetTypeCalendarSubscription:
 			err = errors.Wrap(a.CalSubStore.DeleteTx(ctx, tx, permission.UserID(ctx), ids...), "delete calendar subscriptions")
 		case assignment.TargetTypeRotation:
-			if audit == nil {
-				err = a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
-			} else {
-				err = audit.captureSR(ctx, sraudit.Rotation, ids, rootScopes[typ])
-				if err == nil {
+			var existing []string
+			existing, err = guard.RotationTargets(ctx, tx, ids)
+			if err == nil && len(existing) > 0 {
+				rootScopes[typ], err = existingRootDeleteTargetOrganization(ctx, tx, typ, existing)
+			}
+			if err == nil {
+				err = validateScheduleRotationDeleteTx(ctx, tx, map[assignment.TargetType][]string{typ: existing}, rootScopes[typ], nil)
+			}
+			if err == nil && audit != nil {
+				err = audit.captureSR(ctx, sraudit.Rotation, existing, rootScopes[typ])
+			}
+			if err == nil {
+				if audit == nil {
+					err = a.RotationStore.DeleteManyTx(ctx, tx, ids, rootScopes[typ])
+				} else {
 					var receipts []sraudit.Receipt
 					receipts, err = a.RotationStore.DeleteManyForAuditTx(ctx, tx, ids, rootScopes[typ])
 					if err == nil {

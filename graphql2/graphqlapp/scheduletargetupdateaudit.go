@@ -37,14 +37,16 @@ func scheduleTargetUpdateDiagnosticsSelected(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	selected := func(name string) bool { return name == sraudit.ScheduleTargetUpdate }
-	if f := graphql.GetFieldContext(ctx); f != nil && f.Object == "Mutation" && selected(f.Field.Name) {
+	selected := func(name string) bool {
+		return name == sraudit.ScheduleTargetUpdate || name == "setTemporarySchedule" || name == "clearTemporarySchedules" || name == "previewSetTemporarySchedule" || name == "previewClearTemporarySchedules"
+	}
+	if f := graphql.GetFieldContext(ctx); f != nil && (f.Object == "Mutation" || f.Object == "Query") && selected(f.Field.Name) {
 		return true
 	}
 	if graphql.HasOperationContext(ctx) {
 		op := graphql.GetOperationContext(ctx)
 		if op.Operation != nil {
-			for _, f := range graphql.CollectFields(op, op.Operation.SelectionSet, []string{"Mutation"}) {
+			for _, f := range graphql.CollectFields(op, op.Operation.SelectionSet, []string{"Mutation", "Query"}) {
 				if selected(f.Name) {
 					return true
 				}
@@ -74,6 +76,9 @@ func scheduleTargetUpdateDiagnosticError(ctx context.Context, err error) error {
 }
 
 func scheduleTargetUpdateSafeError(err error) error {
+	if typed, ok := deletionSafetyError(err); ok {
+		return typed
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return sql.ErrNoRows
 	}
@@ -118,7 +123,7 @@ func finishScheduleTargetUpdateAudit(ctx context.Context, db *sql.DB, conn *sql.
 		e.Outcome, e.Reason = "rollback_unconfirmed", "rollback_unconfirmed"
 	} else if e.Outcome == "validation_failed" {
 		safe := scheduleTargetUpdateSafeError(operationErr)
-		if !validation.IsClientError(safe) && !errutil.IsLimitError(safe) && !errors.Is(safe, sql.ErrNoRows) {
+		if _, safetyRefusal := deletionSafetyError(safe); !safetyRefusal && !validation.IsClientError(safe) && !errutil.IsLimitError(safe) && !errors.Is(safe, sql.ErrNoRows) {
 			e.Outcome, e.Reason = "tx_failed", "write_failed"
 		}
 	}

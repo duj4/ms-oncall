@@ -1,0 +1,92 @@
+extend input UpdateEscalationPolicyInput {
+  "Confirmation bound to the complete update input and current state."
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+extend input UpdateEscalationPolicyStepInput {
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+extend input ScheduleTargetInput {
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+extend input UpdateRotationInput {
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+extend input UpdateServiceInput {
+  confirmation: DeletionSafetyConfirmationInput
+}
+
+"Preview of relationship changes; the business root remains present."
+type UpdateDeletionPreview {
+  operation: DeletionOperation!
+  root: DeletionResource!
+  impactVersion: ID!
+  policyVersion: String!
+  complete: Boolean!
+  canProceed: Boolean!
+  requiresConfirmation: Boolean!
+  removed: [DeletionResource!]!
+  impacts: [DeletionImpact!]!
+}
+
+extend type Query {
+  previewUpdateEscalationPolicy(input: UpdateEscalationPolicyInput!): UpdateDeletionPreview!
+  previewUpdateEscalationPolicyStep(input: UpdateEscalationPolicyStepInput!): UpdateDeletionPreview!
+  previewUpdateScheduleTarget(input: ScheduleTargetInput!): UpdateDeletionPreview!
+  previewUpdateRotation(input: UpdateRotationInput!): UpdateDeletionPreview!
+  previewUpdateService(input: UpdateServiceInput!): UpdateDeletionPreview!
+}
+
+
+extend input SetTemporaryScheduleInput { confirmation: DeletionSafetyConfirmationInput }
+extend input ClearTemporarySchedulesInput { confirmation: DeletionSafetyConfirmationInput }
+
+"UTC half-open time coverage; no persistent JSON-element identity."
+type ScheduleJSONCoverage {
+  kind: String!
+  userID: ID
+  start: ISOTimestamp!
+  end: ISOTimestamp!
+}
+type ScheduleJSONCoverageChange {
+  coverage: ScheduleJSONCoverage!
+  change: String!
+  source: String!
+}
+type ScheduleJSONUpdatePreview {
+  contractVersion: Int!
+  operation: String!
+  mode: String!
+  before: [ScheduleJSONCoverage!]!
+  after: [ScheduleJSONCoverage!]!
+  effects: [ScheduleJSONCoverageChange!]!
+}
+extend type UpdateDeletionPreview { scheduleJSONUpdate: ScheduleJSONUpdatePreview }
+extend type Query {
+  previewSetTemporarySchedule(input: SetTemporaryScheduleInput!): UpdateDeletionPreview!
+  previewClearTemporarySchedules(input: ClearTemporarySchedulesInput!): UpdateDeletionPreview!
+}
+
+
+extend input SetScheduleOnCallNotificationRulesInput { confirmation: DeletionSafetyConfirmationInput }
+"Minimal rule configuration. Empty time/weekdays denotes on-call change."
+type OnCallJSONRule {
+  ruleID: ID!
+  channelID: ID!
+  time: String!
+  weekdays: String!
+}
+type OnCallJSONEffect { ruleID: ID! change: String! source: String! }
+type OnCallJSONUpdatePreview {
+  contractVersion: Int!
+  before: [OnCallJSONRule!]!
+  after: [OnCallJSONRule!]!
+  effects: [OnCallJSONEffect!]!
+}
+extend type UpdateDeletionPreview { onCallJSONUpdate: OnCallJSONUpdatePreview }
+extend type Query {
+  previewSetScheduleOnCallNotificationRules(input: SetScheduleOnCallNotificationRulesInput!): UpdateDeletionPreview!
+}

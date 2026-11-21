@@ -298,6 +298,9 @@ func (q *Queries) AlertLog_HasRecentDuplicate(ctx context.Context, alertID int64
 }
 
 const alertLog_InsertEP = `-- name: AlertLog_InsertEP :exec
+WITH locked_subject_key AS MATERIALIZED (
+    SELECT 1 FROM integration_keys WHERE id = $5 FOR KEY SHARE
+)
 INSERT INTO alert_logs(alert_id, event, sub_type, sub_user_id, sub_integration_key_id, sub_hb_monitor_id, sub_channel_id, sub_classifier, meta, message)
 SELECT
     a.id,
@@ -316,6 +319,9 @@ FROM
         AND svc.escalation_policy_id = $1
 WHERE
     a.status != 'closed'
+    AND (SELECT count(*) FROM locked_subject_key) >= 0
+ORDER BY a.id
+FOR KEY SHARE OF a
 `
 
 type AlertLog_InsertEPParams struct {
@@ -349,6 +355,11 @@ func (q *Queries) AlertLog_InsertEP(ctx context.Context, arg AlertLog_InsertEPPa
 }
 
 const alertLog_InsertMany = `-- name: AlertLog_InsertMany :exec
+WITH locked_subject_key AS MATERIALIZED (
+    SELECT 1 FROM integration_keys WHERE id = $5 FOR KEY SHARE
+), locked_alerts AS MATERIALIZED (
+    SELECT id FROM alerts WHERE id = ANY($1::bigint[]) ORDER BY id FOR KEY SHARE
+)
 INSERT INTO alert_logs(alert_id, event, sub_type, sub_user_id, sub_integration_key_id, sub_hb_monitor_id, sub_channel_id, sub_classifier, meta, message)
 SELECT
     unnest,
@@ -363,6 +374,8 @@ SELECT
     $10
 FROM
     unnest($1::bigint[])
+WHERE (SELECT count(*) FROM locked_subject_key) >= 0
+  AND (SELECT count(*) FROM locked_alerts) >= 0
 `
 
 type AlertLog_InsertManyParams struct {
@@ -378,7 +391,9 @@ type AlertLog_InsertManyParams struct {
 	Message             string
 }
 
-// Inserts many alert logs
+// Inserts many alert logs. Non-FK Alert and subject-Key edges cooperate with
+// native deletion in the same SQL statement, including the nil-Tx path.
+// Missing historical IDs retain the original logging behavior.
 func (q *Queries) AlertLog_InsertMany(ctx context.Context, arg AlertLog_InsertManyParams) error {
 	_, err := q.db.ExecContext(ctx, alertLog_InsertMany,
 		pq.Array(arg.Column1),
@@ -396,6 +411,9 @@ func (q *Queries) AlertLog_InsertMany(ctx context.Context, arg AlertLog_InsertMa
 }
 
 const alertLog_InsertSvc = `-- name: AlertLog_InsertSvc :exec
+WITH locked_subject_key AS MATERIALIZED (
+    SELECT 1 FROM integration_keys WHERE id = $5 FOR KEY SHARE
+)
 INSERT INTO alert_logs(alert_id, event, sub_type, sub_user_id, sub_integration_key_id, sub_hb_monitor_id, sub_channel_id, sub_classifier, meta, message)
 SELECT
     a.id,
@@ -416,6 +434,9 @@ WHERE
             AND a.status != 'closed')
         OR ($2::enum_alert_log_event IN ('acknowledged', 'notification_sent')
             AND a.status = 'triggered'))
+    AND (SELECT count(*) FROM locked_subject_key) >= 0
+ORDER BY a.id
+FOR KEY SHARE OF a
 `
 
 type AlertLog_InsertSvcParams struct {
@@ -5518,6 +5539,7 @@ func (q *Queries) SchedFindOneScoped(ctx context.Context, arg SchedFindOneScoped
 const schedInsertData = `-- name: SchedInsertData :exec
 INSERT INTO schedule_data (schedule_id, data)
 VALUES ($1, '{}')
+ON CONFLICT (schedule_id) DO NOTHING
 `
 
 // Inserts empty schedule data for a given schedule ID.
@@ -5534,6 +5556,7 @@ FROM
     schedule_data
 WHERE
     data NOTNULL
+ORDER BY schedule_id
 FOR UPDATE
 `
 
@@ -5570,6 +5593,7 @@ SELECT
     schedule_id
 FROM
     schedule_data
+ORDER BY schedule_id
 `
 
 // Returns all schedule IDs that have an entry in the schedule_data table.
@@ -5624,6 +5648,7 @@ FROM
     schedule_data
 WHERE
     schedule_id = $1
+FOR UPDATE
 `
 
 // Returns the data for a single schedule.

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	epaudit "github.com/target/goalert/escalation/deleteaudit"
 	"github.com/target/goalert/graphql2/graphqlapp"
 	"github.com/target/goalert/organization"
@@ -177,13 +178,13 @@ func TestEscalationPolicyDeleteAuditRawLimitsAndSystem(t *testing.T) {
 	app := sd5App(h)
 	missing := uuid.NewString()
 	for i := 0; i < 2; i++ {
-		ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, missing)})
+		ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, missing)}, nil)
 		require.NoError(t, err)
 		require.True(t, ok)
 	}
 	require.Equal(t, 51, sd5Count(t, h))
 	// No authenticated/canonical authority: no resource lookup attribution.
-	_, err := app.Mutation().DeleteAll(context.Background(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, uuid.NewString())})
+	_, err := app.Mutation().DeleteAll(context.Background(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, uuid.NewString())}, nil)
 	require.Error(t, err)
 	var unknownRoots int
 	require.NoError(t, h.App().DB().QueryRow(`SELECT count(*) FROM escalation_policy_delete_audit_events WHERE actor_kind='unknown' AND root_id IS NOT NULL`).Scan(&unknownRoots))
@@ -216,39 +217,64 @@ func TestEscalationPolicyDeleteAuditEffectsAndEarlierGroups(t *testing.T) {
 	}
 	_, err = db.Exec(`INSERT INTO user_favorites(user_id,tgt_escalation_policy_id) VALUES($1,$2)`, h.UUID("user-a"), unrelated)
 	require.NoError(t, err)
-	// The earlier three groups remove their actions, and User removes its own
-	// favorite. Only channel Action and actor's Favorite remain at EP capture.
-	ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root), sd3Target(assignment.TargetTypeSchedule, h.UUID("schedule-a")), sd3Target(assignment.TargetTypeRotation, h.UUID("oncall-rotation")), sd3Target(assignment.TargetTypeUser, user)})
+	// CONTRACT ADAPTATION: retain the original mixed/channel/unknown-owner
+	// shape as fail-closed. It has no approved same-transaction equivalent.
+	original := []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root), sd3Target(assignment.TargetTypeSchedule, h.UUID("schedule-a")), sd3Target(assignment.TargetTypeRotation, h.UUID("oncall-rotation")), sd3Target(assignment.TargetTypeUser, user)}
+	smokeContract4Reject(t, h, sd5App(h), sd3System(), original, nil, ds.DeletionUnavailable)
+	originalState := smokeUserBusinessState(t, h)
+	_, err = smokeDeletionPreview(t, h, sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root)})
+	smokeDeletionCode(t, err, ds.DeletionUnavailable)
+	// NEW LEGAL EQUIVALENT COVERAGE: supported child change after Preview
+	// invalidates the version; a fresh EP-only request captures actual Effects.
+	legal := sd5EP(t, h, harness.SmokeOrganizationID)
+	legalStep := sd5Step(t, h, legal)
+	_ = sd5Step(t, h, legal)
+	legalOwner := smokeOwnedUser(t, h)
+	sd8Exec(t, h, `INSERT INTO user_favorites(user_id,tgt_escalation_policy_id) VALUES($1,$2)`, legalOwner, legal)
+	input := []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, legal)}
+	stale := smokePlanConfirmation(t, h, sd3System(), input)
+	action := uuid.NewString()
+	sd8Exec(t, h, `INSERT INTO escalation_policy_actions(id,escalation_policy_step_id,user_id) VALUES($1,$2,$3)`, action, legalStep, legalOwner)
+	smokeContract4Reject(t, h, sd5App(h), sd3System(), input, stale, ds.DeletionDependencyChanged)
+	ok, err := smokeDeleteAll(t, h, sd5App(h), sd3System(), input)
 	require.NoError(t, err)
 	require.True(t, ok)
-	effects := sd5Effects(t, h, root)
+	effects := sd5Effects(t, h, legal)
 	require.Len(t, effects, 4)
+	seen := map[string]bool{}
 	steps, actions, favs := 0, 0, 0
 	for _, f := range effects {
-		require.Equal(t, root, f.RootID.String())
+		require.Equal(t, legal, f.RootID.String())
 		require.Equal(t, "CASCADE", f.Provenance)
+		require.False(t, seen[f.EffectID.String()])
+		seen[f.EffectID.String()] = true
 		switch f.ResourceType {
 		case epaudit.Step:
 			steps++
 		case epaudit.Action:
 			actions++
-			require.Equal(t, "notification_channel", f.TargetKind)
-			require.Equal(t, channel, f.TargetID.String())
-			require.Equal(t, step, f.ParentStepID.String())
+			require.Equal(t, action, f.ResourceUUID.String())
+			require.Equal(t, legalOwner, f.TargetID.String())
+			require.Equal(t, legalStep, f.ParentStepID.String())
 		case epaudit.Favorite:
 			favs++
+			require.Equal(t, legalOwner, f.OwnerUserID.String())
 			require.Equal(t, "relationship_removed", f.Change)
-			require.Equal(t, h.UUID("user-a"), f.OwnerUserID.String())
-			require.Equal(t, harness.SmokeOrganizationID, f.OwnerOrganizationID.String())
+		default:
+			t.Fatal("unapproved legal EP effect")
 		}
 	}
-	require.Equal(t, 2, steps)
-	require.Equal(t, 1, actions)
-	require.Equal(t, 1, favs)
+	require.Equal(t, []int{2, 1, 1}, []int{steps, actions, favs})
+	require.Equal(t, 1, serviceManagementCount(t, h, "users", legalOwner))
+	for _, row := range []struct{ table, id string }{{"notification_channels", channel}, {"escalation_policies", unrelated}, {"escalation_policy_steps", otherStep}, {"escalation_policies", root}} {
+		require.Equal(t, 1, serviceManagementCount(t, h, row.table, row.id))
+	}
 	require.NotContains(t, sd5Rows(t, h), "SYNTHETIC_DEST")
-	require.Equal(t, 1, serviceManagementCount(t, h, "notification_channels", channel))
-	require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", unrelated))
-	require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policy_steps", otherStep))
+	// The original unsupported objects must not be silently transformed.
+	require.Equal(t, originalState["auth_subjects"], smokeUserBusinessState(t, h)["auth_subjects"])
+	require.EqualValues(t, 4, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_actions WHERE escalation_policy_step_id=$1`, step))
+	t.Log("PARTIAL LEGAL COVERAGE: actual EP-only B2 and stale child recheck restored; mixed earlier-group/channel/unknown-owner success NOT REACHABLE")
+
 }
 
 func TestEscalationPolicyDeleteAuditProjectionAndUpdateBoundary(t *testing.T) {
@@ -280,13 +306,46 @@ func TestEscalationPolicyDeleteAuditProjectionAndUpdateBoundary(t *testing.T) {
 		require.NoError(t, db.QueryRow(`INSERT INTO user_favorites(user_id,tgt_escalation_policy_id) VALUES($1,$2) RETURNING id`, owner, root).Scan(&id))
 		expectedFavorites[id] = owner
 	}
-	ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root)})
+
+	originalRoot := root
+	originalInput := []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, originalRoot)}
+	originalState := serviceManagementSnapshot(t, h)
+	_, previewErr := smokeDeletionPreview(t, h, sd3System(), originalInput)
+	smokeDeletionCode(t, previewErr, ds.DeletionUnavailable)
+	smokeContract4Reject(t, h, sd5App(h), sd3System(), originalInput, nil, ds.DeletionUnavailable)
+	// Isolate the unknown owner from channel scope in a separate negative Fixture.
+	ownerRoot := sd5EP(t, h, harness.SmokeOrganizationID)
+	sd8Exec(t, h, `INSERT INTO user_favorites(user_id,tgt_escalation_policy_id) VALUES($1,$2)`, unknownOwner, ownerRoot)
+	ownerInput := []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, ownerRoot)}
+	_, previewErr = smokeDeletionPreview(t, h, sd3System(), ownerInput)
+	smokeDeletionCode(t, previewErr, ds.DeletionUnavailable)
+	smokeContract4Reject(t, h, sd5App(h), sd3System(), ownerInput, nil, ds.DeletionUnavailable)
+	// Independent legal projection keeps two Steps and three supported target
+	// kinds; the original channel and unknown ownership relation remain intact.
+	root = sd5EP(t, h, harness.SmokeOrganizationID)
+	step = sd5Step(t, h, root)
+	_ = sd5Step(t, h, root)
+	expectedActions = map[string]string{}
+	for column, id := range map[string]string{"user_id": h.UUID("user-a"), "schedule_id": h.UUID("schedule-a"), "rotation_id": h.UUID("oncall-rotation")} {
+		action := uuid.NewString()
+		sd8Exec(t, h, `INSERT INTO escalation_policy_actions(id,escalation_policy_step_id,`+column+`) VALUES($1,$2,$3)`, action, step, id)
+		expectedActions[action] = id
+	}
+	normalOwner := smokeOwnedUser(t, h)
+	expectedFavorites = map[int64]string{}
+	for _, owner := range []string{h.UUID("user-a"), defaultOwner, normalOwner} {
+		var id int64
+		require.NoError(t, db.QueryRow(`INSERT INTO user_favorites(user_id,tgt_escalation_policy_id) VALUES($1,$2) RETURNING id`, owner, root).Scan(&id))
+		expectedFavorites[id] = owner
+	}
+	ok, err := smokeDeleteAll(t, h, sd5App(h), sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root)})
+
 	require.NoError(t, err)
 	require.True(t, ok)
 	effects := sd5Effects(t, h, root)
-	require.Len(t, effects, 9)
+	require.Len(t, effects, 8)
 	for _, f := range effects {
-		require.Equal(t, h.UUID("org-b"), f.TargetOrganizationID.String())
+		require.Equal(t, harness.SmokeOrganizationID, f.TargetOrganizationID.String())
 		switch f.ResourceType {
 		case epaudit.Action:
 			require.Equal(t, expectedActions[f.ResourceUUID.String()], f.TargetID.String())
@@ -302,9 +361,9 @@ func TestEscalationPolicyDeleteAuditProjectionAndUpdateBoundary(t *testing.T) {
 			case defaultOwner:
 				require.Equal(t, "known_default", f.OwnerOrgResolution)
 				require.Equal(t, organization.DefaultOrganizationID, f.OwnerOrganizationID.String())
-			case unknownOwner:
-				require.Equal(t, "unknown", f.OwnerOrgResolution)
-				require.Nil(t, f.OwnerOrganizationID)
+			case normalOwner:
+				require.Equal(t, "known_normal", f.OwnerOrgResolution)
+				require.Equal(t, harness.SmokeOrganizationID, f.OwnerOrganizationID.String())
 			}
 		}
 	}
@@ -319,10 +378,50 @@ func TestEscalationPolicyDeleteAuditProjectionAndUpdateBoundary(t *testing.T) {
 	first, removed := sd5Step(t, h, root), sd5Step(t, h, root)
 	_, err = db.Exec(`INSERT INTO escalation_policy_actions(escalation_policy_step_id,user_id) VALUES($1,$2)`, first, h.UUID("user-a"))
 	require.NoError(t, err)
-	r := stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{updateEscalationPolicy(input:{id:%q,name:"SD5 updated",stepIDs:[%q]})}`, root, first))
+	policyInput := fmt.Sprintf(`id:%q,name:"SD5 updated",stepIDs:[%q]`, root, first)
+	beforeUpdate, auditBeforeUpdate := serviceManagementSnapshot(t, h), smokeContract4SuccessState(t, h)
+	r := stepOrganizationQuery(t, h, `mutation{updateEscalationPolicy(input:{`+policyInput+`})}`)
+	require.Len(t, r.Errors, 1)
+	require.Equal(t, "DELETION_CONFIRMATION_REQUIRED", r.Errors[0].Extensions["code"])
+	require.Equal(t, beforeUpdate, serviceManagementSnapshot(t, h))
+	require.Equal(t, auditBeforeUpdate, smokeContract4SuccessState(t, h))
+	preview := stepOrganizationQuery(t, h, `query{previewUpdateEscalationPolicy(input:{`+policyInput+`}){impactVersion complete canProceed requiresConfirmation}}`)
+	require.Empty(t, preview.Errors)
+	var version struct {
+		Preview struct {
+			ImpactVersion                              string
+			Complete, CanProceed, RequiresConfirmation bool
+		} `json:"previewUpdateEscalationPolicy"`
+	}
+	require.NoError(t, json.Unmarshal(preview.Data, &version))
+	require.True(t, version.Preview.Complete)
+	require.True(t, version.Preview.CanProceed)
+	require.True(t, version.Preview.RequiresConfirmation)
+	require.NotEmpty(t, version.Preview.ImpactVersion)
+	r = stepOrganizationQuery(t, h, `mutation{updateEscalationPolicy(input:{`+policyInput+fmt.Sprintf(`,confirmation:{expectedImpactVersion:%q,acknowledgeImpacts:true}`, version.Preview.ImpactVersion)+`})}`)
 	require.Empty(t, r.Errors)
 	require.Zero(t, serviceManagementCount(t, h, "escalation_policy_steps", removed))
-	r = stepOrganizationQuery(t, h, fmt.Sprintf(`mutation{updateEscalationPolicyStep(input:{id:%q,delayMinutes:1,actions:[]})}`, first))
+	stepInput := fmt.Sprintf(`id:%q,delayMinutes:1,actions:[]`, first)
+	beforeUpdate, auditBeforeUpdate = serviceManagementSnapshot(t, h), smokeContract4SuccessState(t, h)
+	r = stepOrganizationQuery(t, h, `mutation{updateEscalationPolicyStep(input:{`+stepInput+`})}`)
+	require.Len(t, r.Errors, 1)
+	require.Equal(t, "DELETION_CONFIRMATION_REQUIRED", r.Errors[0].Extensions["code"])
+	require.Equal(t, beforeUpdate, serviceManagementSnapshot(t, h))
+	require.Equal(t, auditBeforeUpdate, smokeContract4SuccessState(t, h))
+	preview = stepOrganizationQuery(t, h, `query{previewUpdateEscalationPolicyStep(input:{`+stepInput+`}){impactVersion complete canProceed requiresConfirmation}}`)
+	require.Empty(t, preview.Errors)
+	var stepVersion struct {
+		Preview struct {
+			ImpactVersion                              string
+			Complete, CanProceed, RequiresConfirmation bool
+		} `json:"previewUpdateEscalationPolicyStep"`
+	}
+	require.NoError(t, json.Unmarshal(preview.Data, &stepVersion))
+	require.True(t, stepVersion.Preview.Complete)
+	require.True(t, stepVersion.Preview.CanProceed)
+	require.True(t, stepVersion.Preview.RequiresConfirmation)
+	require.NotEmpty(t, stepVersion.Preview.ImpactVersion)
+	r = stepOrganizationQuery(t, h, `mutation{updateEscalationPolicyStep(input:{`+stepInput+fmt.Sprintf(`,confirmation:{expectedImpactVersion:%q,acknowledgeImpacts:true}`, stepVersion.Preview.ImpactVersion)+`})}`)
 	require.Empty(t, r.Errors)
 	require.Equal(t, 1, sd5Count(t, h))
 	var actions int
@@ -331,9 +430,18 @@ func TestEscalationPolicyDeleteAuditProjectionAndUpdateBoundary(t *testing.T) {
 	var updates int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM escalation_policy_delete_audit_events WHERE schema_version=2 AND record_kind='success_witness'`).Scan(&updates))
 	require.Equal(t, 2, updates, "U01/U02 witnesses are distinct from the unchanged v1 Root Delete witness")
-	ok, err = sd5App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeSchedule, h.UUID("schedule-a"))})
-	require.NoError(t, err)
-	require.True(t, ok)
+	smokeContract4Blocked(t, h, sd5App(h), []assignment.RawTarget{sd3Target(assignment.TargetTypeSchedule, h.UUID("schedule-a"))})
+	require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", originalRoot))
+	for _, table := range []string{"notification_channels", "user_favorites"} {
+		// Original root-local relations survived both positive and Update-induced operations.
+		if table == "user_favorites" {
+			require.EqualValues(t, 3, sd8Scalar(t, h, `SELECT count(*) FROM user_favorites WHERE tgt_escalation_policy_id=$1`, originalRoot))
+		} else {
+			require.JSONEq(t, originalState[table], serviceManagementSnapshot(t, h)[table])
+		}
+	}
+	require.EqualValues(t, 4, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_actions a JOIN escalation_policy_steps s ON s.id=a.escalation_policy_step_id WHERE s.escalation_policy_id=$1`, originalRoot))
+	t.Log("original channel/unknown owner Fixture retained as unsupported; independent legal B2 projection and existing U01/U02 witnesses verified, retained Schedule reference BLOCK preserved")
 	require.Equal(t, 1, sd5Count(t, h))
 	require.Zero(t, sd4Count(t, h))
 	require.Zero(t, sd1Count(t, h, "committed"))
@@ -458,7 +566,7 @@ func TestEscalationPolicyDeleteAuditControlledCommit(t *testing.T) {
 			defer controlled.Close()
 			controlled.SetMaxOpenConns(1)
 			app := &graphqlapp.App{DB: controlled, PolicyStore: h.App().EscalationStore}
-			ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root)})
+			ok, err := smokeDeleteAll(t, h, app, sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root)})
 			require.Error(t, err)
 			require.False(t, ok)
 			require.EqualValues(t, 2, connector.begins.Load())
@@ -482,6 +590,8 @@ func TestEscalationPolicyDeleteAuditRootLockWait(t *testing.T) {
 	h := sd1Harness(t)
 	db := h.App().DB()
 	root := sd5EP(t, h, harness.SmokeOrganizationID)
+	input := []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root)}
+	confirmation := smokePlanConfirmation(t, h, sd3System(), input)
 	conn, err := db.Conn(t.Context())
 	require.NoError(t, err)
 	defer conn.Close()
@@ -494,19 +604,25 @@ func TestEscalationPolicyDeleteAuditRootLockWait(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(sd3System(), 15*time.Second)
 	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := sd5App(h).Mutation().DeleteAll(ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root)})
-		done <- err
-	}()
-	sd3WaitBlocked(t, db, pid)
+	ok, err := sd5App(h).Mutation().DeleteAll(ctx, input, confirmation)
+	require.Error(t, err, "current Root locks are NOWAIT")
+	require.False(t, ok)
+	require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", root))
+	require.Zero(t, sd5Count(t, h))
 	step := uuid.NewString()
 	_, err = tx.Exec(`UPDATE escalation_policies SET organization_id=$2 WHERE id=$1`, root, h.UUID("org-b"))
 	require.NoError(t, err)
 	_, err = tx.Exec(`INSERT INTO escalation_policy_steps(id,escalation_policy_id) VALUES($1,$2)`, step, root)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	require.NoError(t, <-done)
+	ok, err = sd5App(h).Mutation().DeleteAll(ctx, input, confirmation)
+	smokeDeletionCode(t, err, ds.DeletionDependencyChanged)
+	require.False(t, ok)
+	require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", root))
+	require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policy_steps", step))
+	require.Zero(t, sd5Count(t, h))
+	// Explicit new request after inspecting the changed organization and Step.
+	smokeDeleteFencesWriter(t, h, sd5App(h), input, "escalation_policies", root)
 	effects := sd5Effects(t, h, root)
 	require.Len(t, effects, 1)
 	require.Equal(t, step, effects[0].ResourceUUID.String())

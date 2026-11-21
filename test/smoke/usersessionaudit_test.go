@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
@@ -124,37 +125,62 @@ func TestUserSessionAuditEndAllAndAtomicRollback(t *testing.T) {
 	usHTTP(t, f, "om", `mutation{endAllAuthSessionsByCurrentUser}`, false)
 	require.Equal(t, before, usSuccesses(t, h))
 	usHTTP(t, f, "pd0", `mutation{endAllAuthSessionsByCurrentUser}`, true)
+	// CONTRACT ADAPTATION / FAULT COVERAGE RESTORATION: retain the original
+	// three paths, but distinguish real Detail failure from mixed-root refusal.
 	for _, mode := range []string{"end_all", "selected", "mixed"} {
 		t.Run(mode, func(t *testing.T) {
 			id, safe := usSession(t, h, owner)
-			sd8Exec(t, h, `CREATE FUNCTION us_fail_detail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'SYNTHETIC_PRIVATE_SQL';END;$$; CREATE TRIGGER us_fail_detail BEFORE INSERT ON user_session_revoke_audit_details FOR EACH ROW EXECUTE FUNCTION us_fail_detail()`)
-			query := usQuery(id)
-			actor := "pam"
-			var contact string
+			closureSessionFault(t, h, true)
+			defer closureSessionFault(t, h, false)
+			query, actor, contact := usQuery(id), "pam", ""
 			if mode == "end_all" {
-				query = `mutation{endAllAuthSessionsByCurrentUser}`
-				actor = "om"
+				query, actor = `mutation{endAllAuthSessionsByCurrentUser}`, "om"
 			}
 			if mode == "mixed" {
 				contact, _ = sd8CMNR(t, h, owner)
 				query = fmt.Sprintf(`mutation{deleteAll(input:[{type:contactMethod,id:%q},{type:userSession,id:%q}])}`, contact, id)
 			}
-			expected := h.ExpectBackendError("GraphQL operation failed")
-			usHTTP(t, f, actor, query, true)
-			expected()
+			businessBefore := smokeUserBusinessState(t, h)
+			before := usSuccesses(t, h)
+			attempts := sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_events WHERE record_kind='attempt_observation'`)
+			if mode == "mixed" {
+				closureHTTPError(t, usHTTP(t, f, actor, query, true), "deleteAll", "DELETION_UNAVAILABLE")
+				require.Zero(t, closureSessionFaultHits(t, h), "mixed-root refusal must precede Detail INSERT")
+				t.Log("NOT REACHABLE: cross-family Detail fault; real mixed-root rejection retained")
+			} else {
+				expected := h.ExpectBackendError("GraphQL operation failed")
+				usHTTP(t, f, actor, query, true)
+				expected()
+				require.EqualValues(t, 1, closureSessionFaultHits(t, h), "real Audit Detail INSERT fault reached once")
+				require.Equal(t, attempts+1, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_events WHERE record_kind='attempt_observation'`))
+				t.Log("FAULT COVERAGE RESTORATION: real PostgreSQL Detail INSERT raised; Session and success witness rolled back")
+			}
+			require.Equal(t, businessBefore, smokeUserBusinessState(t, h), "all Session rows and business relationships must roll back together")
+			require.Equal(t, before, usSuccesses(t, h))
 			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
 			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
 			if contact != "" {
 				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, contact))
 			}
-			sd8Exec(t, h, `DROP TRIGGER us_fail_detail ON user_session_revoke_audit_details; DROP FUNCTION us_fail_detail()`)
 		})
 	}
 	contact, _ := sd8CMNR(t, h, owner)
 	id, safe := usSession(t, h, owner)
-	usHTTP(t, f, "pam", fmt.Sprintf(`mutation{deleteAll(input:[{type:contactMethod,id:%q},{type:userSession,id:%q}])}`, contact, id), false)
-	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
-	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details d JOIN user_session_revoke_audit_events e USING(event_id) JOIN user_cmnr_delete_audit_events c ON c.request_id=e.request_id AND c.execution_id=e.execution_id AND c.attempt_id=e.attempt_id WHERE d.session_audit_id=$1 AND c.root_id=$2 AND c.record_kind='success_witness'`, safe, contact))
+	// The former mixed success is now an explicit negative control, followed by
+	// a legal Session-only transaction. It makes no cross-family atomicity claim.
+	closureHTTPError(t, usHTTP(t, f, "pam", fmt.Sprintf(`mutation{deleteAll(input:[{type:contactMethod,id:%q},{type:userSession,id:%q}])}`, contact, id), true), "deleteAll", "DELETION_UNAVAILABLE")
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
+	before = usSuccesses(t, h)
+	usHTTP(t, f, "pam", usQuery(id, id), false)
+	require.Equal(t, before+1, usSuccesses(t, h))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details d JOIN user_session_revoke_audit_events e USING(event_id) WHERE d.session_audit_id=$1 AND d.cause='explicit_target' AND e.affected_count=1 AND e.record_kind='success_witness' AND e.actor_id=$2 AND e.request_id IS NOT NULL AND e.execution_id IS NOT NULL AND e.attempt_id IS NOT NULL`, safe, h.UUID("pam")))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
+	usHTTP(t, f, "pam", usQuery(id), false)
+	require.Equal(t, before+1, usSuccesses(t, h), "no duplicate mutation or witness on a new request")
 
 }
 func TestUserSessionAuditSystemCascadeAndPaging(t *testing.T) {
@@ -163,7 +189,20 @@ func TestUserSessionAuditSystemCascadeAndPaging(t *testing.T) {
 	ctx := permission.SystemContext(t.Context(), "Engine")
 	owner := sd7User(t, h)
 	id, safe := usSession(t, h, owner)
-	ok, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}, {Type: assignment.TargetTypeUserSession, ID: id}})
+	// Mixed-root remains fail closed, including the Root and its Session.
+	ok, err := a.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}, {Type: assignment.TargetTypeUserSession, ID: id}}, nil)
+	var safety *ds.DeletionSafetyError
+	require.ErrorAs(t, err, &safety)
+	require.Equal(t, ds.DeletionUnavailable, safety.Code)
+	require.False(t, ok)
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, owner))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, owner))
+	// A normal assigned User is a supported homogeneous Root. Retain the
+	// original implicit Session cascade and paging business assertions.
+	sd8Assign(t, h, owner, harness.SmokeOrganizationID)
+	ok, err = smokeDeleteAll(t, h, a, ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: owner}})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
@@ -175,7 +214,7 @@ func TestUserSessionAuditSystemCascadeAndPaging(t *testing.T) {
 		ids = append(ids, assignment.RawTarget{Type: assignment.TargetTypeUserSession, ID: id})
 	}
 	before := usSuccesses(t, h)
-	ok, err = a.Mutation().DeleteAll(ctx, ids)
+	ok, err = a.Mutation().DeleteAll(ctx, ids, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, before+1, usSuccesses(t, h))
@@ -211,6 +250,7 @@ func TestUserSessionAuditRealConcurrentCause(t *testing.T) {
 	for _, mode := range []string{"session_session", "session_user", "user_session", "rollback_session"} {
 		t.Run(mode, func(t *testing.T) {
 			owner := sd7User(t, h)
+			sd8Assign(t, h, owner, harness.SmokeOrganizationID)
 			id, safe := usSession(t, h, owner)
 			ctx, cancel := context.WithTimeout(permission.SystemContext(context.Background(), "Engine"), 15*time.Second)
 			defer cancel()
@@ -243,16 +283,45 @@ func TestUserSessionAuditRealConcurrentCause(t *testing.T) {
 				}
 				return []assignment.RawTarget{{Type: assignment.TargetTypeUserSession, ID: id}}
 			}
+			// Obtain the User version before installing any transaction barrier.
+			confirm, err := smokeDeletionConfirmation(t, h, ctx, targets(true))
+			require.NoError(t, err)
 			done1, done2 := make(chan error, 1), make(chan error, 1)
-			go func() { _, err := a1.Mutation().DeleteAll(ctx, targets(mode == "user_session")); done1 <- err }()
+			go func() {
+				if mode == "user_session" {
+					_, err := a1.Mutation().DeleteAll(ctx, targets(true), confirm)
+					done1 <- err
+					return
+				}
+				_, err := a1.Mutation().DeleteAll(ctx, targets(false), nil)
+				done1 <- err
+			}()
 			<-entered
-			go func() { _, err := a2.Mutation().DeleteAll(ctx, targets(mode == "session_user")); done2 <- err }()
+			go func() {
+				if mode == "session_user" {
+					_, err := a2.Mutation().DeleteAll(ctx, targets(true), confirm)
+					done2 <- err
+					return
+				}
+				_, err := a2.Mutation().DeleteAll(ctx, targets(false), nil)
+				done2 <- err
+			}()
 			// Waiting is observed in PostgreSQL, rather than assumed from a sleep.
 			require.Eventually(t, func() bool {
 				return sd8Scalar(t, h, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'`) > 0
 			}, time.Second, 10*time.Millisecond)
 			unblock()
 			err1, err2 := <-done1, <-done2
+			if mode == "session_user" {
+				var safety *ds.DeletionSafetyError
+				require.ErrorAs(t, err2, &safety)
+				require.Equal(t, ds.DeletionDependencyChanged, safety.Code)
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, owner))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, owner))
+				fresh, previewErr := smokeDeletionConfirmation(t, h, ctx, targets(true))
+				require.NoError(t, previewErr)
+				_, err2 = a2.Mutation().DeleteAll(ctx, targets(true), fresh)
+			}
 			require.NoError(t, err2)
 			if mode == "rollback_session" {
 				require.Error(t, err1)
@@ -260,7 +329,7 @@ func TestUserSessionAuditRealConcurrentCause(t *testing.T) {
 				require.NoError(t, err1)
 			}
 			explicit := sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe)
-			cascade := sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects WHERE resource_type='user_session' AND payload->'before'->>'id'=$1`, id)
+			cascade := sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects WHERE resource_type='user_session' AND resource_key=$1 AND payload#>>'{before,version}'='2'`, safe)
 			require.EqualValues(t, 1, explicit+cascade)
 			if mode == "user_session" {
 				require.Zero(t, explicit)

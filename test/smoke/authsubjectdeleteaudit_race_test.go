@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
 	"github.com/target/goalert/user"
@@ -31,13 +32,31 @@ func TestAuthSubjectDeleteRealSerialization(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 18*time.Second)
 			defer cancel()
 			ctx = permission.SystemContext(ctx, "Engine")
-			owner := sd7User(t, h)
+			owner := smokeOwnedUser(t, h)
 			cmOwner := owner
 			if mode == "cross_owner_cm_a" {
-				cmOwner = sd7User(t, h)
+				cmOwner = smokeOwnedUser(t, h)
 			}
 			cm, _ := sd8CMNR(t, h, cmOwner)
 			id, subject := asSubject(t, h, owner, cm)
+			if mode == "cross_owner_cm_a" {
+				// The original relationship is intentionally retained: the CM
+				// profile cannot delete another owner's AuthSubject. This is a
+				// refusal control, not an advisory-barrier coverage claim.
+				before, successes := smokeUserBusinessState(t, h), smokeDeletionSuccesses(t, h)
+				raw := []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: cm}}
+				_, err := smokeDeletionPreview(t, h, ctx, raw)
+				smokeDeletionCode(t, err, ds.DeletionUnavailable)
+				ok, err := sd7App(h).Mutation().DeleteAll(ctx, raw, nil)
+				require.Error(t, err)
+				require.False(t, ok)
+				require.Equal(t, before, smokeUserBusinessState(t, h))
+				require.Equal(t, successes, smokeDeletionSuccesses(t, h))
+				require.Equal(t, 1, asCount(t, h, id, "business"))
+				require.Zero(t, asCount(t, h, id, "audit"))
+				t.Log("cross-owner AuthSubject retained; native CM profile refused before concurrency entry")
+				return
+			}
 			input := user.AuthSubject{UserID: owner, ProviderID: "SYNTHETIC_AUTH_PROVIDER", SubjectID: subject}
 			c1, err := sd8PGConnector(harness.DBURL(name))
 			require.NoError(t, err)
@@ -71,11 +90,27 @@ func TestAuthSubjectDeleteRealSerialization(t *testing.T) {
 				}
 			}
 			rollback := strings.Contains(mode, "rollback")
+			var stagedDelete, commitFault atomic.Bool
 			if rollback {
 				var injected atomic.Bool
 				c1.beforeCommit = func(ctx context.Context, c driver.Conn) error {
 					if injected.CompareAndSwap(false, true) {
-						_, _ = c.(driver.ExecerContext).ExecContext(ctx, `SELECT 1/0`, nil)
+						rows, err := c.(driver.QueryerContext).QueryContext(ctx, `SELECT count(*) FROM auth_subjects WHERE id=$1`, []driver.NamedValue{{Ordinal: 1, Value: id}})
+						if err != nil {
+							return err
+						}
+						values := make([]driver.Value, 1)
+						err = rows.Next(values)
+						closeErr := rows.Close()
+						if err != nil {
+							return err
+						}
+						if closeErr != nil {
+							return closeErr
+						}
+						stagedDelete.Store(values[0] == int64(0))
+						_, err = c.(driver.ExecerContext).ExecContext(ctx, `SELECT 1/0`, nil)
+						commitFault.Store(err != nil)
 					}
 					return nil
 				}
@@ -86,14 +121,15 @@ func TestAuthSubjectDeleteRealSerialization(t *testing.T) {
 				}
 				return []assignment.RawTarget{{Type: assignment.TargetTypeContactMethod, ID: cm}}
 			}
+			successBefore := smokeDeletionSuccesses(t, h)
 			first, second := make(chan error, 1), make(chan error, 1)
 			go func() {
 				var err error
 				switch {
 				case strings.HasPrefix(mode, "user_"):
-					_, err = a1.Mutation().DeleteAll(ctx, parent("user"))
+					_, err = smokeDeleteAll(t, h, a1, ctx, parent("user"))
 				case strings.HasPrefix(mode, "cm_") || mode == "cross_owner_cm_a":
-					_, err = a1.Mutation().DeleteAll(ctx, parent("cm"))
+					_, err = smokeDeleteAll(t, h, a1, ctx, parent("cm"))
 				default:
 					_, err = a1.Mutation().DeleteAuthSubject(ctx, input)
 				}
@@ -109,9 +145,9 @@ func TestAuthSubjectDeleteRealSerialization(t *testing.T) {
 				var err error
 				switch mode {
 				case "a_user":
-					_, err = a2.Mutation().DeleteAll(ctx, parent("user"))
+					_, err = smokeDeleteAll(t, h, a2, ctx, parent("user"))
 				case "a_cm":
-					_, err = a2.Mutation().DeleteAll(ctx, parent("cm"))
+					_, err = smokeDeleteAll(t, h, a2, ctx, parent("cm"))
 				default:
 					_, err = a2.Mutation().DeleteAuthSubject(ctx, input)
 				}
@@ -128,10 +164,22 @@ func TestAuthSubjectDeleteRealSerialization(t *testing.T) {
 			err = <-first
 			if rollback {
 				require.Error(t, err)
+				require.True(t, stagedDelete.Load(), "real subject deletion reached the first transaction's COMMIT boundary")
+				require.True(t, commitFault.Load(), "actual PostgreSQL fault reached before COMMIT")
 			} else {
 				require.NoError(t, err)
 			}
-			require.NoError(t, <-second)
+			secondErr := <-second
+			if mode == "a_user" || mode == "a_cm" {
+				// Preview was taken before the first transaction removed this
+				// dependency. Recheck must reject its old version without replay.
+				smokeDeletionCode(t, secondErr, ds.DeletionDependencyChanged)
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, owner))
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, cm))
+				require.Zero(t, smokeDeletionSuccesses(t, h)-successBefore)
+			} else {
+				require.NoError(t, secondErr)
+			}
 			explicit := 1
 			if mode == "user_a" || mode == "cm_a" || mode == "cross_owner_cm_a" {
 				explicit = 0

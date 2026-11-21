@@ -9,13 +9,17 @@ import (
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	epaudit "github.com/target/goalert/escalation/deleteaudit"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
 func TestEscalationPolicyDeleteAuditCountBudgetAcrossRoots(t *testing.T) {
 	t.Parallel()
-	for _, count := range []int{epaudit.MaxEffects, epaudit.MaxEffects + 1} {
+	// CONTRACT ADAPTATION: preserve both legacy inputs and add the current
+	// 10,000-row stabilization and weighted Preview boundaries. Fifty roots
+	// plus one authoritative Organization consume 51 stabilization rows.
+	for _, count := range []int{ds.DefaultBudget().MaxDependencies - 51, ds.DefaultBudget().MaxDependencies - 50, ds.DefaultBudget().MaxDependencies, ds.DefaultBudget().MaxDependencies + 1, epaudit.MaxEffects, epaudit.MaxEffects + 1} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			h := sd1Harness(t)
 			db := h.App().DB()
@@ -32,29 +36,40 @@ func TestEscalationPolicyDeleteAuditCountBudgetAcrossRoots(t *testing.T) {
 			require.NoError(t, err)
 			_, err = db.Exec(`INSERT INTO escalation_policy_steps(escalation_policy_id) SELECT roots[(n-1)%50+1] FROM (SELECT $1::uuid[] roots) r CROSS JOIN generate_series(1,$2) n`, pq.Array(roots), count)
 			require.NoError(t, err)
-			ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), input)
-			var actual int
-			require.NoError(t, db.QueryRow(`SELECT count(*) FROM escalation_policy_steps WHERE escalation_policy_id=ANY($1::uuid[])`, pq.Array(roots)).Scan(&actual))
-			if count == epaudit.MaxEffects {
-				require.NoError(t, err)
-				require.True(t, ok)
-				require.Zero(t, actual)
-				require.Equal(t, 50, sd5Count(t, h))
-				var total, bytes int
-				require.NoError(t, db.QueryRow(`SELECT sum(jsonb_array_length(effects)),sum(octet_length(effects::text)) FROM escalation_policy_delete_audit_events WHERE record_kind='success_witness'`).Scan(&total, &bytes))
-				require.Equal(t, count, total)
-				require.LessOrEqual(t, bytes, epaudit.MaxJSONBytes)
-				t.Logf("actual 50-root count boundary: effects=%d PG bytes=%d", total, bytes)
+			before, audits := serviceManagementSnapshot(t, h), smokeContract4SuccessState(t, h)
+			preview, previewErr := smokeDeletionPreview(t, h, sd3System(), input)
+			if count > ds.DefaultBudget().MaxDependencies {
+				smokeDeletionCode(t, previewErr, ds.DeletionPreviewLimitExceeded)
+				require.Nil(t, preview)
+				smokeContract4Reject(t, h, sd5App(h), sd3System(), input, nil, ds.DeletionPreviewLimitExceeded)
 			} else {
-				require.Error(t, err)
-				require.False(t, ok)
-				require.Equal(t, count, actual)
-				require.Zero(t, sd5Count(t, h))
-				var observations, attempts int
-				require.NoError(t, db.QueryRow(`SELECT count(*),count(DISTINCT attempt_id) FROM escalation_policy_delete_audit_events`).Scan(&observations, &attempts))
-				require.Equal(t, 50, observations)
-				require.Equal(t, 1, attempts, "sticky capacity failure must not retry")
+				require.NoError(t, previewErr)
+				require.True(t, preview.CanProceed)
+				require.True(t, preview.Complete)
+				confirmation := smokePlanConfirmation(t, h, sd3System(), input)
+				if count >= ds.DefaultBudget().MaxDependencies-50 {
+					smokeContract4Reject(t, h, sd5App(h), sd3System(), input, confirmation, ds.DeletionPreviewLimitExceeded)
+				} else {
+					ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), input, confirmation)
+					require.NoError(t, err)
+					require.True(t, ok)
+					require.Equal(t, 50, sd5Count(t, h))
+					require.EqualValues(t, count, sd8Scalar(t, h, `SELECT sum(jsonb_array_length(effects)) FROM escalation_policy_delete_audit_events WHERE record_kind='success_witness'`))
+					require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_steps WHERE escalation_policy_id=ANY($1::uuid[])`, pq.Array(roots)))
+					for _, root := range roots {
+						require.Zero(t, serviceManagementCount(t, h, "escalation_policies", root))
+					}
+					t.Logf("NEW LEGAL EQUIVALENT COVERAGE: 50 roots + %d Steps + Organization = 10000 stable rows, complete B2 effects committed", count)
+					return
+				}
 			}
+			require.Equal(t, before, serviceManagementSnapshot(t, h))
+			require.Equal(t, audits, smokeContract4SuccessState(t, h))
+			require.EqualValues(t, count, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_steps WHERE escalation_policy_id=ANY($1::uuid[])`, pq.Array(roots)))
+			if count >= epaudit.MaxEffects {
+				t.Log("LEGACY AUDIT BOUNDARY NOT REACHABLE: original 16384/16385 fixtures retained, earlier budget refused before Audit")
+			}
+
 		})
 	}
 }
@@ -86,28 +101,22 @@ func TestEscalationPolicyDeleteAuditByteBudgetAcrossRoots(t *testing.T) {
 			// projection by exactly one byte. This reaches 8 MiB and 8 MiB+1 exactly.
 			_, err = db.Exec(`INSERT INTO user_favorites(id,user_id,tgt_escalation_policy_id) SELECT CASE WHEN n<=$3 THEN 100000000000000000+n ELSE 1000000000000000000+n END,id,CASE WHEN n%2=0 THEN $1::uuid ELSE $2::uuid END FROM (SELECT id,row_number() OVER(ORDER BY id) n FROM users WHERE name='SD5 byte owner') owners`, root, other, reduce)
 			require.NoError(t, err)
-			ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root), sd3Target(assignment.TargetTypeEscalationPolicy, other)})
-			if extra == 0 {
-				require.NoError(t, err)
-				require.True(t, ok)
-				var bytes, effects int
-				require.NoError(t, db.QueryRow(`SELECT sum(octet_length(effects::text)),sum(jsonb_array_length(effects)) FROM escalation_policy_delete_audit_events WHERE record_kind='success_witness'`).Scan(&bytes, &effects))
-				require.Equal(t, epaudit.MaxJSONBytes, bytes)
-				require.Equal(t, count, effects)
-				require.Equal(t, 2, sd5Count(t, h))
-				t.Logf("actual multi-root byte boundary: effects=%d PG bytes=%d", effects, bytes)
-			} else {
-				require.Error(t, err)
-				require.False(t, ok)
-				require.Zero(t, sd5Count(t, h))
-				var actual int
-				require.NoError(t, db.QueryRow(`SELECT count(*) FROM user_favorites WHERE tgt_escalation_policy_id IN ($1,$2)`, root, other).Scan(&actual))
-				require.Equal(t, count, actual)
-				require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", root))
-				require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", other))
-			}
+			// CONTRACT ADAPTATION: do not lower the original exact 8 MiB
+			// fixtures or require an unreachable downstream Audit observation.
+			input := []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root), sd3Target(assignment.TargetTypeEscalationPolicy, other)}
+			preview, previewErr := smokeDeletionPreview(t, h, sd3System(), input)
+			smokeDeletionCode(t, previewErr, ds.DeletionPreviewLimitExceeded)
+			require.Nil(t, preview)
+			smokeContract4Reject(t, h, sd5App(h), sd3System(), input, nil, ds.DeletionPreviewLimitExceeded)
+			require.EqualValues(t, count, sd8Scalar(t, h, `SELECT count(*) FROM user_favorites WHERE tgt_escalation_policy_id IN($1,$2)`, root, other))
+			t.Logf("LEGACY AUDIT BOUNDARY NOT REACHABLE: original exact %d+%d JSONB-byte projection (%d favorites) precedes Audit at current weighted budget", epaudit.MaxJSONBytes, extra, count)
+
 		})
 	}
+	for _, count := range []int{(ds.DefaultBudget().MaxDependencies - 4) / 3, (ds.DefaultBudget().MaxDependencies-4)/3 + 1, (ds.DefaultBudget().MaxDependencies-4)/3 + 2} {
+		t.Run(fmt.Sprintf("current_weight_%d", count), func(t *testing.T) { closureFavoriteBudget(t, assignment.TargetTypeEscalationPolicy, count) })
+	}
+
 }
 
 func TestEscalationPolicyDeleteAuditFailureCapacity250(t *testing.T) {
@@ -134,43 +143,94 @@ func sd5FailureCapacity250(t *testing.T, failEP bool) {
 		require.NoError(t, err)
 		input = append(input, sd3Target(assignment.TargetTypeService, svc), sd3Target(assignment.TargetTypeIntegrationKey, key.String()), sd3Target(assignment.TargetTypeEscalationPolicy, root), sd3Target(assignment.TargetTypeContactMethod, cm), sd3Target(assignment.TargetTypeNotificationRule, nr))
 	}
-	if failEP {
-		_, err := db.Exec(`CREATE FUNCTION sd5_failure_writer_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'SYNTHETIC_FAILURE_WRITER'; END $$; CREATE TRIGGER sd5_failure_writer_fail BEFORE INSERT ON escalation_policy_delete_audit_events FOR EACH ROW WHEN (NEW.record_kind='attempt_observation') EXECUTE FUNCTION sd5_failure_writer_fail()`)
-		require.NoError(t, err)
+	// The full historical 250-target shape and its malformed 251st Session
+	// remain negative controls. No mixed-root transaction is executable today.
+	require.Len(t, input, 250)
+	before := serviceManagementSnapshot(t, h)
+	cmnrBefore := cmnrSnapshot(t, db)
+	for _, raw := range [][]assignment.RawTarget{input, append(append([]assignment.RawTarget{}, input...), sd3Target(assignment.TargetTypeUserSession, "malformed"))} {
+		ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), raw, nil)
+		require.Error(t, err)
+		require.False(t, ok)
+		require.Equal(t, before, serviceManagementSnapshot(t, h))
+		require.Equal(t, cmnrBefore, cmnrSnapshot(t, db))
+		require.Zero(t, smokeDeletionSuccesses(t, h))
 	}
-	// The existing last group fails only after every covered group has run. No
-	// Session auditing is added; this is an atomic rollback/failure-writer probe.
-	input = append(input, sd3Target(assignment.TargetTypeUserSession, "malformed"))
-	ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), input)
+	// Each refused request may record a non-assertive, unknown-root attempt.
+	// It must never claim that any of the 250 business targets was deleted.
+	require.EqualValues(t, 2, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_delete_audit_events WHERE record_kind='attempt_observation' AND root_id IS NULL AND effects='[]'`))
+	var services, policies []assignment.RawTarget
+	for _, raw := range input {
+		if raw.Type == assignment.TargetTypeService {
+			services = append(services, raw)
+		}
+		if raw.Type == assignment.TargetTypeEscalationPolicy {
+			policies = append(policies, raw)
+		}
+	}
+	require.Len(t, services, 50)
+	require.Len(t, policies, 50)
+	// A legal, separately confirmed Service batch removes its own Keys. The
+	// formerly referenced EP batch can then reach its own real Audit writer.
+	ok, err := smokeDeleteAll(t, h, sd5App(h), sd3System(), services)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 50, sd1Count(t, h, "committed"))
+	for _, root := range policies {
+		sd5Step(t, h, root.ID)
+	}
+	confirmation := smokePlanConfirmation(t, h, sd3System(), policies)
+	sd8Exec(t, h, `CREATE SEQUENCE sd5_capacity_hits;
+CREATE FUNCTION sd5_capacity_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+IF nextval('sd5_capacity_hits')=50 THEN RAISE EXCEPTION 'SYNTHETIC_LAST_APPENDER'; END IF; RETURN NEW; END $$;
+CREATE TRIGGER sd5_capacity_fault BEFORE INSERT ON escalation_policy_delete_audit_events FOR EACH ROW WHEN (NEW.record_kind='success_witness') EXECUTE FUNCTION sd5_capacity_fault()`)
+	if failEP {
+		sd8Exec(t, h, `CREATE SEQUENCE sd5_failure_hits;
+CREATE FUNCTION sd5_failure_writer_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('sd5_failure_hits'); RAISE EXCEPTION 'SYNTHETIC_FAILURE_WRITER'; END $$;
+CREATE TRIGGER sd5_failure_writer_fail BEFORE INSERT ON escalation_policy_delete_audit_events FOR EACH ROW WHEN (NEW.record_kind='attempt_observation') EXECUTE FUNCTION sd5_failure_writer_fail()`)
+	}
+	ok, err = sd5App(h).Mutation().DeleteAll(sd3System(), policies, confirmation)
 	require.Error(t, err)
 	require.False(t, ok)
-	var total, executions, attempts, successes int
-	require.NoError(t, db.QueryRow(`WITH events AS (
-	 SELECT execution_id,attempt_id,outcome FROM service_delete_audit_events
-	 UNION ALL SELECT execution_id,attempt_id,outcome FROM user_cmnr_delete_audit_events
-	 UNION ALL SELECT execution_id,attempt_id,outcome FROM integration_key_delete_audit_events
-	 UNION ALL SELECT execution_id,attempt_id,outcome FROM escalation_policy_delete_audit_events)
-	 SELECT count(*),count(DISTINCT execution_id),count(DISTINCT attempt_id),count(*) FILTER(WHERE outcome='committed') FROM events`).Scan(&total, &executions, &attempts, &successes))
-	want, groups := 250, 1
+	require.EqualValues(t, 50, sd8Scalar(t, h, `SELECT last_value FROM sd5_capacity_hits`), "50th real success appender reached, then entire transaction rolled back")
+	require.Zero(t, sd5Count(t, h))
+	for _, root := range policies {
+		require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", root.ID))
+		require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_steps WHERE escalation_policy_id=$1`, root.ID))
+	}
+	var observations, executions, attempts int
+	require.NoError(t, db.QueryRow(`SELECT count(*),count(DISTINCT execution_id),count(DISTINCT attempt_id) FROM escalation_policy_delete_audit_events WHERE record_kind='attempt_observation' AND root_id IS NOT NULL`).Scan(&observations, &executions, &attempts))
 	if failEP {
-		want, groups = 0, 0
 		require.Contains(t, err.Error(), "audit persistence unavailable")
+		require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM sd5_failure_hits WHERE is_called`), "failure writer actually reached")
+		require.Equal(t, []int{0, 0, 0}, []int{observations, executions, attempts})
+		sd8Exec(t, h, `DROP TRIGGER sd5_failure_writer_fail ON escalation_policy_delete_audit_events; DROP FUNCTION sd5_failure_writer_fail(); DROP SEQUENCE sd5_failure_hits`)
+	} else {
+		require.Equal(t, []int{50, 1, 1}, []int{observations, executions, attempts})
 	}
-	require.Equal(t, want, total)
-	require.Equal(t, groups, executions)
-	require.Equal(t, groups, attempts)
-	require.Zero(t, successes)
-	for table, want := range map[string]int{"service_delete_audit_events": 50, "user_cmnr_delete_audit_events": 100, "integration_key_delete_audit_events": 50, "escalation_policy_delete_audit_events": 50} {
-		var count int
-		require.NoError(t, db.QueryRow(`SELECT count(*) FROM `+table).Scan(&count))
-		if failEP {
-			want = 0
-		}
-		require.Equal(t, want, count)
+	sd8Exec(t, h, `DROP TRIGGER sd5_capacity_fault ON escalation_policy_delete_audit_events; DROP FUNCTION sd5_capacity_fault(); DROP SEQUENCE sd5_capacity_hits`)
+	// Positive maximum native-root batch uses NEW roots, not an automatic
+	// retry of the faulted operation. The original faulted roots stay intact.
+	var fresh []assignment.RawTarget
+	for i := 0; i < 50; i++ {
+		root := sd5EP(t, h, harness.SmokeOrganizationID)
+		sd5Step(t, h, root)
+		fresh = append(fresh, sd3Target(assignment.TargetTypeEscalationPolicy, root))
 	}
-	var services, eps int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM services WHERE name LIKE 'SD5 capacity %'`).Scan(&services))
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM escalation_policies WHERE name LIKE 'SD5 %'`).Scan(&eps))
-	require.Equal(t, 50, services)
-	require.Equal(t, 50, eps)
+	ok, err = smokeDeleteAll(t, h, sd5App(h), sd3System(), fresh)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 50, sd5Count(t, h))
+	for _, root := range fresh {
+		require.Zero(t, serviceManagementCount(t, h, "escalation_policies", root.ID))
+		require.Len(t, sd5Effects(t, h, root.ID), 1)
+	}
+	for _, root := range policies {
+		require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", root.ID))
+	}
+	require.Zero(t, cmnrAuditCount(t, h, "success_witness"))
+	require.Zero(t, sd4Count(t, h))
+	require.EqualValues(t, 50, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE name='SD5 capacity'`))
+	require.NotContains(t, sd5Rows(t, h), "SYNTHETIC_")
+	t.Log("legacy 250/251 mixed inputs refused atomically; legal 50-root Audit success and 50th-appender rollback verified; no 250-row shared failure-writer claim")
 }

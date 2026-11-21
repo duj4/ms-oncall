@@ -137,9 +137,10 @@ type ClauseInput struct {
 }
 
 type ClearTemporarySchedulesInput struct {
-	ScheduleID string    `json:"scheduleID"`
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
+	ScheduleID   string                           `json:"scheduleID"`
+	Start        time.Time                        `json:"start"`
+	End          time.Time                        `json:"end"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type CloseMatchingAlertInput struct {
@@ -398,6 +399,74 @@ type DebugSendSMSInput struct {
 	Body string `json:"body"`
 }
 
+type DeletionImpact struct {
+	EdgeID              string            `json:"edgeID"`
+	Target              *DeletionResource `json:"target"`
+	ReferencingResource *DeletionResource `json:"referencingResource"`
+	Parent              *DeletionResource `json:"parent,omitempty"`
+	Relation            string            `json:"relation"`
+	Change              string            `json:"change"`
+	Policy              DeletionPolicy    `json:"policy"`
+	Impact              string            `json:"impact"`
+	RequiredAction      string            `json:"requiredAction"`
+	CanModifyReference  bool              `json:"canModifyReference"`
+	IsDerived           bool              `json:"isDerived"`
+	IsPlannedCoDeletion bool              `json:"isPlannedCoDeletion"`
+}
+
+type DeletionImpactConnection struct {
+	Edges    []DeletionImpactEdge `json:"edges"`
+	PageInfo *PageInfo            `json:"pageInfo"`
+}
+
+type DeletionImpactEdge struct {
+	Cursor string          `json:"cursor"`
+	Node   *DeletionImpact `json:"node"`
+}
+
+type DeletionOrganizationSummary struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type DeletionPlanInput struct {
+	Operation DeletionOperation       `json:"operation"`
+	Targets   []DeletionResourceInput `json:"targets"`
+}
+
+type DeletionPreview struct {
+	Targets              []DeletionResource        `json:"targets"`
+	Operation            DeletionOperation         `json:"operation"`
+	ImpactVersion        string                    `json:"impactVersion"`
+	PolicyVersion        string                    `json:"policyVersion"`
+	AssessedAt           time.Time                 `json:"assessedAt"`
+	Complete             bool                      `json:"complete"`
+	CanProceed           bool                      `json:"canProceed"`
+	RequiresConfirmation bool                      `json:"requiresConfirmation"`
+	Impacts              *DeletionImpactConnection `json:"impacts"`
+	Notices              []string                  `json:"notices"`
+}
+
+// Safe identity and display fields only; no destination, subject, payload or credential.
+type DeletionResource struct {
+	Type         string                       `json:"type"`
+	ID           string                       `json:"id"`
+	Name         *string                      `json:"name,omitempty"`
+	Label        string                       `json:"label"`
+	Organization *DeletionOrganizationSummary `json:"organization,omitempty"`
+}
+
+type DeletionResourceInput struct {
+	Type DeletionTargetType `json:"type"`
+	// Integration keys use audit_resource_id, never the credential ID.
+	ID string `json:"id"`
+}
+
+type DeletionSafetyConfirmationInput struct {
+	ExpectedImpactVersion string `json:"expectedImpactVersion"`
+	AcknowledgeImpacts    bool   `json:"acknowledgeImpacts"`
+}
+
 type DestinationDisplayInfoError struct {
 	// error message to display when the display info cannot be retrieved
 	Error string `json:"error"`
@@ -595,6 +664,27 @@ type NotificationState struct {
 	FormattedSrcValue string              `json:"formattedSrcValue"`
 }
 
+type OnCallJSONEffect struct {
+	RuleID string `json:"ruleID"`
+	Change string `json:"change"`
+	Source string `json:"source"`
+}
+
+// Minimal rule configuration. Empty time/weekdays denotes on-call change.
+type OnCallJSONRule struct {
+	RuleID    string `json:"ruleID"`
+	ChannelID string `json:"channelID"`
+	Time      string `json:"time"`
+	Weekdays  string `json:"weekdays"`
+}
+
+type OnCallJSONUpdatePreview struct {
+	ContractVersion int                `json:"contractVersion"`
+	Before          []OnCallJSONRule   `json:"before"`
+	After           []OnCallJSONRule   `json:"after"`
+	Effects         []OnCallJSONEffect `json:"effects"`
+}
+
 type OnCallOverview struct {
 	ServiceCount       int                       `json:"serviceCount"`
 	ServiceAssignments []OnCallServiceAssignment `json:"serviceAssignments"`
@@ -686,6 +776,29 @@ type ScheduleConnection struct {
 	PageInfo *PageInfo           `json:"pageInfo"`
 }
 
+// UTC half-open time coverage; no persistent JSON-element identity.
+type ScheduleJSONCoverage struct {
+	Kind   string    `json:"kind"`
+	UserID *string   `json:"userID,omitempty"`
+	Start  time.Time `json:"start"`
+	End    time.Time `json:"end"`
+}
+
+type ScheduleJSONCoverageChange struct {
+	Coverage *ScheduleJSONCoverage `json:"coverage"`
+	Change   string                `json:"change"`
+	Source   string                `json:"source"`
+}
+
+type ScheduleJSONUpdatePreview struct {
+	ContractVersion int                          `json:"contractVersion"`
+	Operation       string                       `json:"operation"`
+	Mode            string                       `json:"mode"`
+	Before          []ScheduleJSONCoverage       `json:"before"`
+	After           []ScheduleJSONCoverage       `json:"after"`
+	Effects         []ScheduleJSONCoverageChange `json:"effects"`
+}
+
 type ScheduleRuleInput struct {
 	ID    *string         `json:"id,omitempty"`
 	Start *timeutil.Clock `json:"start,omitempty"`
@@ -713,10 +826,11 @@ type ScheduleTarget struct {
 }
 
 type ScheduleTargetInput struct {
-	ScheduleID  *string               `json:"scheduleID,omitempty"`
-	Target      *assignment.RawTarget `json:"target,omitempty"`
-	NewRotation *CreateRotationInput  `json:"newRotation,omitempty"`
-	Rules       []ScheduleRuleInput   `json:"rules"`
+	ScheduleID   *string                          `json:"scheduleID,omitempty"`
+	Target       *assignment.RawTarget            `json:"target,omitempty"`
+	NewRotation  *CreateRotationInput             `json:"newRotation,omitempty"`
+	Rules        []ScheduleRuleInput              `json:"rules"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type SendContactMethodVerificationInput struct {
@@ -771,17 +885,19 @@ type SetLabelInput struct {
 }
 
 type SetScheduleOnCallNotificationRulesInput struct {
-	ScheduleID string                        `json:"scheduleID"`
-	Rules      []OnCallNotificationRuleInput `json:"rules"`
+	ScheduleID   string                           `json:"scheduleID"`
+	Rules        []OnCallNotificationRuleInput    `json:"rules"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type SetTemporaryScheduleInput struct {
-	ScheduleID string                `json:"scheduleID"`
-	ClearStart *time.Time            `json:"clearStart,omitempty"`
-	ClearEnd   *time.Time            `json:"clearEnd,omitempty"`
-	Start      time.Time             `json:"start"`
-	End        time.Time             `json:"end"`
-	Shifts     []schedule.FixedShift `json:"shifts"`
+	ScheduleID   string                           `json:"scheduleID"`
+	ClearStart   *time.Time                       `json:"clearStart,omitempty"`
+	ClearEnd     *time.Time                       `json:"clearEnd,omitempty"`
+	Start        time.Time                        `json:"start"`
+	End          time.Time                        `json:"end"`
+	Shifts       []schedule.FixedShift            `json:"shifts"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type SlackChannelConnection struct {
@@ -877,20 +993,38 @@ type UpdateBasicAuthInput struct {
 	UserID      string  `json:"userID"`
 }
 
+// Preview of relationship changes; the business root remains present.
+type UpdateDeletionPreview struct {
+	Operation            DeletionOperation          `json:"operation"`
+	Root                 *DeletionResource          `json:"root"`
+	ImpactVersion        string                     `json:"impactVersion"`
+	PolicyVersion        string                     `json:"policyVersion"`
+	Complete             bool                       `json:"complete"`
+	CanProceed           bool                       `json:"canProceed"`
+	RequiresConfirmation bool                       `json:"requiresConfirmation"`
+	Removed              []DeletionResource         `json:"removed"`
+	Impacts              []DeletionImpact           `json:"impacts"`
+	ScheduleJSONUpdate   *ScheduleJSONUpdatePreview `json:"scheduleJSONUpdate,omitempty"`
+	OnCallJSONUpdate     *OnCallJSONUpdatePreview   `json:"onCallJSONUpdate,omitempty"`
+}
+
 type UpdateEscalationPolicyInput struct {
 	ID          string   `json:"id"`
 	Name        *string  `json:"name,omitempty"`
 	Description *string  `json:"description,omitempty"`
 	Repeat      *int     `json:"repeat,omitempty"`
 	StepIDs     []string `json:"stepIDs,omitempty"`
+	// Confirmation bound to the complete update input and current state.
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateEscalationPolicyStepInput struct {
-	ID           string                 `json:"id"`
-	DelayMinutes *int                   `json:"delayMinutes,omitempty"`
-	Targets      []assignment.RawTarget `json:"targets,omitempty"`
-	Actions      []gadb.DestV1          `json:"actions,omitempty"`
-	MultiAck     *bool                  `json:"multiAck,omitempty"`
+	ID           string                           `json:"id"`
+	DelayMinutes *int                             `json:"delayMinutes,omitempty"`
+	Targets      []assignment.RawTarget           `json:"targets,omitempty"`
+	Actions      []gadb.DestV1                    `json:"actions,omitempty"`
+	MultiAck     *bool                            `json:"multiAck,omitempty"`
+	Confirmation *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateGQLAPIKeyInput struct {
@@ -936,7 +1070,8 @@ type UpdateRotationInput struct {
 	ShiftLength *int           `json:"shiftLength,omitempty"`
 	UserIDs     []string       `json:"userIDs,omitempty"`
 	// The index of the user in `userIDs` to set as the active user. If not provided, the existing active user index will be used.
-	ActiveUserIndex *int `json:"activeUserIndex,omitempty"`
+	ActiveUserIndex *int                             `json:"activeUserIndex,omitempty"`
+	Confirmation    *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateScheduleInput struct {
@@ -947,11 +1082,12 @@ type UpdateScheduleInput struct {
 }
 
 type UpdateServiceInput struct {
-	ID                   string     `json:"id"`
-	Name                 *string    `json:"name,omitempty"`
-	Description          *string    `json:"description,omitempty"`
-	EscalationPolicyID   *string    `json:"escalationPolicyID,omitempty"`
-	MaintenanceExpiresAt *time.Time `json:"maintenanceExpiresAt,omitempty"`
+	ID                   string                           `json:"id"`
+	Name                 *string                          `json:"name,omitempty"`
+	Description          *string                          `json:"description,omitempty"`
+	EscalationPolicyID   *string                          `json:"escalationPolicyID,omitempty"`
+	MaintenanceExpiresAt *time.Time                       `json:"maintenanceExpiresAt,omitempty"`
+	Confirmation         *DeletionSafetyConfirmationInput `json:"confirmation,omitempty"`
 }
 
 type UpdateUserCalendarSubscriptionInput struct {
@@ -1280,12 +1416,215 @@ func (e ContactMethodType) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type DeletionOperation string
+
+const (
+	DeletionOperationDeleteResources                    DeletionOperation = "DELETE_RESOURCES"
+	DeletionOperationUpdateEscalationPolicy             DeletionOperation = "UPDATE_ESCALATION_POLICY"
+	DeletionOperationUpdateEscalationPolicyStep         DeletionOperation = "UPDATE_ESCALATION_POLICY_STEP"
+	DeletionOperationUpdateScheduleTarget               DeletionOperation = "UPDATE_SCHEDULE_TARGET"
+	DeletionOperationUpdateRotation                     DeletionOperation = "UPDATE_ROTATION"
+	DeletionOperationUpdateService                      DeletionOperation = "UPDATE_SERVICE"
+	DeletionOperationSetTemporarySchedule               DeletionOperation = "SET_TEMPORARY_SCHEDULE"
+	DeletionOperationClearTemporarySchedules            DeletionOperation = "CLEAR_TEMPORARY_SCHEDULES"
+	DeletionOperationSetScheduleOnCallNotificationRules DeletionOperation = "SET_SCHEDULE_ON_CALL_NOTIFICATION_RULES"
+)
+
+var AllDeletionOperation = []DeletionOperation{
+	DeletionOperationDeleteResources,
+	DeletionOperationUpdateEscalationPolicy,
+	DeletionOperationUpdateEscalationPolicyStep,
+	DeletionOperationUpdateScheduleTarget,
+	DeletionOperationUpdateRotation,
+	DeletionOperationUpdateService,
+	DeletionOperationSetTemporarySchedule,
+	DeletionOperationClearTemporarySchedules,
+	DeletionOperationSetScheduleOnCallNotificationRules,
+}
+
+func (e DeletionOperation) IsValid() bool {
+	switch e {
+	case DeletionOperationDeleteResources, DeletionOperationUpdateEscalationPolicy, DeletionOperationUpdateEscalationPolicyStep, DeletionOperationUpdateScheduleTarget, DeletionOperationUpdateRotation, DeletionOperationUpdateService, DeletionOperationSetTemporarySchedule, DeletionOperationClearTemporarySchedules, DeletionOperationSetScheduleOnCallNotificationRules:
+		return true
+	}
+	return false
+}
+
+func (e DeletionOperation) String() string {
+	return string(e)
+}
+
+func (e *DeletionOperation) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DeletionOperation(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DeletionOperation", str)
+	}
+	return nil
+}
+
+func (e DeletionOperation) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DeletionOperation) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DeletionOperation) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type DeletionPolicy string
+
+const (
+	DeletionPolicyBlock         DeletionPolicy = "BLOCK"
+	DeletionPolicyCascade       DeletionPolicy = "CASCADE"
+	DeletionPolicyWarning       DeletionPolicy = "WARNING"
+	DeletionPolicyInformational DeletionPolicy = "INFORMATIONAL"
+)
+
+var AllDeletionPolicy = []DeletionPolicy{
+	DeletionPolicyBlock,
+	DeletionPolicyCascade,
+	DeletionPolicyWarning,
+	DeletionPolicyInformational,
+}
+
+func (e DeletionPolicy) IsValid() bool {
+	switch e {
+	case DeletionPolicyBlock, DeletionPolicyCascade, DeletionPolicyWarning, DeletionPolicyInformational:
+		return true
+	}
+	return false
+}
+
+func (e DeletionPolicy) String() string {
+	return string(e)
+}
+
+func (e *DeletionPolicy) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DeletionPolicy(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DeletionPolicy", str)
+	}
+	return nil
+}
+
+func (e DeletionPolicy) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DeletionPolicy) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DeletionPolicy) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+// Only roots understood by the dependency collector are selectable. Support is conditional on complete collection.
+type DeletionTargetType string
+
+const (
+	DeletionTargetTypeService          DeletionTargetType = "SERVICE"
+	DeletionTargetTypeEscalationPolicy DeletionTargetType = "ESCALATION_POLICY"
+	DeletionTargetTypeSchedule         DeletionTargetType = "SCHEDULE"
+	DeletionTargetTypeRotation         DeletionTargetType = "ROTATION"
+	DeletionTargetTypeUser             DeletionTargetType = "USER"
+	DeletionTargetTypeContactMethod    DeletionTargetType = "CONTACT_METHOD"
+	DeletionTargetTypeNotificationRule DeletionTargetType = "NOTIFICATION_RULE"
+	DeletionTargetTypeIntegrationKey   DeletionTargetType = "INTEGRATION_KEY"
+	DeletionTargetTypeUserOverride     DeletionTargetType = "USER_OVERRIDE"
+)
+
+var AllDeletionTargetType = []DeletionTargetType{
+	DeletionTargetTypeService,
+	DeletionTargetTypeEscalationPolicy,
+	DeletionTargetTypeSchedule,
+	DeletionTargetTypeRotation,
+	DeletionTargetTypeUser,
+	DeletionTargetTypeContactMethod,
+	DeletionTargetTypeNotificationRule,
+	DeletionTargetTypeIntegrationKey,
+	DeletionTargetTypeUserOverride,
+}
+
+func (e DeletionTargetType) IsValid() bool {
+	switch e {
+	case DeletionTargetTypeService, DeletionTargetTypeEscalationPolicy, DeletionTargetTypeSchedule, DeletionTargetTypeRotation, DeletionTargetTypeUser, DeletionTargetTypeContactMethod, DeletionTargetTypeNotificationRule, DeletionTargetTypeIntegrationKey, DeletionTargetTypeUserOverride:
+		return true
+	}
+	return false
+}
+
+func (e DeletionTargetType) String() string {
+	return string(e)
+}
+
+func (e *DeletionTargetType) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DeletionTargetType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DeletionTargetType", str)
+	}
+	return nil
+}
+
+func (e DeletionTargetType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DeletionTargetType) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DeletionTargetType) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 // Known error codes that the server can return.
 //
 // These values will be returned in the `extensions.code` field of the error response.
 type ErrorCode string
 
 const (
+	ErrorCodeDeletionBlocked              ErrorCode = "DELETION_BLOCKED"
+	ErrorCodeDeletionConfirmationRequired ErrorCode = "DELETION_CONFIRMATION_REQUIRED"
+	ErrorCodeDeletionDependencyChanged    ErrorCode = "DELETION_DEPENDENCY_CHANGED"
+	ErrorCodeDeletionUnavailable          ErrorCode = "DELETION_UNAVAILABLE"
+	ErrorCodeDeletionPreviewLimitExceeded ErrorCode = "DELETION_PREVIEW_LIMIT_EXCEEDED"
 	// The input value is invalid, the `path` field will contain the exact path to the invalid input.
 	//
 	// A separate error will be returned for each invalid field.
@@ -1307,6 +1646,11 @@ const (
 )
 
 var AllErrorCode = []ErrorCode{
+	ErrorCodeDeletionBlocked,
+	ErrorCodeDeletionConfirmationRequired,
+	ErrorCodeDeletionDependencyChanged,
+	ErrorCodeDeletionUnavailable,
+	ErrorCodeDeletionPreviewLimitExceeded,
 	ErrorCodeInvalidInputValue,
 	ErrorCodeInvalidDestFieldValue,
 	ErrorCodeInvalidMapFieldValue,
@@ -1315,7 +1659,7 @@ var AllErrorCode = []ErrorCode{
 
 func (e ErrorCode) IsValid() bool {
 	switch e {
-	case ErrorCodeInvalidInputValue, ErrorCodeInvalidDestFieldValue, ErrorCodeInvalidMapFieldValue, ErrorCodeExprTooComplex:
+	case ErrorCodeDeletionBlocked, ErrorCodeDeletionConfirmationRequired, ErrorCodeDeletionDependencyChanged, ErrorCodeDeletionUnavailable, ErrorCodeDeletionPreviewLimitExceeded, ErrorCodeInvalidInputValue, ErrorCodeInvalidDestFieldValue, ErrorCodeInvalidMapFieldValue, ErrorCodeExprTooComplex:
 		return true
 	}
 	return false

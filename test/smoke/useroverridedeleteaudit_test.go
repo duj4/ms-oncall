@@ -42,7 +42,11 @@ func sd7Override(t *testing.T, h *harness.Harness, s string, add, remove any, st
 	return id
 }
 func sd7Root(t *testing.T, h *harness.Harness, s string) string {
-	return sd7Override(t, h, s, sd7User(t, h), nil, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC))
+	u := sd7User(t, h)
+	var org string
+	require.NoError(t, h.App().DB().QueryRow(`SELECT organization_id FROM schedules WHERE id=$1`, s).Scan(&org))
+	sd8Assign(t, h, u, org)
+	return sd7Override(t, h, s, u, nil, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC))
 }
 func sd7Count(t *testing.T, h *harness.Harness) int {
 	t.Helper()
@@ -213,14 +217,14 @@ func TestUODeleteAuditLimitsSystemAndIdentity(t *testing.T) {
 	require.NotEmpty(t, r.Errors)
 	app := sd7App(h)
 	for range 2 {
-		ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeUserOverride, uuid.NewString())})
+		ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeUserOverride, uuid.NewString())}, nil)
 		require.NoError(t, err)
 		require.True(t, ok)
 	}
 	require.Equal(t, 51, sd7Count(t, h))
 	for _, ctx := range []context.Context{context.Background(), permission.SystemContext(permission.UserContext(context.Background(), uuid.NewString(), permission.RoleAdmin), "SYNTHETIC"), permission.SourceContext(sd3System(), &permission.SourceInfo{Type: permission.SourceTypeGQLAPIKey, ID: uuid.NewString()})} {
 		id := sd7Root(t, h, s)
-		_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeUserOverride, id)})
+		_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeUserOverride, id)}, nil)
 		require.Error(t, err)
 		require.Equal(t, 1, serviceManagementCount(t, h, "user_overrides", id))
 	}
@@ -313,7 +317,7 @@ func TestUODeleteAuditControlledCommit(t *testing.T) {
 			app.DB = controlled
 			app.OverrideStore, err = override.NewStore(t.Context(), controlled)
 			require.NoError(t, err)
-			ok, err := app.Mutation().DeleteAll(sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeUserOverride, id)})
+			ok, err := smokeDeleteAll(t, h, app, sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeUserOverride, id)})
 			require.Error(t, err)
 			require.False(t, ok)
 			require.EqualValues(t, 2, connector.begins.Load())

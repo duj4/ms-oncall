@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util/sqlutil"
@@ -20,7 +22,7 @@ func (s *Store) DeleteManyPoliciesForAuditTx(ctx context.Context, tx *sql.Tx, id
 	if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
 		return nil, err
 	}
-	parsed, err := validate.ParseManyUUID("EscalationPolicyID", ids, 50)
+	_, err := validate.ParseManyUUID("EscalationPolicyID", ids, 50)
 	if err != nil {
 		return nil, err
 	}
@@ -30,9 +32,12 @@ func (s *Store) DeleteManyPoliciesForAuditTx(ctx context.Context, tx *sql.Tx, id
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	want := map[uuid.UUID]bool{}
-	for _, id := range parsed {
-		want[id] = true
+	ids, err = collector.ConsumeEP(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
 	}
 	q := `DELETE FROM escalation_policies pol WHERE pol.id=any($1)`
 	args := []any{sqlutil.UUIDArray(ids)}
@@ -61,7 +66,7 @@ func (s *Store) DeleteManyPoliciesForAuditTx(ctx context.Context, tx *sql.Tx, id
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if organizationID != nil && len(result) != len(want) {
+	if organizationID != nil && len(result) != len(ids) {
 		return result, sql.ErrNoRows
 	}
 	return result, nil

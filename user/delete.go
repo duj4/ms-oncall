@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/target/goalert/permission"
@@ -32,6 +34,13 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	}
 	if len(intents) > 100 {
 		return result, audit.ErrInvalid
+	}
+	ids, err = collector.ConsumeUser(ctx, tx, ids)
+	if err != nil {
+		return result, err
+	}
+	if len(ids) == 0 {
+		return result, nil
 	}
 	var budget audit.Budget
 	// Bounded root descriptors, receipts, explicit witnesses and their copies.
@@ -183,7 +192,7 @@ func (c *userDeleteCapture) children() []userDeleteChild {
 		{typ: "ep_step_on_call_history", table: "ep_step_on_call_users", key: "id", predicate: "b.user_id=$1", parentKind: "step", parent: "b.ep_step_id", fields: map[string]string{"id": "b.id", "step_id": "b.ep_step_id", "policy_id": "(SELECT escalation_policy_id FROM escalation_policy_steps WHERE id=b.ep_step_id)", "user_id": "b.user_id", "start": "b.start_time", "end": "b.end_time"}},
 		{typ: "user_organization_assignment", table: "user_organization_assignments", key: "user_id", predicate: "b.user_id=$1", owner: "b.user_id", fields: map[string]string{"user_id": "b.user_id", "organization_id": "b.effective_organization_id", "classification": "b.effective_organization_classification", "organization_role": "b.organization_role"}},
 		{typ: "auth_subject", table: "auth_subjects", key: "id", predicate: "b.user_id=$1 OR b.cm_id IN (" + cm + ")", owner: "b.user_id", fields: map[string]string{"id": "b.id", "user_id": "b.user_id", "cm_id": "b.cm_id"}},
-		{typ: "user_session", table: "auth_user_sessions", key: "id", predicate: "b.user_id=$1", owner: "b.user_id", fields: map[string]string{"id": "b.id", "user_id": "b.user_id"}},
+		{typ: "user_session", table: "auth_user_sessions", key: "audit_resource_id", predicate: "b.user_id=$1"},
 		{typ: "basic_auth_link", table: "auth_basic_users", key: "user_id", predicate: "b.user_id=$1", owner: "b.user_id", fields: map[string]string{"id": "b.id", "user_id": "b.user_id"}},
 		{typ: "user_status_contact_setting", table: "users", key: "id", predicate: "b.id<>$1 AND b.alert_status_log_contact_method_id IN (" + cm + ")", owner: "b.id", fields: map[string]string{"user_id": "b.id", "contact_method_id": "b.alert_status_log_contact_method_id"}},
 	}
@@ -217,6 +226,12 @@ func projectionSQL(fields map[string]string) string {
 
 func (c *userDeleteCapture) captureChildren() error {
 	for _, d := range c.children() {
+		if d.typ == "user_session" {
+			if err := audit.CaptureSessions(c.ctx, c.tx, c.user, c.ordinal, c.event, c.rootOrg); err != nil {
+				return err
+			}
+			continue
+		}
 		last := ""
 		for {
 			// Reserve both page identities and re-read snapshots before allocating.
@@ -489,7 +504,7 @@ func (c *userDeleteCapture) finalizeEffects(e *audit.Event, explicit []audit.Exp
 			case "user_status_contact_setting":
 				f.Change, f.Provenance, f.DeletionMechanism = "relationship_cleared", "IMPLICIT_FK_SET_NULL", "fk_set_null"
 			}
-			if err = f.Validate(c.user); err != nil {
+			if err = f.ValidateForWrite(c.user); err != nil {
 				return err
 			}
 			raw, err := json.Marshal(f)

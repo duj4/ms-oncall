@@ -16,13 +16,13 @@ import (
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/schedule"
 	sraudit "github.com/target/goalert/schedule/deleteaudit"
 	"github.com/target/goalert/schedule/rule"
 	"github.com/target/goalert/util/timeutil"
-	"github.com/target/goalert/validation"
 )
 
 // A deliberately bounded database/sql model of the real resolver and Stores.
@@ -64,9 +64,10 @@ func (c *u03ModelConn) Begin() (driver.Tx, error) {
 }
 
 type u03ModelTx struct {
-	m      *u03Model
-	rules  []u03ModelRule
-	events [][]driver.NamedValue
+	m        *u03Model
+	rules    []u03ModelRule
+	events   [][]driver.NamedValue
+	readOnly bool
 }
 
 func (tx *u03ModelTx) Commit() error {
@@ -124,6 +125,9 @@ func compactSQL(q string) string { return strings.ToLower(strings.Join(strings.F
 func (c *u03ModelConn) QueryContext(_ context.Context, q string, a []driver.NamedValue) (driver.Rows, error) {
 	q = compactSQL(q)
 	c.m.queries = append(c.m.queries, q)
+	if rows, handled, err := c.updateSafetyQuery(q, a); handled {
+		return rows, err
+	}
 	switch {
 	case strings.Contains(q, "from schedules"):
 		return modelRows(5, []driver.Value{c.m.schedule, c.m.org, "Synthetic Schedule", "", "Etc/UTC"}), nil
@@ -266,7 +270,7 @@ func newU03Model(t *testing.T, kind string, n int) (*u03Model, *Mutation, contex
 	require.NoError(t, err)
 	ss, err := schedule.NewStore(ctx, db, nil)
 	require.NoError(t, err)
-	return s, (*Mutation)(&App{DB: db, RuleStore: rs, ScheduleStore: ss}), ctx, target
+	return s, (*Mutation)(&App{DB: db, RuleStore: rs, ScheduleStore: ss, PreviewSigner: previewTestSigner{}}), ctx, target
 }
 
 func TestScheduleTargetUpdateRealResolverRuleMatrix(t *testing.T) {
@@ -292,7 +296,7 @@ func TestScheduleTargetUpdateRealResolverRuleMatrix(t *testing.T) {
 						inputs[i].Start = &start
 					}
 				}
-				ok, err := m.UpdateScheduleTarget(ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target, Rules: inputs})
+				ok, err := runU03ModelUpdate(t, s, m, ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target, Rules: inputs})
 				require.NoError(t, err)
 				require.True(t, ok)
 				require.Len(t, s.rules, tc.requested)
@@ -353,7 +357,7 @@ func TestScheduleTargetUpdateActualReceiptAndAuditRollback(t *testing.T) {
 			before := slices.Clone(s.rules)
 			s.zeroReceipt = mode == "zero_actual_rows"
 			s.failAudit = mode == "audit_failed"
-			ok, err := m.UpdateScheduleTarget(ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
+			ok, err := runU03ModelUpdate(t, s, m, ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
 			require.Equal(t, before, s.rules)
 			if s.failAudit {
 				require.Error(t, err)
@@ -363,39 +367,28 @@ func TestScheduleTargetUpdateActualReceiptAndAuditRollback(t *testing.T) {
 				require.Equal(t, "attempt_observation", s.events[0][5].Value)
 				require.Equal(t, "[]", s.events[0][22].Value)
 			} else {
-				require.NoError(t, err)
-				require.True(t, ok)
-				require.Empty(t, s.events)
+				require.Error(t, err)
+				require.False(t, ok)
+				require.Len(t, s.events, 1)
+				require.Equal(t, "attempt_observation", s.events[0][5].Value)
 			}
 		})
 	}
 }
 
-func TestScheduleTargetUpdateOuterRollbackAfterDeletion(t *testing.T) {
-	for _, mode := range []string{"later_validation", "later_insert"} {
-		t.Run(mode, func(t *testing.T) {
-			s, m, ctx, target := newU03Model(t, "user", 3)
-			before := slices.Clone(s.rules)
-			err := withContextTx(ctx, m.DB, func(inner context.Context, tx *sql.Tx) error {
-				ok, err := m.UpdateScheduleTarget(inner, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
-				require.NoError(t, err)
-				require.True(t, ok)
-				if mode == "later_validation" {
-					return validation.NewFieldError("rules", "synthetic later validation")
-				}
-				s.failInsert = true
-				_, err = m.RuleStore.CreateRuleTx(inner, tx, rule.NewAlwaysActive(s.schedule, target))
-				return err
-			})
-			require.Error(t, err)
-			require.Equal(t, before, s.rules)
-			require.Empty(t, s.events)
-			require.Equal(t, 1, s.deletes)
-			require.Equal(t, 1, s.begins)
-			require.Zero(t, s.commits)
-			require.Equal(t, 1, s.rollbacks)
-		})
-	}
+func TestScheduleTargetUpdateInheritedDestructiveFailsClosed(t *testing.T) {
+	s, m, ctx, target := newU03Model(t, "user", 3)
+	before := slices.Clone(s.rules)
+	err := withContextTx(ctx, m.DB, func(inner context.Context, tx *sql.Tx) error {
+		ok, err := m.UpdateScheduleTarget(inner, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
+		require.Error(t, err)
+		require.False(t, ok)
+		return err
+	})
+	require.Error(t, err)
+	require.Equal(t, before, s.rules)
+	require.Zero(t, s.deletes)
+	require.Empty(t, s.events)
 }
 
 func TestScheduleTargetUpdateCreationConfigurationBoundary(t *testing.T) {
@@ -418,10 +411,11 @@ func TestScheduleTargetUpdatePostWaitRuleWriters(t *testing.T) {
 	for _, writer := range []string{"retarget_out", "retarget_in", "reparent_out", "delete", "user_or_rotation_cascade"} {
 		t.Run(writer, func(t *testing.T) {
 			s, m, ctx, target := newU03Model(t, "user", 2)
-			original := slices.Clone(s.rules)
+
 			if writer == "retarget_in" {
 				s.rules[1].user = uuid.NewString()
 			}
+			before := slices.Clone(s.rules)
 			s.beforeChildLock = func(tx *u03ModelTx) {
 				switch writer {
 				case "retarget_out":
@@ -434,23 +428,17 @@ func TestScheduleTargetUpdatePostWaitRuleWriters(t *testing.T) {
 					tx.rules = tx.rules[:1]
 				}
 			}
-			ok, err := m.UpdateScheduleTarget(ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
-			require.NoError(t, err)
-			require.True(t, ok)
+			ok, err := runU03ModelUpdate(t, s, m, ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
+			require.Error(t, err)
+			require.False(t, ok)
+			var typed *ds.DeletionSafetyError
+			require.ErrorAs(t, err, &typed)
+			require.Equal(t, ds.DeletionDependencyChanged, typed.Code)
+			require.Equal(t, before, s.rules)
+			require.Zero(t, s.deletes)
 			require.Len(t, s.events, 1)
-			var effects []sraudit.Effect
-			require.NoError(t, json.Unmarshal([]byte(s.events[0][22].Value.(string)), &effects))
-			want := 1
-			if writer == "retarget_in" {
-				want = 2
-			}
-			require.Len(t, effects, want)
-			for _, f := range effects {
-				require.Equal(t, target.ID, f.RuleDeletion.TargetID.String())
-				if writer != "retarget_in" {
-					require.Equal(t, original[0].id, f.ResourceUUID.String())
-				}
-			}
+			require.Equal(t, "attempt_observation", s.events[0][5].Value)
+
 		})
 	}
 }
@@ -486,7 +474,7 @@ func TestScheduleTargetUpdateTieOrderAndOtherCollections(t *testing.T) {
 	otherSchedule.id = uuid.NewString()
 	otherSchedule.schedule = uuid.NewString()
 	s.rules = append(s.rules, otherTarget, otherSchedule)
-	ok, err := m.UpdateScheduleTarget(ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target, Rules: []graphql2.ScheduleRuleInput{{}}})
+	ok, err := runU03ModelUpdate(t, s, m, ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target, Rules: []graphql2.ScheduleRuleInput{{}}})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, s.rules, 3)
@@ -505,7 +493,7 @@ func TestScheduleTargetUpdatePartialReadCannotChooseDeletionTail(t *testing.T) {
 	s, m, ctx, target := newU03Model(t, "user", 3)
 	before := slices.Clone(s.rules)
 	s.failRead = true
-	ok, err := m.UpdateScheduleTarget(ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
+	ok, err := runU03ModelUpdate(t, s, m, ctx, graphql2.ScheduleTargetInput{ScheduleID: &s.schedule, Target: &target})
 	require.Error(t, err)
 	require.False(t, ok)
 	require.Equal(t, before, s.rules)

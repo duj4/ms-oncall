@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/target/goalert/auth"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/organization"
@@ -98,6 +99,10 @@ func serviceUpdateCommitOutcome(err error) (string, string) {
 // Retain existing safe permission/field behavior and error mapping. Never let
 // raw SQL diagnostics reach the outer resolver logger, tracing or HTTP output.
 func serviceUpdateSafeError(err error) error {
+	var safety *ds.DeletionSafetyError
+	if errors.As(err, &safety) {
+		return safety
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return sql.ErrNoRows
 	}

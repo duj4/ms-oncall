@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/target/goalert/executioncontext"
@@ -145,6 +147,21 @@ func (s *Store) DeleteForAuditTx(ctx context.Context, tx *sql.Tx, ids ...string)
 }
 
 func deleteCMNRTargetsResult(ctx context.Context, tx *sql.Tx, authority executioncontext.CMNRMutationAuthority, ids []uuid.UUID, capture bool) (result audit.DeleteResult, err error) {
+	rawIDs := make([]string, len(ids))
+	for i, id := range ids {
+		rawIDs[i] = id.String()
+	}
+	effective, err := collector.ConsumeNR(ctx, tx, rawIDs)
+	if err != nil {
+		return result, err
+	}
+	ids = make([]uuid.UUID, len(effective))
+	for i, id := range effective {
+		ids[i] = uuid.MustParse(id)
+	}
+	if len(ids) == 0 {
+		return result, nil
+	}
 	// Discover parents only to establish CM-before-NR lock order. Discovery is
 	// never an authorization result. Re-read every NR under its own row lock,
 	// then reject a changed/missing parent outside the locked CM set.

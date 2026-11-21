@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/target/goalert/permission"
 	sraudit "github.com/target/goalert/schedule/deleteaudit"
@@ -21,7 +23,7 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	if err := permission.LimitCheckAny(ctx, permission.Admin, permission.User); err != nil {
 		return nil, err
 	}
-	parsed, err := validate.ParseManyUUID("RotationID", ids, 50)
+	_, err := validate.ParseManyUUID("RotationID", ids, 50)
 	if err != nil {
 		return nil, err
 	}
@@ -30,6 +32,17 @@ func (s *Store) DeleteManyForAuditTx(ctx context.Context, tx *sql.Tx, ids []stri
 	}
 	if len(ids) == 0 {
 		return nil, nil
+	}
+	ids, err = collector.ConsumeRotation(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	parsed, err := validate.ParseManyUUID("RotationID", ids, 50)
+	if err != nil {
+		return nil, err
 	}
 	want := map[uuid.UUID]bool{}
 	for _, id := range parsed {

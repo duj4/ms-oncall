@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
+	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/organization"
 	sraudit "github.com/target/goalert/schedule/deleteaudit"
 	"github.com/target/goalert/test/smoke/harness"
@@ -34,7 +35,7 @@ func TestSRDeleteAuditLockWaitSnapshots(t *testing.T) {
 				root, target = r, assignment.TargetTypeRotation
 				id = sd6Rule(t, h, s, r)
 			case "json_update":
-				_, err := db.Exec(`INSERT INTO schedule_data(schedule_id,data) VALUES($1,'{}')`, s)
+				_, err := db.Exec(`INSERT INTO schedule_data(schedule_id,data) VALUES($1,'{"V1":{"TemporarySchedules":[],"OnCallNotificationRules":[]}}')`, s)
 				require.NoError(t, err)
 			case "favorite_owner", "favorite_assignment":
 				require.NoError(t, db.QueryRow(`INSERT INTO user_favorites(user_id,tgt_schedule_id) VALUES($1,$2) RETURNING id::text`, h.UUID("user-a"), s).Scan(&id))
@@ -42,6 +43,18 @@ func TestSRDeleteAuditLockWaitSnapshots(t *testing.T) {
 				require.NoError(t, db.QueryRow(`INSERT INTO schedule_on_call_users(user_id,schedule_id,start_time,end_time) VALUES($1,$2,'2020-01-01','2020-01-02') RETURNING id::text`, h.UUID("user-a"), s).Scan(&id))
 			case "rotation_table_order":
 				root, target = r, assignment.TargetTypeRotation
+			}
+			newUser := sd7User(t, h)
+			sd8Assign(t, h, newUser, harness.SmokeOrganizationID)
+			input := []assignment.RawTarget{sd3Target(target, root)}
+			preview, previewErr := smokeDeletionPreview(t, h, sd3System(), input)
+			var confirmation *graphql2.DeletionSafetyConfirmationInput
+			if mode == "history_update" {
+				smokeDeletionCode(t, previewErr, ds.DeletionUnavailable)
+			} else {
+				require.NoError(t, previewErr)
+				require.True(t, preview.Complete)
+				confirmation = smokePlanConfirmation(t, h, sd3System(), input)
 			}
 			conn, err := db.Conn(t.Context())
 			require.NoError(t, err)
@@ -72,15 +85,11 @@ func TestSRDeleteAuditLockWaitSnapshots(t *testing.T) {
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(sd3System(), 15*time.Second)
 			defer cancel()
-			done := make(chan error, 1)
-			go func() {
-				_, err := sd5App(h).Mutation().DeleteAll(ctx, []assignment.RawTarget{sd3Target(target, root)})
-				done <- err
-			}()
-			sd3WaitBlocked(t, db, pid)
-			newUser := uuid.NewString()
-			_, err = tx.Exec(`INSERT INTO users(id,name) VALUES($1,'SYNTHETIC_PRIVATE')`, newUser)
-			require.NoError(t, err)
+			ok, err := sd5App(h).Mutation().DeleteAll(ctx, input, confirmation)
+			require.Error(t, err, "selected child/root locks use NOWAIT")
+			require.False(t, ok)
+			require.Equal(t, 1, serviceManagementCount(t, h, map[bool]string{true: "rotations", false: "schedules"}[target == assignment.TargetTypeRotation], root))
+			require.Zero(t, sd6Count(t, h))
 			switch mode {
 			case "action_retarget":
 				_, err = tx.Exec(`UPDATE escalation_policy_actions SET schedule_id=$2 WHERE id=$1`, id, otherS)
@@ -113,18 +122,48 @@ func TestSRDeleteAuditLockWaitSnapshots(t *testing.T) {
 			} else {
 				require.NoError(t, tx.Commit())
 			}
-			require.NoError(t, <-done)
+			current, currentErr := smokeDeletionPreview(t, h, sd3System(), input)
+			if currentErr != nil || !current.CanProceed || current.ImpactVersion != confirmation.ExpectedImpactVersion {
+				ok, err = sd5App(h).Mutation().DeleteAll(ctx, input, confirmation)
+				require.Error(t, err, "changed or blocked plan is rejected")
+				require.False(t, ok)
+				require.Zero(t, sd6Count(t, h))
+			} else {
+				// System's non-User version does not bind unchanged informational
+				// owner/root scope. The actual B2 capture still must be fresh.
+				require.Equal(t, confirmation.ExpectedImpactVersion, current.ImpactVersion)
+			}
+			if mode == "rule_reparent" || mode == "step_reparent_rejected" || mode == "history_update" {
+				if mode == "history_update" {
+					require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM schedule_on_call_users WHERE id=$1 AND user_id=$2 AND end_time='2020-01-03'`, id, newUser))
+				} else {
+					current, e := smokeDeletionPreview(t, h, sd3System(), input)
+					require.NoError(t, e)
+					require.False(t, current.CanProceed, "retained Action/Rule blocks deletion")
+					table := "schedule_rules"
+					if mode == "step_reparent_rejected" {
+						table = "escalation_policy_actions"
+					}
+					require.Equal(t, 1, serviceManagementCount(t, h, table, id))
+				}
+				// The old detach/history cascade is unsupported. Still prove a
+				// real Guard/DELETE barrier on a separate legal Schedule root.
+				legal := sd6Root(t, h, "schedule", harness.SmokeOrganizationID)
+				smokeDeleteFencesWriter(t, h, sd5App(h), []assignment.RawTarget{sd3Target(assignment.TargetTypeSchedule, legal)}, "schedules", legal)
+				require.Equal(t, 1, serviceManagementCount(t, h, map[bool]string{true: "rotations", false: "schedules"}[target == assignment.TargetTypeRotation], root))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM schedule_rotation_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, root))
+				return
+			}
+			table := "schedules"
+			if target == assignment.TargetTypeRotation {
+				table = "rotations"
+			}
+			smokeDeleteFencesWriter(t, h, sd5App(h), input, table, root)
 			effects := sd6Effects(t, h, root)
 			switch mode {
 			case "action_retarget":
 				require.Empty(t, effects)
 				require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policy_actions", id))
-			case "step_reparent_rejected":
-				require.Len(t, effects, 1)
-				require.Equal(t, parentPolicy, effects[0].Action.PolicyID.String())
-			case "rule_reparent":
-				require.Len(t, effects, 1)
-				require.Equal(t, otherS, effects[0].Rule.ScheduleID.String())
 			case "json_update":
 				require.Len(t, effects, 2)
 				found := false
@@ -138,15 +177,11 @@ func TestSRDeleteAuditLockWaitSnapshots(t *testing.T) {
 			case "favorite_owner":
 				require.Len(t, effects, 1)
 				require.Equal(t, newUser, effects[0].Favorite.OwnerUserID.String())
-				require.Equal(t, "unknown", effects[0].Favorite.OwnerOrgResolution)
+				require.Equal(t, "known_normal", effects[0].Favorite.OwnerOrgResolution)
 			case "favorite_assignment":
 				require.Len(t, effects, 1)
 				require.Equal(t, "known_default", effects[0].Favorite.OwnerOrgResolution)
 				require.Equal(t, organization.DefaultOrganizationID, effects[0].Favorite.OwnerOrganizationID.String())
-			case "history_update":
-				require.Len(t, effects, 1)
-				require.Equal(t, newUser, effects[0].History.UserID.String())
-				require.Equal(t, 3, effects[0].History.End.Day())
 			case "rotation_table_order":
 				require.Len(t, effects, 1)
 				require.Equal(t, newUser, effects[0].Participant.UserID.String())

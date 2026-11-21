@@ -6,9 +6,9 @@ import (
 	"errors"
 
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/util"
-	"github.com/target/goalert/util/sqlutil"
 	"github.com/target/goalert/validation/validate"
 
 	"github.com/google/uuid"
@@ -205,18 +205,9 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ruleIDs []string) 
 	if len(ruleIDs) == 0 {
 		return nil
 	}
-	err = validate.ManyUUID("RuleIDs", ruleIDs, 50)
-	if err != nil {
-		return err
-	}
-	stmt := s.delete
-	if tx != nil {
-		stmt = tx.StmtContext(ctx, stmt)
-	}
-
-	_, err = stmt.ExecContext(ctx, sqlutil.UUIDArray(ruleIDs))
-	return err
-
+	// Existing non-receipt callers have no SD10 audit/confirmation owner.
+	// Destructive target updates use DeleteManyReceiptTx instead.
+	return &ds.DeletionSafetyError{Code: ds.DeletionUnavailable}
 }
 
 func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, r *Rule) error {

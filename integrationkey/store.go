@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/target/goalert/auth/authtoken"
 	"github.com/target/goalert/expflag"
 	"github.com/target/goalert/gadb"
@@ -150,11 +152,20 @@ func (s *Store) DeleteMany(ctx context.Context, dbtx gadb.DBTX, ids []string, or
 		return err
 	}
 
-	uuids, err := validate.ParseManyUUID("IntegrationKeyID", ids, 50)
+	_, err = validate.ParseManyUUID("IntegrationKeyID", ids, 50)
 	if err != nil {
 		return err
 	}
 
+	tx, _ := dbtx.(*sql.Tx)
+	existing, err := collector.ConsumeIntegrationKey(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	uuids, err := validate.ParseManyUUID("IntegrationKeyID", existing, 50)
+	if err != nil {
+		return err
+	}
 	if organizationID == nil {
 		return gadb.New(dbtx).IntKeyDelete(ctx, uuids)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/auth"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/organization"
 	"github.com/target/goalert/permission"
@@ -41,6 +42,17 @@ func TestRotationUpdateAuditAllRequestedFields(t *testing.T) {
 	b, err := json.Marshal(e)
 	require.NoError(t, err)
 	require.NotContains(t, string(b), text)
+}
+
+func TestRotationUpdateSafetyErrorProjection(t *testing.T) {
+	for _, code := range []ds.ErrorCode{ds.DeletionConfirmationRequired, ds.DeletionDependencyChanged, ds.DeletionUnavailable} {
+		err := errors.Join(errors.New("SYNTHETIC_PRIVATE_SQL"), &ds.DeletionSafetyError{Code: code})
+		safe := rotationUpdateSafeError(err)
+		var typed *ds.DeletionSafetyError
+		require.ErrorAs(t, safe, &typed)
+		require.Equal(t, code, typed.Code)
+		require.NotContains(t, safe.Error(), "SYNTHETIC_PRIVATE_SQL")
+	}
 }
 
 func TestRotationUpdateDiagnosticProjection(t *testing.T) {

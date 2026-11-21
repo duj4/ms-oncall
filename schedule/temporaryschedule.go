@@ -17,8 +17,14 @@ type TemporarySchedule struct {
 // Normalize will validate and normalize the TemporarySchedule. Times will be truncated to the minute and
 // truncated to the current time.
 func (temp TemporarySchedule) Normalize(checkUser user.ExistanceChecker) (*TemporarySchedule, error) {
+	return temp.normalizeAt(checkUser, time.Now())
+}
+
+// One explicit clock makes a signed preview reproducible. Execution still
+// normalizes against the current clock and may only attenuate elapsed coverage.
+func (temp TemporarySchedule) normalizeAt(checkUser user.ExistanceChecker, observed time.Time) (*TemporarySchedule, error) {
 	temp.Start = temp.Start.Truncate(time.Minute)
-	now := time.Now().Truncate(time.Minute)
+	now := observed.Truncate(time.Minute)
 	if temp.Start.Before(now) {
 		temp = temp.TrimStart(now)
 	}
@@ -29,7 +35,7 @@ func (temp TemporarySchedule) Normalize(checkUser user.ExistanceChecker) (*Tempo
 	}
 
 	err := validate.Many(
-		validateFuture("End", temp.End),
+		validateFutureAt("End", temp.End, observed),
 		validateTimeRange("", temp.Start, temp.End),
 		temp.validateShifts(checkUser),
 	)

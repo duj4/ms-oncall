@@ -46,7 +46,7 @@ func TestHumanOperationAdmissionRejectsInvalidAuthority(t *testing.T) {
 			require.True(t, permission.IsPermissionError(err))
 			_, err = a.DeleteAuthSubject(invalid, user.AuthSubject{UserID: f.user.String()})
 			require.True(t, permission.IsPermissionError(err))
-			_, err = a.DeleteAll(invalid, nil)
+			_, err = a.DeleteAll(invalid, nil, nil)
 			require.True(t, permission.IsPermissionError(err))
 		})
 	}

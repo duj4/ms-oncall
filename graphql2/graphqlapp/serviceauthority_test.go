@@ -70,7 +70,7 @@ func TestServiceManagementRejectsBeforeBusinessWork(t *testing.T) {
 		{{Type: assignment.TargetTypeRotation, ID: id}, {Type: assignment.TargetTypeService, ID: id}},
 		{{Type: assignment.TargetTypeIntegrationKey, ID: id}, {Type: assignment.TargetTypeService, ID: id}},
 	} {
-		_, err = app.Mutation().DeleteAll(ctx, ids)
+		_, err = app.Mutation().DeleteAll(ctx, ids, nil)
 		require.True(t, permission.IsPermissionError(err))
 		require.NotContains(t, err.Error(), id, "denial must not expose target existence")
 	}

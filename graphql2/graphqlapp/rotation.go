@@ -312,11 +312,11 @@ func (m *Mutation) validateRotationUsers(ctx context.Context, tx *sql.Tx, organi
 	return nil
 }
 
-func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, rotationID string, userIDs []string, updateActive bool) (err error) {
+func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, rotationID string, userIDs []string, updateActive bool) (receipts []rotation.ParticipantDeleteReceipt, err error) {
 	// Get current participants
 	currentParticipants, err := m.RotationStore.FindAllParticipantsTx(ctx, tx, rotationID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var participantIDsToRemove []string
@@ -335,7 +335,7 @@ func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, r
 		// Update
 		err = m.RotationStore.UpdateParticipantUserIDTx(ctx, tx, c.ID, userIDs[i])
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -343,28 +343,28 @@ func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, r
 		// Add users
 		err = m.RotationStore.AddRotationUsersTx(ctx, tx, rotationID, userIDs[len(currentParticipants):])
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if len(participantIDsToRemove) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	if len(userIDs) == 0 {
 		// Delete rotation state if all users are going to be deleted as per new input
 		err = m.RotationStore.DeleteStateTx(ctx, tx, rotationID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	} else if updateActive {
 		// get current active participant
 		s, err := m.RotationStore.StateTx(ctx, tx, rotationID)
 		if errors.Is(err, rotation.ErrNoState) {
-			return nil
+			return nil, nil
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// if currently active user is going to be deleted
@@ -372,16 +372,16 @@ func (m *Mutation) updateRotationParticipants(ctx context.Context, tx *sql.Tx, r
 		if s.Position >= len(userIDs) {
 			err = m.RotationStore.SetActiveIndexTx(ctx, tx, rotationID, 0)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	err = m.RotationStore.DeleteRotationParticipantsTx(ctx, tx, participantIDsToRemove)
+	receipts, err = m.RotationStore.DeleteRotationParticipantsReceiptTx(ctx, tx, participantIDsToRemove)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return receipts, nil
 }
 
 func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRotationInput) (res bool, err error) {
@@ -434,36 +434,31 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 			}
 		}
 		event.Outcome, event.Reason = "validation_failed", "invalid_fields"
-		var update bool
-		if input.Name != nil {
-			update = true
-			result.Name = *input.Name
+		needsSafety, err := m.rotationUpdateNeedsSafety(ctx, tx, input)
+		if err != nil {
+			return err
 		}
-		if input.Description != nil {
-			update = true
-			result.Description = *input.Description
-		}
-		if input.Start != nil {
-			update = true
-			result.Start = *input.Start
-		}
-		if input.Type != nil {
-			update = true
-			result.Type = *input.Type
-		}
-		if input.ShiftLength != nil {
-			update = true
-			result.ShiftLength = *input.ShiftLength
-		}
-
-		if input.TimeZone != nil {
-			update = true
-			loc, err := util.LoadLocation(*input.TimeZone)
-			if err != nil {
-				return validation.NewFieldError("TimeZone", "invalid TimeZone: "+err.Error())
+		var safety updateAssessment
+		if needsSafety {
+			// The inherited owner cannot append/commit U04's durable witness.
+			// Refuse before scalar writes, state changes or participant updates.
+			if inherited {
+				return previewUnavailable()
 			}
-			result.Start = result.Start.In(loc)
+			safety, err = (*App)(m).assessUpdate(ctx, tx, input, true)
+			if err != nil {
+				return err
+			}
+			ctx, err = safety.enforce(ctx, tx, m.PreviewSigner, input.Confirmation)
+			if err != nil {
+				return err
+			}
 		}
+		update, err := rotationUpdateFields(result, input)
+		if err != nil {
+			return err
+		}
+		var receipts []rotation.ParticipantDeleteReceipt
 
 		if update {
 			err = m.RotationStore.UpdateRotationTx(ctx, tx, result, organizationID)
@@ -478,7 +473,7 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 					return err
 				}
 			}
-			err = m.updateRotationParticipants(ctx, tx, input.ID, input.UserIDs, input.ActiveUserIndex == nil)
+			receipts, err = m.updateRotationParticipants(ctx, tx, input.ID, input.UserIDs, input.ActiveUserIndex == nil)
 			if err != nil {
 				return err
 			}
@@ -498,6 +493,11 @@ func (m *Mutation) UpdateRotation(ctx context.Context, input graphql2.UpdateRota
 			if err != nil {
 				event.Outcome, event.Reason = "tx_failed", "write_failed"
 				return err
+			}
+			if needsSafety && len(safety.selected) > 0 {
+				if err := safety.finishRotation(ctx, tx, input, event.After, receipts); err != nil {
+					return err
+				}
 			}
 			event.RotationRowWritten = update
 			event.Outcome, event.Reason = "committed", "updated"

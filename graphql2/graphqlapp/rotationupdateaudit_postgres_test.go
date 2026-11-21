@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/auth"
 	"github.com/target/goalert/config"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/executioncontext"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/graphql2/graphqlapp"
@@ -107,6 +108,22 @@ func TestD09C6LegacyPostgresCompatibility(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ok)
 		return nil
+	}))
+	require.NoError(t, graphqlapp.WithContextTxForTest(ctx, db, func(inner context.Context, tx *sql.Tx) error {
+		before := read()
+		text := "Must not stage any scalar change"
+		ok, err := a.Mutation().UpdateRotation(inner, graphql2.UpdateRotationInput{ID: h.UUID("rotation"), Description: &text, UserIDs: []string{h.UUID("actor")}})
+		var safety *ds.DeletionSafetyError
+		require.ErrorAs(t, err, &safety)
+		require.Equal(t, ds.DeletionUnavailable, safety.Code)
+		require.False(t, ok)
+		var description string
+		require.NoError(t, tx.QueryRowContext(ctx, `SELECT description FROM rotations WHERE id=$1`, h.UUID("rotation")).Scan(&description))
+		require.Equal(t, before, description)
+		var n int
+		require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM rotation_participants WHERE rotation_id=$1`, h.UUID("rotation")).Scan(&n))
+		require.Equal(t, 2, n)
+		return nil // Even an outer owner catching the refusal cannot commit a deletion.
 	}))
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)

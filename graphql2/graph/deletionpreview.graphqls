@@ -1,0 +1,103 @@
+enum DeletionOperation {
+  DELETE_RESOURCES
+  UPDATE_ESCALATION_POLICY
+  UPDATE_ESCALATION_POLICY_STEP
+  UPDATE_SCHEDULE_TARGET
+  UPDATE_ROTATION
+  UPDATE_SERVICE
+  SET_TEMPORARY_SCHEDULE
+  CLEAR_TEMPORARY_SCHEDULES
+  SET_SCHEDULE_ON_CALL_NOTIFICATION_RULES
+}
+
+"Only roots understood by the dependency collector are selectable. Support is conditional on complete collection."
+enum DeletionTargetType {
+  SERVICE
+  ESCALATION_POLICY
+  SCHEDULE
+  ROTATION
+  USER
+  CONTACT_METHOD
+  NOTIFICATION_RULE
+  INTEGRATION_KEY
+  USER_OVERRIDE
+}
+
+input DeletionResourceInput {
+  type: DeletionTargetType!
+  "Integration keys use audit_resource_id, never the credential ID."
+  id: ID!
+}
+
+input DeletionPlanInput {
+  operation: DeletionOperation!
+  targets: [DeletionResourceInput!]!
+}
+
+enum DeletionPolicy {
+  BLOCK
+  CASCADE
+  WARNING
+  INFORMATIONAL
+}
+
+type DeletionOrganizationSummary {
+  id: ID!
+  name: String!
+}
+
+"Safe identity and display fields only; no destination, subject, payload or credential."
+type DeletionResource {
+  type: String!
+  id: ID!
+  name: String
+  label: String!
+  organization: DeletionOrganizationSummary
+}
+
+type DeletionImpact {
+  edgeID: ID!
+  target: DeletionResource!
+  referencingResource: DeletionResource!
+  parent: DeletionResource
+  relation: String!
+  change: String!
+  policy: DeletionPolicy!
+  impact: String!
+  requiredAction: String!
+  canModifyReference: Boolean!
+  isDerived: Boolean!
+  isPlannedCoDeletion: Boolean!
+}
+
+type DeletionImpactEdge {
+  cursor: String!
+  node: DeletionImpact!
+}
+
+type DeletionImpactConnection {
+  edges: [DeletionImpactEdge!]!
+  pageInfo: PageInfo!
+}
+
+type DeletionPreview {
+  targets: [DeletionResource!]!
+  operation: DeletionOperation!
+  impactVersion: ID!
+  policyVersion: String!
+  assessedAt: ISOTimestamp!
+  complete: Boolean!
+  canProceed: Boolean!
+  requiresConfirmation: Boolean!
+  impacts: DeletionImpactConnection!
+  notices: [String!]!
+}
+
+extend type Query {
+  "A disposable read-only snapshot, not permission to delete. Every page repeats full collection and authorization. Update adapters are currently unavailable."
+  deletionPreview(
+    input: DeletionPlanInput!
+    first: Int = 50
+    after: String
+  ): DeletionPreview!
+}

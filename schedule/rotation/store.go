@@ -4,6 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"sort"
+	"strconv"
+
+	ds "github.com/target/goalert/deletionsafety"
+	collector "github.com/target/goalert/internal/deletionguard"
+	"github.com/target/goalert/internal/updateguard"
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -190,11 +195,11 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 			WHERE rotation_id = $1
 		`),
 		rmState: p.P(`
-			DELETE FROM rotation_state WHERE rotation_id = $1
+			DELETE FROM rotation_state WHERE rotation_id = $1 RETURNING id
 		`),
 
 		deleteParticipants: p.P(`
-			DELETE FROM rotation_participants WHERE id = ANY($1)
+			DELETE FROM rotation_participants WHERE id = ANY($1) RETURNING id,rotation_id,user_id,position
 		`),
 
 		updateParticipantUserID: p.P(`
@@ -472,7 +477,7 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 	if err != nil {
 		return err
 	}
-	parsedIDs, err := validate.ParseManyUUID("RotationID", ids, 50)
+	_, err = validate.ParseManyUUID("RotationID", ids, 50)
 	if err != nil {
 		return err
 	}
@@ -484,6 +489,17 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string, orga
 		return validation.NewFieldError("OrganizationID", "must be specified")
 	}
 
+	ids, err = collector.ConsumeRotation(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	parsedIDs, err := validate.ParseManyUUID("RotationID", ids, 50)
+	if err != nil {
+		return err
+	}
 	want := make(map[uuid.UUID]struct{}, len(parsedIDs))
 	for _, id := range parsedIDs {
 		want[id] = struct{}{}
@@ -546,6 +562,9 @@ func (s *Store) FindAllParticipantsTx(ctx context.Context, tx *sql.Tx, rotationI
 			p.Target = nil
 		}
 		res = append(res, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	sort.Slice(res, func(i, j int) bool { return res[i].Position < res[j].Position })
@@ -659,20 +678,62 @@ func (s *Store) AddRotationUsersTx(ctx context.Context, tx *sql.Tx, rotationID s
 }
 
 func (s *Store) DeleteRotationParticipantsTx(ctx context.Context, tx *sql.Tx, partIDs []string) error {
+	_, err := s.DeleteRotationParticipantsReceiptTx(ctx, tx, partIDs)
+	return err
+}
+
+// ParticipantDeleteReceipt is the actual database result. User and Rotation
+// survive; trigger renumbering can change a later deleted row's Position.
+type ParticipantDeleteReceipt struct {
+	ID, RotationID, UserID uuid.UUID
+	Position               int
+}
+
+func (s *Store) DeleteRotationParticipantsReceiptTx(ctx context.Context, tx *sql.Tx, partIDs []string) ([]ParticipantDeleteReceipt, error) {
 	err := permission.LimitCheckAny(ctx, permission.Admin, permission.User)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = validate.ManyUUID("ParticipantIDs", partIDs, 50)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	return s.withTxLock(ctx, tx, func(tx *sql.Tx) error {
-		_, err := tx.StmtContext(ctx, s.deleteParticipants).ExecContext(ctx, sqlutil.UUIDArray(partIDs))
-		return err
+	if len(partIDs) == 0 {
+		return nil, nil
+	}
+	requested := make([]ds.Resource, len(partIDs))
+	for i, id := range partIDs {
+		requested[i] = ds.Resource{Kind: ds.ResourceRotationParticipant, ID: uuid.MustParse(id).String()}
+	}
+	if err := updateguard.Check(ctx, tx, requested...); err != nil {
+		return nil, err
+	}
+	var receipts []ParticipantDeleteReceipt
+	err = s.withTxLock(ctx, tx, func(tx *sql.Tx) error {
+		rows, err := tx.StmtContext(ctx, s.deleteParticipants).QueryContext(ctx, sqlutil.UUIDArray(partIDs))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		var actual []ds.Resource
+		for rows.Next() {
+			var r ParticipantDeleteReceipt
+			if err := rows.Scan(&r.ID, &r.RotationID, &r.UserID, &r.Position); err != nil {
+				return err
+			}
+			receipts = append(receipts, r)
+			actual = append(actual, ds.Resource{Kind: ds.ResourceRotationParticipant, ID: r.ID.String()})
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(actual) != len(requested) {
+			return &ds.DeletionSafetyError{Code: ds.DeletionDependencyChanged}
+		}
+		return updateguard.Consume(ctx, tx, actual...)
 	})
+	return receipts, err
 }
 
 func (s *Store) UpdateParticipantUserIDTx(ctx context.Context, tx *sql.Tx, partID, userID string) error {
@@ -706,7 +767,22 @@ func (s *Store) DeleteStateTx(ctx context.Context, tx *sql.Tx, rotationID string
 	}
 
 	return s.withTxLock(ctx, tx, func(tx *sql.Tx) error {
-		_, err := tx.StmtContext(ctx, s.rmState).ExecContext(ctx, rotationID)
-		return err
+		var id int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM rotation_state WHERE rotation_id=$1`, rotationID).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		resource := ds.Resource{Kind: ds.ResourceRotationState, ID: strconv.FormatInt(id, 10)}
+		if err := updateguard.Check(ctx, tx, resource); err != nil {
+			return err
+		}
+		var actual int64
+		if err := tx.StmtContext(ctx, s.rmState).QueryRowContext(ctx, rotationID).Scan(&actual); err != nil {
+			return err
+		}
+		return updateguard.Consume(ctx, tx, ds.Resource{Kind: ds.ResourceRotationState, ID: strconv.FormatInt(actual, 10)})
 	})
 }

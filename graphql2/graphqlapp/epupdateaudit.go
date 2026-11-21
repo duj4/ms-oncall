@@ -75,6 +75,9 @@ func epUpdateDiagnosticError(ctx context.Context, err error) error {
 }
 
 func epUpdateSafeError(err error) error {
+	if typed, ok := deletionSafetyError(err); ok {
+		return typed
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return sql.ErrNoRows
 	}
@@ -119,7 +122,7 @@ func finishEPUpdateAudit(ctx context.Context, db *sql.DB, conn *sql.Conn, tx *sq
 		e.Outcome, e.Reason = "rollback_unconfirmed", "rollback_unconfirmed"
 	} else if e.Outcome == "validation_failed" {
 		safe := epUpdateSafeError(operationErr)
-		if !validation.IsClientError(safe) && !errutil.IsLimitError(safe) && !errors.Is(safe, sql.ErrNoRows) {
+		if _, safetyRefusal := deletionSafetyError(safe); !safetyRefusal && !validation.IsClientError(safe) && !errutil.IsLimitError(safe) && !errors.Is(safe, sql.ErrNoRows) {
 			e.Outcome, e.Reason = "tx_failed", "write_failed"
 		}
 	}

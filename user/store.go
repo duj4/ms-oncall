@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/golang/groupcache"
 	"github.com/google/uuid"
 	"github.com/target/goalert/permission"
@@ -310,6 +312,13 @@ func (s *Store) DeleteManyTx(ctx context.Context, tx *sql.Tx, ids []string) erro
 		return err
 	}
 
+	ids, err = collector.ConsumeUser(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
 	var ownsTx bool
 	if tx == nil {
 		ownsTx = true

@@ -8,6 +8,10 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"time"
+
+	ds "github.com/target/goalert/deletionsafety"
+	"github.com/target/goalert/internal/updateguard"
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/assignment"
@@ -316,6 +320,12 @@ func (m *Mutation) CreateEscalationPolicy(ctx context.Context, input graphql2.Cr
 }
 
 func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.UpdateEscalationPolicyInput) (bool, error) {
+	if input.StepIDs != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+	}
+	inherited := hasInheritedContextTx(ctx)
 	event := epUpdateAuditEvent(ctx, epaudit.PolicyUpdate)
 	organizationID, err := epManagementAuthority(ctx, epManagementUpdate)
 	if err != nil {
@@ -326,6 +336,13 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 	}
 
 	err = withEPUpdateAuditTx(ctx, m.DB, &event, func(ctx context.Context, tx *sql.Tx) error {
+		// Match the frozen Step trigger's final lock mode before the EP row.
+		// This is the existing single relation protocol, never the old global fence.
+		if input.StepIDs != nil {
+			if _, err := tx.ExecContext(ctx, `LOCK TABLE public.escalation_policy_steps IN EXCLUSIVE MODE NOWAIT`); err != nil {
+				return previewUnavailable()
+			}
+		}
 		event.Reason = "target_unavailable"
 		organizationID, err = existingRootTargetOrganization(ctx, tx, assignment.TargetTypeEscalationPolicy, input.ID)
 		if err != nil {
@@ -338,6 +355,24 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 
 		event.RootID, event.TargetOrganizationID, event.TargetOrgResolution = uuid.MustParse(ep.ID), ep.OrganizationID, "known_normal"
 		event.Reason = "invalid_fields"
+		var assessment updateAssessment
+		needsSafety, err := m.policyUpdateNeedsSafety(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		if needsSafety {
+			assessment, err = (*App)(m).assessUpdate(ctx, tx, input, true)
+			if err != nil {
+				return err
+			}
+			if inherited && len(assessment.removed) > 0 {
+				return previewUnavailable()
+			}
+			ctx, err = assessment.enforce(ctx, tx, m.PreviewSigner, input.Confirmation)
+			if err != nil {
+				return err
+			}
+		}
 
 		if input.Name != nil {
 			ep.Name = *input.Name
@@ -380,11 +415,24 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 					deletedStepIDs = append(deletedStepIDs, id)
 				}
 			}
+			if len(assessment.removed) > 0 {
+				if err := assessment.recheck(ctx, tx); err != nil {
+					return err
+				}
+			}
 			actions, err := captureEPUpdateActions(ctx, tx, event, deletedStepIDs)
 			if err != nil {
 				return err
 			}
 			event.Effects = append(event.Effects, actions...)
+			for _, effect := range actions {
+				if effect.ResourceUUID == nil {
+					return previewUnavailable()
+				}
+				if err := updateguard.Consume(ctx, tx, ds.Resource{Kind: ds.ResourceEscalationPolicyAction, ID: effect.ResourceUUID.String()}); err != nil {
+					return err
+				}
+			}
 
 			// delete existing id if not found in input steps slice
 			for _, stepID := range stepIDs {
@@ -396,11 +444,7 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 					if receipt.ID != stepID || receipt.EscalationPolicyID != event.RootID {
 						return epaudit.ErrInvalid
 					}
-					number := int(receipt.StepNumber)
-					event.Effects = append(event.Effects, epaudit.Effect{EffectID: uuid.New(), ResourceType: epaudit.Step,
-						RootID: event.RootID, TargetOrganizationID: event.TargetOrganizationID, ResourceUUID: &receipt.ID,
-						StepNumber: &number, Relation: "escalation_policy.step", Change: "deleted",
-						Provenance: "EXPLICIT", DeletionMechanism: "explicit_sql", Cause: "update_induced"})
+					event.Effects = append(event.Effects, epUpdateStepEffect(event, receipt))
 				}
 			}
 
@@ -418,7 +462,10 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 		}
 
 		if len(event.Effects) != 0 {
-			return verifyEPUpdateDeleted(ctx, tx, event)
+			if err := verifyEPUpdateDeleted(ctx, tx, event); err != nil {
+				return err
+			}
+			return assessment.finish(ctx, tx, event.Effects)
 		}
 		return err
 	})
@@ -427,6 +474,12 @@ func (m *Mutation) UpdateEscalationPolicy(ctx context.Context, input graphql2.Up
 }
 
 func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql2.UpdateEscalationPolicyStepInput) (bool, error) {
+	if input.Actions != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+	}
+	inherited := hasInheritedContextTx(ctx)
 	event := epUpdateAuditEvent(ctx, epaudit.StepUpdate)
 	organizationID, err := epManagementAuthority(ctx, epManagementUpdate)
 	if err != nil {
@@ -461,6 +514,24 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 		}
 		event.RootID, event.ParentPolicyID, event.TargetOrgResolution = step.ID, parent, "known_normal"
 		event.TargetOrganizationID, event.Reason = targetOrganization, "invalid_fields"
+		var assessment updateAssessment
+		needsSafety, err := m.stepUpdateNeedsSafety(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		if needsSafety {
+			assessment, err = (*App)(m).assessUpdate(ctx, tx, input, true)
+			if err != nil {
+				return err
+			}
+			if inherited && len(assessment.removed) > 0 {
+				return previewUnavailable()
+			}
+			ctx, err = assessment.enforce(ctx, tx, m.PreviewSigner, input.Confirmation)
+			if err != nil {
+				return err
+			}
+		}
 
 		// update delay if provided
 		if input.DelayMinutes != nil {
@@ -488,6 +559,12 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 			existing, err := m.PolicyStore.FindAllStepActionsTx(ctx, tx, step.ID)
 			if err != nil {
 				return err
+			}
+
+			if len(assessment.removed) > 0 {
+				if err := assessment.recheck(ctx, tx); err != nil {
+					return err
+				}
 			}
 
 			// We need to delete first, in case we're at the current system limit, that way the total number never exceeds the limit (unless the user is trying to add more than the limit).
@@ -541,6 +618,9 @@ func (m *Mutation) UpdateEscalationPolicyStep(ctx context.Context, input graphql
 
 		}
 
+		if len(assessment.removed) > 0 {
+			return assessment.finish(ctx, tx, event.Effects)
+		}
 		return err
 	})
 

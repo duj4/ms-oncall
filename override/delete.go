@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"slices"
 
+	collector "github.com/target/goalert/internal/deletionguard"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/target/goalert/override/deleteaudit"
@@ -33,6 +35,14 @@ func (s *Store) DeleteUserOverrideForAuditTx(ctx context.Context, tx *sql.Tx, id
 		return result, nil
 	}
 	parsed, err := validate.ParseManyUUID("UserOverrideID", ids, 50)
+	if err != nil {
+		return result, err
+	}
+	effective, err := collector.ConsumeUserOverride(ctx, tx, ids)
+	if err != nil {
+		return result, err
+	}
+	parsed, err = validate.ParseManyUUID("UserOverrideID", effective, 50)
 	if err != nil {
 		return result, err
 	}

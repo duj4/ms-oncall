@@ -40,7 +40,7 @@ func TestUserOverrideOrganizationMissingOrInconsistentAuthority(t *testing.T) {
 					return err
 				},
 				"pure override DeleteAll": func() error {
-					_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUserOverride, ID: id}})
+					_, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{{Type: assignment.TargetTypeUserOverride, ID: id}}, nil)
 					return err
 				},
 			}

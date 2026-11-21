@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
 )
@@ -52,7 +54,10 @@ func TestUserDeleteAuditPageAndTempFaults(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT current_database()`).Scan(&name))
 	for _, mode := range []string{"temp_write_error", "temp_suppressed_insert", "missing_page", "duplicate_page", "page_rows_error", "wrong_returning", "wrong_manifest"} {
 		t.Run(mode, func(t *testing.T) {
-			u := sd7User(t, h)
+			u := smokeOwnedUser(t, h)
+			var hits atomic.Int64
+			sd8Exec(t, h, `CREATE SEQUENCE sd8_temp_hits`)
+			t.Cleanup(func() { sd8Exec(t, h, `DROP SEQUENCE sd8_temp_hits`) })
 			sd8Exec(t, h, `INSERT INTO schedule_on_call_users(schedule_id,user_id,start_time,end_time) SELECT $1,$2,'2020-01-01'::timestamptz+g*interval '1 second','2020-01-01'::timestamptz+(g+1)*interval '1 second' FROM generate_series(1,300) g`, s, u)
 			connector, err := sd8PGConnector(harness.DBURL(name))
 			require.NoError(t, err)
@@ -69,7 +74,7 @@ func TestUserDeleteAuditPageAndTempFaults(t *testing.T) {
 					if mode == "temp_suppressed_insert" {
 						body = `RETURN NULL;`
 					}
-					_, err := c.(driver.ExecerContext).ExecContext(ctx, `CREATE FUNCTION pg_temp.sd8_temp_fault() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN `+body+`END;$$;CREATE TRIGGER sd8_temp_fault BEFORE INSERT ON pg_temp.sd8_user_delete_witness FOR EACH ROW EXECUTE FUNCTION pg_temp.sd8_temp_fault()`, nil)
+					_, err := c.(driver.ExecerContext).ExecContext(ctx, `CREATE FUNCTION pg_temp.sd8_temp_fault() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM nextval('sd8_temp_hits'); `+body+`END;$$;CREATE TRIGGER sd8_temp_fault BEFORE INSERT ON pg_temp.sd8_user_delete_witness FOR EACH ROW EXECUTE FUNCTION pg_temp.sd8_temp_fault()`, nil)
 					return err
 				}
 			}
@@ -80,6 +85,7 @@ func TestUserDeleteAuditPageAndTempFaults(t *testing.T) {
 					if err != nil {
 						return nil, err, true
 					}
+					hits.Add(1)
 					return &sd8FaultRows{Rows: rows, wrongIdentity: true}, nil, true
 				}
 				if !strings.HasPrefix(q, `SELECT resource_type,resource_key,payload::text,octet_length(payload::text)`) {
@@ -91,12 +97,15 @@ func TestUserDeleteAuditPageAndTempFaults(t *testing.T) {
 					if err != nil {
 						return nil, err, true
 					}
+					hits.Add(1)
 					return &sd8FaultRows{Rows: rows, interrupt: true}, nil, true
 				}
 				if pages == 2 && mode == "missing_page" {
+					hits.Add(1)
 					return sd8EmptyPage{}, nil, true
 				}
 				if pages == 2 && mode == "duplicate_page" {
+					hits.Add(1)
 					args[1].Value = ""
 					args[2].Value = ""
 					rows, err := c.(driver.QueryerContext).QueryContext(ctx, q, args)
@@ -122,12 +131,21 @@ func TestUserDeleteAuditPageAndTempFaults(t *testing.T) {
 						return err
 					}
 					args[0].Value = string(raw)
+					hits.Add(1)
 					return nil
 				}
 			}
-			ok, err := app.Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+			before := smokeUserBusinessState(t, h)
+			ok, err := smokeDeleteAll(t, h, app, permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
 			require.Error(t, err)
 			require.False(t, ok)
+			if strings.HasPrefix(mode, "temp_") {
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM sd8_temp_hits WHERE is_called`), "nontransactional sequence proves actual temp INSERT trigger reached")
+			} else {
+				require.EqualValues(t, 1, hits.Load(), "actual rows/identity/manifest corruption reached")
+			}
+			require.Equal(t, before, smokeUserBusinessState(t, h), "all 17 business tables rolled back with Audit")
+			t.Logf("fault=%s actually reached; business and success Audit rolled back", mode)
 			require.NotContains(t, err.Error(), "SYNTHETIC_PRIVATE")
 			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, u))
 			require.EqualValues(t, 300, sd8Scalar(t, h, `SELECT count(*) FROM schedule_on_call_users WHERE user_id=$1`, u))
@@ -146,6 +164,11 @@ func TestUserDeleteAuditCommitUnknownOverPostgres(t *testing.T) {
 	for _, mode := range []string{"commit_then_error", "rollback_then_error", "completion_unknown"} {
 		t.Run(mode, func(t *testing.T) {
 			u := sd7User(t, h)
+			sd8Assign(t, h, u, harness.SmokeOrganizationID)
+			sd8Exec(t, h, `CREATE SEQUENCE sd8_commit_hits; CREATE FUNCTION sd8_commit_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('sd8_commit_hits'); RETURN NEW; END $$; CREATE TRIGGER sd8_commit_probe BEFORE INSERT ON user_delete_audit_events FOR EACH ROW WHEN (NEW.record_kind='success_witness') EXECUTE FUNCTION sd8_commit_probe()`)
+			t.Cleanup(func() {
+				sd8Exec(t, h, `DROP TRIGGER sd8_commit_probe ON user_delete_audit_events; DROP FUNCTION sd8_commit_probe(); DROP SEQUENCE sd8_commit_hits`)
+			})
 			cm, nr := sd8CMNR(t, h, u)
 			cfg, err := pgx.ParseConfig(harness.DBURL(name))
 			require.NoError(t, err)
@@ -155,9 +178,10 @@ func TestUserDeleteAuditCommitUnknownOverPostgres(t *testing.T) {
 			defer controlled.Close()
 			app := sd7App(h)
 			app.DB = controlled
-			ok, err := app.Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+			ok, err := smokeDeleteAll(t, h, app, permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
 			require.Error(t, err)
 			require.False(t, ok)
+			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM sd8_commit_hits WHERE is_called`), "business success appender reached before injected commit acknowledgement")
 			require.EqualValues(t, 2, connector.begins.Load(), "single business attempt plus one observation writer")
 			committed := mode != "rollback_then_error"
 			wantUser, wantRoot := int64(1), int64(0)
@@ -180,7 +204,7 @@ func TestUserDeleteAuditRotationStateFaults(t *testing.T) {
 	require.NoError(t, h.App().DB().QueryRow(`SELECT current_database()`).Scan(&name))
 	for _, mode := range []string{"suppressed_state_update", "wrong_state_binding"} {
 		t.Run(mode, func(t *testing.T) {
-			u, v, w := sd7User(t, h), sd7User(t, h), sd7User(t, h)
+			u, v, w := smokeOwnedUser(t, h), smokeOwnedUser(t, h), smokeOwnedUser(t, h)
 			rot := sd6Root(t, h, "rotation", harness.SmokeOrganizationID)
 			parts := []string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
 			for i, user := range []string{u, v, w} {
@@ -193,21 +217,37 @@ func TestUserDeleteAuditRotationStateFaults(t *testing.T) {
 			defer controlled.Close()
 			app := sd7App(h)
 			app.DB = controlled
+			var stateHits atomic.Int64
+			sd8Exec(t, h, `CREATE SEQUENCE sd8_state_hits`)
+			t.Cleanup(func() { sd8Exec(t, h, `DROP SEQUENCE sd8_state_hits`) })
 			if mode == "suppressed_state_update" {
-				sd8Exec(t, h, `CREATE FUNCTION sd8_suppress_state() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NULL;END;$$;CREATE TRIGGER sd8_suppress_state BEFORE UPDATE ON rotation_state FOR EACH ROW EXECUTE FUNCTION sd8_suppress_state()`)
+				sd8Exec(t, h, `CREATE FUNCTION sd8_suppress_state() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM nextval('sd8_state_hits'); RETURN NULL;END;$$;CREATE TRIGGER sd8_suppress_state BEFORE UPDATE ON rotation_state FOR EACH ROW EXECUTE FUNCTION sd8_suppress_state()`)
 				defer sd8Exec(t, h, `DROP TRIGGER sd8_suppress_state ON rotation_state;DROP FUNCTION sd8_suppress_state()`)
 			} else {
 				connector.beforeExec = func(_ context.Context, _ driver.Conn, query string, args []driver.NamedValue) error {
 					if strings.HasPrefix(query, "UPDATE rotation_state SET position=$2,") {
 						// The real trigger derives position from this participant.
 						// Use a valid, surviving but incorrect relationship.
+						stateHits.Add(1)
 						args[2].Value = parts[0]
 					}
 					return nil
 				}
 			}
-			ok, err := app.Mutation().DeleteAll(permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
-			require.Error(t, err)
+			smokeAssertBlockedUser(t, h, app, []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
+			require.Zero(t, stateHits.Load())
+			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM sd8_state_hits WHERE is_called`))
+			t.Logf("HOLD: fault=%s hits=0; original rotation_state fault has no legal User-only path under retained-reference BLOCK", mode)
+			// CONTRACT ADAPTATION: the original real fault injectors remain
+			// armed, but retained-reference BLOCK must prevent their invocation.
+			input := []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}}
+			before := smokeUserBusinessState(t, h)
+			ok, err := app.Mutation().DeleteAll(sd3System(), input, smokePlanConfirmation(t, h, sd3System(), input))
+			smokeDeletionCode(t, err, ds.DeletionBlocked)
+			require.Equal(t, before, smokeUserBusinessState(t, h))
+			require.Zero(t, stateHits.Load())
+			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM sd8_state_hits WHERE is_called`))
+			t.Log("NEGATIVE CONTROL ONLY / NOT COVERED: original rotation_state fault remains armed but unreachable; no Fault restoration claim")
 			require.False(t, ok)
 			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, u))
 			require.EqualValues(t, 3, sd8Scalar(t, h, `SELECT participant_count FROM rotations WHERE id=$1`, rot))

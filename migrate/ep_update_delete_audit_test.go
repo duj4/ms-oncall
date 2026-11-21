@@ -14,7 +14,7 @@ import (
 func TestEPUpdateDeleteAudit305CanonicalAppend(t *testing.T) {
 	h, err := loadEmbeddedHistory()
 	require.NoError(t, err)
-	require.Len(t, h.entries, 306)
+	require.GreaterOrEqual(t, len(h.entries), 306)
 	e := h.entries[304]
 	require.Equal(t, "20261114215338-ep-update-delete-audit-v2.sql", e.ID)
 	require.Equal(t, e.ID, e.OriginalID)
@@ -27,7 +27,7 @@ func TestEPUpdateDeleteAudit305CanonicalAppend(t *testing.T) {
 	prefix := append(append([]byte{}, h.manifest[:i]...), []byte("\n  ]\n}\n")...)
 	require.Equal(t, "5165c5309fdf385242838914d48e80ff386f63e6ef57966d08fc0450f5467d33", fmt.Sprintf("%x", sha256.Sum256(prefix)), "the complete accepted 1–304 manifest remains byte-identical")
 
-	// Migration 305 retains its historical identity; 306 is the only new tail.
+	// Migrations 305 and 306 retain their historical identities.
 	tail := h.entries[305]
 	require.Equal(t, "20261115004448-schedule-target-update-delete-audit-v2.sql", tail.ID)
 	require.Equal(t, tail.ID, tail.OriginalID)
@@ -36,7 +36,6 @@ func TestEPUpdateDeleteAudit305CanonicalAppend(t *testing.T) {
 	require.Equal(t, e.ID, tail.PredecessorID)
 	require.Equal(t, provenanceMSOnCall, tail.Provenance)
 	require.Equal(t, "ms-oncall-schedule-target-update-delete-audit-d09-sd10", tail.BundleID)
-	require.Equal(t, tail, h.latest())
 	for _, entry := range []canonicalMigration{e, tail} {
 		raw, err := migrationFS.ReadFile("migrations/" + entry.ID)
 		require.NoError(t, err)

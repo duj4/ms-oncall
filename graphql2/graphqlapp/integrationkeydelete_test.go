@@ -44,7 +44,7 @@ func TestIntegrationKeyDeleteEarlyDenial(t *testing.T) {
 				ok, err := app.Mutation().DeleteAll(ctx, []assignment.RawTarget{
 					{Type: assignment.TargetTypeSchedule, ID: uuid.NewString()},
 					{Type: assignment.TargetTypeIntegrationKey, ID: id},
-				})
+				}, nil)
 				require.False(t, ok)
 				require.True(t, permission.IsPermissionError(err))
 				require.NotContains(t, err.Error(), id)

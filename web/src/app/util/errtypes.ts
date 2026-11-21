@@ -39,6 +39,12 @@ function isKnownErrorCode(code: ErrorCode): code is ErrorCode {
       return true
     case 'INVALID_MAP_FIELD_VALUE':
       return true
+    case 'DELETION_BLOCKED':
+    case 'DELETION_CONFIRMATION_REQUIRED':
+    case 'DELETION_DEPENDENCY_CHANGED':
+    case 'DELETION_PREVIEW_LIMIT_EXCEEDED':
+    case 'DELETION_UNAVAILABLE':
+      return true
     default:
       assertNever(code) // ensure we handle all error codes
       return false

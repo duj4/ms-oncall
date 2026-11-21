@@ -10,11 +10,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/target/goalert/gadb"
+	"github.com/target/goalert/internal/scheduledataref"
 	"github.com/target/goalert/schedule"
+	"github.com/target/goalert/util/jsonutil"
 	"github.com/target/goalert/util/log"
 )
 
 func (db *DB) migrateScheduleDataNotifDedup(ctx context.Context, tx *sql.Tx) (bool, error) {
+	// The existing five-second migration work window must also bound a wait
+	// for the newly locked envelope, rather than only time between queries.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	gdb := gadb.New(tx)
 	if db.migrateMap == nil {
 		rows, err := gdb.SchedMgrNCDedupMapping(ctx)
@@ -54,6 +60,9 @@ func (db *DB) migrateScheduleDataNotifDedup(ctx context.Context, tx *sql.Tx) (bo
 			return false, fmt.Errorf("get schedule data: %w", err)
 		}
 		var data schedule.Data
+		if _, err := scheduledataref.Users(rawData, sched); err != nil {
+			return false, fmt.Errorf("validate schedule data: %w", err)
+		}
 		err = json.Unmarshal(rawData, &data)
 		if err != nil {
 			return false, fmt.Errorf("unmarshal schedule data: %w", err)
@@ -78,6 +87,14 @@ func (db *DB) migrateScheduleDataNotifDedup(ctx context.Context, tx *sql.Tx) (bo
 		newData, err := json.Marshal(data.V1.OnCallNotificationRules)
 		if err != nil {
 			return false, fmt.Errorf("marshal schedule data: %w", err)
+		}
+		patch := []byte(`{"V1":{"OnCallNotificationRules":` + string(newData) + `}}`)
+		finalData, err := jsonutil.Merge(rawData, patch)
+		if err != nil {
+			return false, fmt.Errorf("merge schedule data: %w", err)
+		}
+		if err := scheduledataref.Lock(ctx, tx, sched, finalData, nil); err != nil {
+			return false, fmt.Errorf("lock final schedule data references: %w", err)
 		}
 
 		log.Logf(ctx, "Migrating schedule data for schedule %s", sched)
