@@ -249,22 +249,31 @@ func TestServiceCascadePG08SuppressionAndPG21NoActualRoot(t *testing.T) {
 			if mode == "partial" {
 				body = fmt.Sprintf(`DELETE FROM integration_keys WHERE id='%s'; RETURN NULL;`, other)
 			}
-			_, err := db.Exec(`CREATE FUNCTION sd3_suppress() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ` + body + ` END $$; CREATE TRIGGER sd3_suppress BEFORE DELETE ON ` + table + ` FOR EACH ROW EXECUTE FUNCTION sd3_suppress()`)
+			// FAULT COVERAGE RESTORATION: keep every original real SQL fault,
+			// observe it with a nontransactional sequence on a legal Service root.
+			input := []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root)}
+			confirmation := smokePlanConfirmation(t, h, sd3System(), input)
+			_, err := db.Exec(`CREATE SEQUENCE sd3_suppress_hits; CREATE FUNCTION sd3_suppress() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('sd3_suppress_hits'); ` + body + ` END $$; CREATE TRIGGER sd3_suppress BEFORE DELETE ON ` + table + ` FOR EACH ROW EXECUTE FUNCTION sd3_suppress()`)
 			require.NoError(t, err)
-			ok, err := smokeDeleteAll(t, h, sd3App(h), sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root), sd3Target(assignment.TargetTypeIntegrationKey, key.String())})
+			smokeContract4Reject(t, h, sd3App(h), sd3System(), append(input, sd3Target(assignment.TargetTypeIntegrationKey, key.String())), nil, ds.DeletionUnavailable)
+			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM sd3_suppress_hits WHERE is_called`))
+			before, audits := serviceManagementSnapshot(t, h), smokeContract4SuccessState(t, h)
+			ok, err := sd3App(h).Mutation().DeleteAll(sd3System(), input, confirmation)
 			if mode == "root" {
 				require.NoError(t, err)
 				require.True(t, ok)
-				var exists bool
-				require.NoError(t, db.QueryRow(`SELECT EXISTS(SELECT FROM integration_keys WHERE id=$1)`, key).Scan(&exists))
-				require.False(t, exists)
 			} else {
 				require.Error(t, err)
 				require.False(t, ok)
 				require.NotContains(t, err.Error(), "sd3_suppress")
 			}
+			require.Positive(t, sd8Scalar(t, h, `SELECT last_value FROM sd3_suppress_hits WHERE is_called`), "real original DELETE fault reached")
+			require.Equal(t, before, serviceManagementSnapshot(t, h))
+			require.Equal(t, audits, smokeContract4SuccessState(t, h))
 			require.Equal(t, 1, serviceManagementCount(t, h, "services", root))
 			require.Zero(t, sd1Count(t, h, "committed"))
+			t.Logf("FAULT COVERAGE RESTORATION: real %s trigger reached, all business identities and successful Audits preserved; mixed explicit-Key semantics NOT REACHABLE", mode)
+
 		})
 	}
 }

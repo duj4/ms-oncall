@@ -17,40 +17,36 @@ import (
 	"github.com/target/goalert/test/smoke/harness"
 )
 
+// CONTRACT ADAPTATION / NEW LEGAL EQUIVALENT COVERAGE: preserve mixed
+// refusal and NOWAIT; a later committed Key must stale the original Preview.
 func TestServiceCascadePG07LateExplicitKey(t *testing.T) {
 	h := sd1Harness(t)
-	db := h.App().DB()
 	root := h.UUID("service-b")
 	credential := uuid.New()
-	conn, err := db.Conn(t.Context())
-	require.NoError(t, err)
-	defer conn.Close()
-	tx, err := conn.BeginTx(t.Context(), nil)
+	app := sd3App(h)
+	input := []assignment.RawTarget{sd3Target(assignment.TargetTypeService, root)}
+	stale := smokePlanConfirmation(t, h, sd3System(), input)
+	smokeContract4Reject(t, h, app, sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, credential.String()), input[0]}, nil, ds.DeletionUnavailable)
+	tx, err := sd5ExternalDB(t, h, "").BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	var pid int
-	require.NoError(t, tx.QueryRow(`SELECT pg_backend_pid()`).Scan(&pid))
 	_, err = tx.Exec(`SELECT id FROM services WHERE id=$1 FOR UPDATE`, root)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(sd3System(), 15*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := smokeDeleteAll(t, h, sd3App(h), ctx, []assignment.RawTarget{sd3Target(assignment.TargetTypeIntegrationKey, credential.String()), sd3Target(assignment.TargetTypeService, root)})
-		done <- err
-	}()
-	sd3WaitBlocked(t, db, pid)
+	smokeContract4LockPID(t, h, tx)
+	smokeContract4Reject(t, h, app, sd3System(), input, stale, ds.DeletionUnavailable)
 	var safe uuid.UUID
 	require.NoError(t, tx.QueryRow(`INSERT INTO integration_keys(id,service_id,name,type) VALUES($1,$2,'SD3 late','generic') RETURNING audit_resource_id`, credential, root).Scan(&safe))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, <-done)
+	smokeContract4Reject(t, h, app, sd3System(), input, stale, ds.DeletionDependencyChanged)
+	smokeContract4Gate(t, h, app, sd3System(), input, "services", false, func(_ context.Context, pid int) { require.Positive(t, pid) })
 	effects := sd3Effects(t, h, root)
 	require.Len(t, effects, 1)
 	f := effects[0]
 	require.Equal(t, safe, *f.ResourceUUID)
-	require.Equal(t, "EXPLICIT", f.Provenance)
+	require.Equal(t, "CASCADE", f.Provenance)
 	require.Equal(t, "fk_cascade", f.DeletionMechanism)
 	require.Equal(t, "service_delete", f.Cause)
+	t.Log("PARTIAL LEGAL COVERAGE: real writer/late Key/version recheck and legal DELETE barrier restored; mixed late EXPLICIT Key / old waiting semantics NOT REACHABLE")
 }
 
 func sd3WaitExactBlock(t *testing.T, observer *sql.Conn, blocker, waiter int) {

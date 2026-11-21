@@ -125,37 +125,62 @@ func TestUserSessionAuditEndAllAndAtomicRollback(t *testing.T) {
 	usHTTP(t, f, "om", `mutation{endAllAuthSessionsByCurrentUser}`, false)
 	require.Equal(t, before, usSuccesses(t, h))
 	usHTTP(t, f, "pd0", `mutation{endAllAuthSessionsByCurrentUser}`, true)
+	// CONTRACT ADAPTATION / FAULT COVERAGE RESTORATION: retain the original
+	// three paths, but distinguish real Detail failure from mixed-root refusal.
 	for _, mode := range []string{"end_all", "selected", "mixed"} {
 		t.Run(mode, func(t *testing.T) {
 			id, safe := usSession(t, h, owner)
-			sd8Exec(t, h, `CREATE FUNCTION us_fail_detail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'SYNTHETIC_PRIVATE_SQL';END;$$; CREATE TRIGGER us_fail_detail BEFORE INSERT ON user_session_revoke_audit_details FOR EACH ROW EXECUTE FUNCTION us_fail_detail()`)
-			query := usQuery(id)
-			actor := "pam"
-			var contact string
+			closureSessionFault(t, h, true)
+			defer closureSessionFault(t, h, false)
+			query, actor, contact := usQuery(id), "pam", ""
 			if mode == "end_all" {
-				query = `mutation{endAllAuthSessionsByCurrentUser}`
-				actor = "om"
+				query, actor = `mutation{endAllAuthSessionsByCurrentUser}`, "om"
 			}
 			if mode == "mixed" {
 				contact, _ = sd8CMNR(t, h, owner)
 				query = fmt.Sprintf(`mutation{deleteAll(input:[{type:contactMethod,id:%q},{type:userSession,id:%q}])}`, contact, id)
 			}
-			expected := h.ExpectBackendError("GraphQL operation failed")
-			usHTTP(t, f, actor, query, true)
-			expected()
+			businessBefore := smokeUserBusinessState(t, h)
+			before := usSuccesses(t, h)
+			attempts := sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_events WHERE record_kind='attempt_observation'`)
+			if mode == "mixed" {
+				closureHTTPError(t, usHTTP(t, f, actor, query, true), "deleteAll", "DELETION_UNAVAILABLE")
+				require.Zero(t, closureSessionFaultHits(t, h), "mixed-root refusal must precede Detail INSERT")
+				t.Log("NOT REACHABLE: cross-family Detail fault; real mixed-root rejection retained")
+			} else {
+				expected := h.ExpectBackendError("GraphQL operation failed")
+				usHTTP(t, f, actor, query, true)
+				expected()
+				require.EqualValues(t, 1, closureSessionFaultHits(t, h), "real Audit Detail INSERT fault reached once")
+				require.Equal(t, attempts+1, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_events WHERE record_kind='attempt_observation'`))
+				t.Log("FAULT COVERAGE RESTORATION: real PostgreSQL Detail INSERT raised; Session and success witness rolled back")
+			}
+			require.Equal(t, businessBefore, smokeUserBusinessState(t, h), "all Session rows and business relationships must roll back together")
+			require.Equal(t, before, usSuccesses(t, h))
 			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
 			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
 			if contact != "" {
 				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, contact))
 			}
-			sd8Exec(t, h, `DROP TRIGGER us_fail_detail ON user_session_revoke_audit_details; DROP FUNCTION us_fail_detail()`)
 		})
 	}
 	contact, _ := sd8CMNR(t, h, owner)
 	id, safe := usSession(t, h, owner)
-	usHTTP(t, f, "pam", fmt.Sprintf(`mutation{deleteAll(input:[{type:contactMethod,id:%q},{type:userSession,id:%q}])}`, contact, id), false)
-	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
-	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details d JOIN user_session_revoke_audit_events e USING(event_id) JOIN user_cmnr_delete_audit_events c ON c.request_id=e.request_id AND c.execution_id=e.execution_id AND c.attempt_id=e.attempt_id WHERE d.session_audit_id=$1 AND c.root_id=$2 AND c.record_kind='success_witness'`, safe, contact))
+	// The former mixed success is now an explicit negative control, followed by
+	// a legal Session-only transaction. It makes no cross-family atomicity claim.
+	closureHTTPError(t, usHTTP(t, f, "pam", fmt.Sprintf(`mutation{deleteAll(input:[{type:contactMethod,id:%q},{type:userSession,id:%q}])}`, contact, id), true), "deleteAll", "DELETION_UNAVAILABLE")
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=$1`, safe))
+	before = usSuccesses(t, h)
+	usHTTP(t, f, "pam", usQuery(id, id), false)
+	require.Equal(t, before+1, usSuccesses(t, h))
+	require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, id))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details d JOIN user_session_revoke_audit_events e USING(event_id) WHERE d.session_audit_id=$1 AND d.cause='explicit_target' AND e.affected_count=1 AND e.record_kind='success_witness' AND e.actor_id=$2 AND e.request_id IS NOT NULL AND e.execution_id IS NOT NULL AND e.attempt_id IS NOT NULL`, safe, h.UUID("pam")))
+	require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
+	usHTTP(t, f, "pam", usQuery(id), false)
+	require.Equal(t, before+1, usSuccesses(t, h), "no duplicate mutation or witness on a new request")
 
 }
 func TestUserSessionAuditSystemCascadeAndPaging(t *testing.T) {

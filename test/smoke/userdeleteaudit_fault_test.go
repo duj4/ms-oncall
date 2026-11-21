@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/permission"
 	"github.com/target/goalert/test/smoke/harness"
 )
@@ -237,8 +238,16 @@ func TestUserDeleteAuditRotationStateFaults(t *testing.T) {
 			require.Zero(t, stateHits.Load())
 			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM sd8_state_hits WHERE is_called`))
 			t.Logf("HOLD: fault=%s hits=0; original rotation_state fault has no legal User-only path under retained-reference BLOCK", mode)
-			ok, err := smokeDeleteAll(t, h, app, permission.SystemContext(t.Context(), "Engine"), []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}})
-			require.Error(t, err)
+			// CONTRACT ADAPTATION: the original real fault injectors remain
+			// armed, but retained-reference BLOCK must prevent their invocation.
+			input := []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}}
+			before := smokeUserBusinessState(t, h)
+			ok, err := app.Mutation().DeleteAll(sd3System(), input, smokePlanConfirmation(t, h, sd3System(), input))
+			smokeDeletionCode(t, err, ds.DeletionBlocked)
+			require.Equal(t, before, smokeUserBusinessState(t, h))
+			require.Zero(t, stateHits.Load())
+			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM sd8_state_hits WHERE is_called`))
+			t.Log("NEGATIVE CONTROL ONLY / NOT COVERED: original rotation_state fault remains armed but unreachable; no Fault restoration claim")
 			require.False(t, ok)
 			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM users WHERE id=$1`, u))
 			require.EqualValues(t, 3, sd8Scalar(t, h, `SELECT participant_count FROM rotations WHERE id=$1`, rot))

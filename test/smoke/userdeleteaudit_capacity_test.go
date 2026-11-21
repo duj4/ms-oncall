@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
+	"github.com/target/goalert/app"
 	"github.com/target/goalert/assignment"
 	ds "github.com/target/goalert/deletionsafety"
 	"github.com/target/goalert/limit"
@@ -59,7 +60,19 @@ func TestUserDeleteAuditCapacity(t *testing.T) {
 }
 
 func TestUserDeleteAuditRotationIdentity(t *testing.T) {
-	h := sd1Harness(t)
+	// FIXTURE REPAIR: a no-Mutation control proved the legacy paused Engine
+	// can recreate a deliberately missing State. Use the existing production
+	// API-only mode before startup so background reconciliation cannot race
+	// the complete no-mutation snapshots. Keep all seven original shapes.
+	h := harness.NewStoppedHarness(t, servicePlatformAdminSQL, nil, "")
+	h.StartWithAppCfgHook(func(cfg *app.Config) { cfg.APIOnly = true })
+	t.Cleanup(func() {
+		// The existing Harness.Close verifies real Engine cycles. Restore its
+		// normal lifecycle only after every API-only preservation assertion.
+		h.RestartGoAlertWithAppCfgHook(func(cfg *app.Config) { cfg.APIOnly = false })
+		h.Close()
+	})
+	epB1Exec(t, h, `INSERT INTO schedules(id,organization_id,name,time_zone) VALUES($1,$2,'SD1 Home Schedule','UTC')`, h.UUID("schedule-a"), harness.SmokeOrganizationID)
 	for _, shape := range []string{"UVW", "UUVW", "UVUW", "UUU", "U1U2", "missing_state", "large"} {
 		t.Run(shape, func(t *testing.T) {
 			u, v, w := smokeOwnedUser(t, h), smokeOwnedUser(t, h), smokeOwnedUser(t, h)
@@ -91,51 +104,43 @@ func TestUserDeleteAuditRotationIdentity(t *testing.T) {
 			}
 			if shape == "missing_state" {
 				sd8Exec(t, h, `DELETE FROM rotation_state WHERE rotation_id=$1`, rot)
+				t.Cleanup(func() { sd8Exec(t, h, `DELETE FROM rotations WHERE id=$1`, rot) })
 			}
 			input := []assignment.RawTarget{{Type: assignment.TargetTypeUser, ID: u}}
 			if shape == "U1U2" {
 				input = append(input, assignment.RawTarget{Type: assignment.TargetTypeUser, ID: v})
 			}
-			if shape != "large" && shape != "missing_state" {
-				smokeAssertBlockedUser(t, h, sd7App(h), input)
-				t.Log("HOLD: original successful participant identity compaction remains unsupported; negative control is not a recovery claim")
+			// CONTRACT ADAPTATION: retain every original identity/scale shape.
+			// A surviving Participant blocks User deletion; no participant may
+			// be implicitly compacted, even with a real Preview confirmation.
+			before, audits := smokeUserBusinessState(t, h), smokeDeletionSuccesses(t, h)
+			preview, previewErr := smokeDeletionPreview(t, h, sd3System(), input)
+			// FIXTURE REPAIR: the large shape has one reference to U and
+			// 4999 to retained V. A User Preview does not charge V's references.
+			// Missing Rotation State does not override the existing Participant
+			// BLOCK either: every original shape has the same legal refusal.
+			require.NoError(t, previewErr)
+			require.True(t, preview.Complete)
+			require.False(t, preview.CanProceed)
+			confirmation := smokePlanConfirmation(t, h, sd3System(), input)
+			ok, err := sd7App(h).Mutation().DeleteAll(sd3System(), input, confirmation)
+			smokeDeletionCode(t, err, ds.DeletionBlocked)
+			require.False(t, ok)
+
+			require.Equal(t, before, smokeUserBusinessState(t, h))
+			require.Equal(t, audits, smokeDeletionSuccesses(t, h))
+			for i, user := range users {
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM rotation_participants WHERE id=$1 AND user_id=$2 AND position=$3`, ids[i], user, i))
 			}
-			ok, err := smokeDeleteAll(t, h, sd7App(h), permission.SystemContext(t.Context(), "Engine"), input)
+			require.EqualValues(t, len(users), sd8Scalar(t, h, `SELECT participant_count FROM rotations WHERE id=$1`, rot))
+			require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects f JOIN user_delete_audit_events e USING(event_id) WHERE e.root_id=ANY($1::uuid[])`, uuidArray(input)))
+			t.Log("NEGATIVE CONTROL ONLY / NOT REACHABLE: original User-only participant identity compaction; all identities, positions, State and Audits preserved")
 			if shape == "missing_state" {
-				require.Error(t, err)
-				require.False(t, ok)
-				require.EqualValues(t, len(users), sd8Scalar(t, h, `SELECT count(*) FROM rotation_participants WHERE rotation_id=$1`, rot))
-				// This deliberately invalid fixture must not escape into the
-				// harness's final background Engine cycles after rollback checks.
+				// Dispose only the task-created invalid fixture after preservation
+				// checks, before the harness runs its final background Engine.
 				sd8Exec(t, h, `DELETE FROM rotations WHERE id=$1`, rot)
-				return
 			}
-			require.NoError(t, err)
-			require.True(t, ok)
-			expected := []string{}
-			for _, user := range users {
-				if user != u && (shape != "U1U2" || user != v) {
-					expected = append(expected, user)
-				}
-			}
-			rows, err := h.App().DB().Query(`SELECT id,user_id,position FROM rotation_participants WHERE rotation_id=$1 ORDER BY position`, rot)
-			require.NoError(t, err)
-			i := 0
-			for rows.Next() {
-				var id, user string
-				var pos int
-				require.NoError(t, rows.Scan(&id, &user, &pos))
-				require.Less(t, i, len(expected))
-				require.Equal(t, ids[i], id)
-				require.Equal(t, expected[i], user)
-				require.Equal(t, i, pos)
-				i++
-			}
-			require.NoError(t, rows.Err())
-			rows.Close()
-			require.Equal(t, len(expected), i)
-			require.EqualValues(t, len(expected), sd8Scalar(t, h, `SELECT participant_count FROM rotations WHERE id=$1`, rot))
-			require.EqualValues(t, len(users)-len(expected), sd8Scalar(t, h, `SELECT count(*) FROM user_delete_audit_effects f JOIN user_delete_audit_events e USING(event_id) WHERE e.root_id=ANY($1::uuid[]) AND f.resource_type='rotation_participant' AND f.payload->>'change'='relationship_removed'`, uuidArray(input)))
+
 		})
 	}
 }

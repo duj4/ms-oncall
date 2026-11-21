@@ -108,49 +108,66 @@ func TestUserSessionAuditU1UserMatrix(t *testing.T) {
 func TestUserSessionAuditU1BatchAtomicity(t *testing.T) {
 	f := globalOrganizationFixture(t)
 	h := f.h
-	for _, mode := range []string{"U1-09_audit_failure", "U1-11_mixed_failure", "U1-11_mixed_success"} {
+	// CONTRACT ADAPTATION: keep every former mixed scenario as a real refusal;
+	// add a legal homogeneous success rather than invent a mixed transaction.
+	for _, mode := range []string{"U1-09_audit_failure", "U1-11_mixed_failure", "U1-11_mixed_success", "legal_session_batch"} {
 		t.Run(mode, func(t *testing.T) {
 			one, s1 := usSession(t, h, h.UUID("om"))
 			two, s2 := usSession(t, h, h.UUID("om"))
 			foreign, sf := usSession(t, h, h.UUID("b"))
-			query := usQuery(one, two, one, foreign)
-			contact := ""
-			if mode != "U1-09_audit_failure" {
+			query, contact := usQuery(one, two, one, foreign), ""
+			mixed := mode == "U1-11_mixed_failure" || mode == "U1-11_mixed_success"
+			if mixed {
 				contact, _ = sd8CMNR(t, h, h.UUID("om"))
 				query = fmt.Sprintf(`mutation{deleteAll(input:[{type:contactMethod,id:%q},{type:userSession,id:%q},{type:userSession,id:%q},{type:userSession,id:%q},{type:userSession,id:%q}])}`, contact, one, two, one, foreign)
 			}
+			businessBefore := smokeUserBusinessState(t, h)
 			before := usSuccesses(t, h)
-			failed := mode != "U1-11_mixed_success"
-			if failed {
-				sd8Exec(t, h, `CREATE FUNCTION us_u1_fail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'SYNTHETIC_PRIVATE_SQL';END;$$; CREATE TRIGGER us_u1_fail BEFORE INSERT ON user_session_revoke_audit_details FOR EACH ROW EXECUTE FUNCTION us_u1_fail()`)
+			fault := mode != "U1-11_mixed_success" && mode != "legal_session_batch"
+			if fault {
+				closureSessionFault(t, h, true)
+				defer closureSessionFault(t, h, false)
+			}
+			if mixed {
+				closureHTTPError(t, usHTTP(t, f, "om", query, true), "deleteAll", "DELETION_UNAVAILABLE")
+				if fault {
+					require.Zero(t, closureSessionFaultHits(t, h))
+				}
+				t.Log("NOT REACHABLE: mixed-root witness correlation / Detail fault; refusal before DML verified")
+			} else if fault {
 				expected := h.ExpectBackendError("GraphQL operation failed")
 				usHTTP(t, f, "om", query, true)
 				expected()
-				sd8Exec(t, h, `DROP TRIGGER us_u1_fail ON user_session_revoke_audit_details; DROP FUNCTION us_u1_fail()`)
+				require.EqualValues(t, 1, closureSessionFaultHits(t, h))
+				t.Log("FAULT COVERAGE RESTORATION: real Detail INSERT fault; complete homogeneous batch rolled back")
 			} else {
 				usHTTP(t, f, "om", query, false)
 			}
-			remaining, details, roots := int64(0), int64(2), int64(1)
-			if failed {
-				remaining, details, roots = 2, 0, 0
+			if mixed || fault {
+				require.Equal(t, businessBefore, smokeUserBusinessState(t, h), "whole business snapshot preserved, including foreign/current Sessions")
+			}
+			remaining, details, roots := int64(2), int64(0), int64(0)
+			if mode == "legal_session_batch" {
+				remaining, details, roots = 0, 2, 1
 			}
 			require.Equal(t, remaining, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=ANY($1)`, []string{one, two}))
-			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1`, foreign))
+			require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM auth_user_sessions WHERE id=$1 AND user_id=$2`, foreign, h.UUID("b")))
 			require.Equal(t, details, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=ANY($1)`, []uuid.UUID{s1, s2, sf}))
 			require.Equal(t, before+roots, usSuccesses(t, h))
 			if contact != "" {
-				wantContact := int64(0)
-				if failed {
-					wantContact = 1
-				}
-				require.Equal(t, wantContact, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
-				require.Equal(t, roots, sd8Scalar(t, h, `SELECT count(*) FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, contact))
-				if !failed {
-					require.EqualValues(t, 2, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_events e JOIN user_session_revoke_audit_details d USING(event_id) JOIN user_cmnr_delete_audit_events c ON c.request_id=e.request_id AND c.execution_id=e.execution_id AND c.attempt_id=e.attempt_id WHERE d.session_audit_id=ANY($1) AND c.root_id=$2 AND c.record_kind='success_witness'`, []uuid.UUID{s1, s2}, contact))
-				}
+				require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM user_contact_methods WHERE id=$1`, contact))
+				require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM user_cmnr_delete_audit_events WHERE root_id=$1 AND record_kind='success_witness'`, contact))
+			}
+			if roots == 1 {
+				require.EqualValues(t, 2, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details d JOIN user_session_revoke_audit_events e USING(event_id) WHERE d.session_audit_id=ANY($1) AND d.target_user_id=$2 AND d.cause='explicit_target' AND e.actor_id=$2 AND e.initiator_user_id=$2 AND e.affected_count=2 AND e.record_kind='success_witness' AND e.outcome='committed' AND e.request_id IS NOT NULL AND e.execution_id IS NOT NULL AND e.attempt_id IS NOT NULL AND e.request_id<>e.execution_id AND e.execution_id<>e.attempt_id AND e.request_id<>'00000000-0000-4000-8000-000000000001'::uuid`, []uuid.UUID{s1, s2}, h.UUID("om")))
+				require.EqualValues(t, 2, sd8Scalar(t, h, `SELECT count(DISTINCT effect_ordinal) FROM user_session_revoke_audit_details WHERE session_audit_id=ANY($1)`, []uuid.UUID{s1, s2}))
+				usHTTP(t, f, "om", query, false)
+				require.Equal(t, before+1, usSuccesses(t, h))
+				require.EqualValues(t, 2, sd8Scalar(t, h, `SELECT count(*) FROM user_session_revoke_audit_details WHERE session_audit_id=ANY($1)`, []uuid.UUID{s1, s2}))
 			}
 		})
 	}
+
 }
 
 func TestUserSessionAuditU1ConcurrentUserBatch(t *testing.T) {

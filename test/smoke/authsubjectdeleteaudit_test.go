@@ -612,33 +612,109 @@ func TestAuthSubjectDeleteRealStoreStageAndRecreation(t *testing.T) {
 	require.Equal(t, 1, asCount(t, h, id, "audit"), "live owner deletion must preserve historical roots")
 }
 
+// CONTRACT ADAPTATION / FIXTURE REPAIR: GraphQL executes top-level mutation
+// fields serially, with a separate transaction owner per resolver. Confirmation
+// is obtained before the request; a preceding dependency change must stale it.
 func TestAuthSubjectDeleteSignedMixedFields(t *testing.T) {
 	for _, mode := range []string{"a_user", "user_a", "a_cm", "cm_a"} {
 		t.Run(mode, func(t *testing.T) {
 			f := globalOrganizationFixture(t)
 			h := f.h
-			owner := h.UUID("b")
-			cm := h.UUID("cm-b")
-			id, subject := asSubject(t, h, owner, cm)
-			typ, parentID := "user", owner
+			typ := "user"
+			kind := assignment.TargetTypeUser
 			if strings.Contains(mode, "cm") {
-				typ, parentID = "contactMethod", cm
+				typ, kind = "contactMethod", assignment.TargetTypeContactMethod
 			}
-			a := `a:deleteAuthSubject(input:` + asInput(owner, subject) + `)`
-			parent := fmt.Sprintf(`p:deleteAll(input:[{type:%s,id:%q}])`, typ, parentID)
-			query := `mutation{` + a + ` ` + parent + `}`
-			if strings.HasSuffix(mode, "_a") {
-				query = `mutation{` + parent + ` ` + a + `}`
+			parentFirst := strings.HasSuffix(mode, "_a")
+			// Retain the original cross-Home parent as a rejection, without a
+			// preceding separately authorized field disguising partial effects.
+			foreignOwner, foreignCM := h.UUID("b"), h.UUID("cm-b")
+			foreignID, _ := asSubject(t, h, foreignOwner, foreignCM)
+			foreignParent := foreignOwner
+			if typ == "contactMethod" {
+				foreignParent = foreignCM
 			}
-			r := asHTTP(t, h, f.tokens["pam"], query, nil, false)
-			require.Empty(t, r["errors"])
-			require.JSONEq(t, `{"a":true,"p":true}`, string(r["data"]))
-			explicit := 1
-			if strings.HasSuffix(mode, "_a") {
-				explicit = 0
+			negativeState, negativeAudits := smokeUserBusinessState(t, h), smokeDeletionSuccesses(t, h)
+			r := asHTTP(t, h, f.tokens["pam"], fmt.Sprintf(`mutation{p:deleteAll(input:[{type:%s,id:%q}])}`, typ, foreignParent), nil, false)
+			closureHTTPError(t, r, "p", "DELETION_UNAVAILABLE")
+			require.Equal(t, negativeState, smokeUserBusinessState(t, h))
+			require.Equal(t, negativeAudits, smokeDeletionSuccesses(t, h))
+			require.Equal(t, 1, asCount(t, h, foreignID, "business"))
+			require.Zero(t, asCount(t, h, foreignID, "audit"))
+			for _, overlap := range []bool{false, true} {
+				// No retained Rotation Participant: this is a legal Home fixture,
+				// not a change to the User/Rotation BLOCK rule.
+				owner := sd7User(t, h)
+				sd8Assign(t, h, owner, h.UUID("s2-org-a"))
+				cm, _ := sd8CMNR(t, h, owner)
+				id, subject := asSubject(t, h, owner, cm)
+				parentID := owner
+				if typ == "contactMethod" {
+					parentID = cm
+				}
+				if !overlap {
+					other := sd7User(t, h)
+					sd8Assign(t, h, other, h.UUID("s2-org-a"))
+					otherCM, _ := sd8CMNR(t, h, other)
+					parentID = other
+					if typ == "contactMethod" {
+						parentID = otherCM
+					}
+				}
+				targets := []assignment.RawTarget{{Type: kind, ID: parentID}}
+				confirmation, err := smokeDeletionConfirmation(t, h, a12HumanContext(t, f, "pam"), targets)
+				require.NoError(t, err)
+				require.NotNil(t, confirmation)
+				// A missing confirmation must leave both parent and subject intact.
+				negativeState, negativeAudits = smokeUserBusinessState(t, h), smokeDeletionSuccesses(t, h)
+				r = asHTTP(t, h, f.tokens["pam"], fmt.Sprintf(`mutation{p:deleteAll(input:[{type:%s,id:%q}])}`, typ, parentID), nil, false)
+				closureHTTPError(t, r, "p", "DELETION_CONFIRMATION_REQUIRED")
+				require.Equal(t, negativeState, smokeUserBusinessState(t, h))
+				require.Equal(t, negativeAudits, smokeDeletionSuccesses(t, h))
+				require.Equal(t, 1, asCount(t, h, id, "business"))
+				require.Zero(t, asCount(t, h, id, "audit"))
+				a := `a:deleteAuthSubject(input:` + asInput(owner, subject) + `)`
+				parent := fmt.Sprintf(`p:deleteAll(input:[{type:%s,id:%q}],confirmation:$confirmation)`, typ, parentID)
+				fields := a + " " + parent
+				if parentFirst {
+					fields = parent + " " + a
+				}
+				query := `mutation($confirmation:DeletionSafetyConfirmationInput){` + fields + `}`
+				r = asHTTP(t, h, f.tokens["pam"], query, map[string]any{"confirmation": confirmation}, false)
+				table := "users"
+				if typ == "contactMethod" {
+					table = "user_contact_methods"
+				}
+				if overlap && !parentFirst {
+					closureHTTPError(t, r, "p", "DELETION_DEPENDENCY_CHANGED")
+					require.EqualValues(t, 1, sd8Scalar(t, h, `SELECT count(*) FROM `+table+` WHERE id=$1`, parentID))
+					t.Log("overlapping earlier AuthSubject field committed separately; parent rejected stale Preview, no request-wide atomicity claimed")
+				} else {
+					require.Empty(t, r["errors"])
+					require.JSONEq(t, `{"a":true,"p":true}`, string(r["data"]))
+					require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM `+table+` WHERE id=$1`, parentID))
+				}
+				parentAudit, parentSuccess := "user_delete_audit_events", 1
+				if typ == "contactMethod" {
+					parentAudit = "user_cmnr_delete_audit_events"
+				}
+				if overlap && !parentFirst {
+					parentSuccess = 0
+				}
+				require.EqualValues(t, parentSuccess, sd8Scalar(t, h, `SELECT count(*) FROM `+parentAudit+` WHERE root_id=$1 AND record_kind='success_witness'`, parentID))
+				explicit := 1
+				if overlap && parentFirst {
+					explicit = 0
+				}
+				require.Equal(t, explicit, asCount(t, h, id, "audit"))
+				require.Zero(t, asCount(t, h, id, "business"))
+				// Duplicate aliased selectors are no-ops after either explicit or
+				// parent-cascade removal, and cannot manufacture success witnesses.
+				r = asHTTP(t, h, f.tokens["pam"], `mutation{a:deleteAuthSubject(input:`+asInput(owner, subject)+`) b:deleteAuthSubject(input:`+asInput(owner, subject)+`)}`, nil, false)
+				require.Empty(t, r["errors"])
+				require.JSONEq(t, `{"a":true,"b":true}`, string(r["data"]))
+				require.Equal(t, explicit, asCount(t, h, id, "audit"))
 			}
-			require.Equal(t, explicit, asCount(t, h, id, "audit"))
-			require.Zero(t, asCount(t, h, id, "business"))
 		})
 	}
 }

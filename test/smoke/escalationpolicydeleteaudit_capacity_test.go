@@ -9,13 +9,17 @@ import (
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"github.com/target/goalert/assignment"
+	ds "github.com/target/goalert/deletionsafety"
 	epaudit "github.com/target/goalert/escalation/deleteaudit"
 	"github.com/target/goalert/test/smoke/harness"
 )
 
 func TestEscalationPolicyDeleteAuditCountBudgetAcrossRoots(t *testing.T) {
 	t.Parallel()
-	for _, count := range []int{epaudit.MaxEffects, epaudit.MaxEffects + 1} {
+	// CONTRACT ADAPTATION: preserve both legacy inputs and add the current
+	// 10,000-row stabilization and weighted Preview boundaries. Fifty roots
+	// plus one authoritative Organization consume 51 stabilization rows.
+	for _, count := range []int{ds.DefaultBudget().MaxDependencies - 51, ds.DefaultBudget().MaxDependencies - 50, ds.DefaultBudget().MaxDependencies, ds.DefaultBudget().MaxDependencies + 1, epaudit.MaxEffects, epaudit.MaxEffects + 1} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			h := sd1Harness(t)
 			db := h.App().DB()
@@ -32,29 +36,40 @@ func TestEscalationPolicyDeleteAuditCountBudgetAcrossRoots(t *testing.T) {
 			require.NoError(t, err)
 			_, err = db.Exec(`INSERT INTO escalation_policy_steps(escalation_policy_id) SELECT roots[(n-1)%50+1] FROM (SELECT $1::uuid[] roots) r CROSS JOIN generate_series(1,$2) n`, pq.Array(roots), count)
 			require.NoError(t, err)
-			ok, err := smokeDeleteAll(t, h, sd5App(h), sd3System(), input)
-			var actual int
-			require.NoError(t, db.QueryRow(`SELECT count(*) FROM escalation_policy_steps WHERE escalation_policy_id=ANY($1::uuid[])`, pq.Array(roots)).Scan(&actual))
-			if count == epaudit.MaxEffects {
-				require.NoError(t, err)
-				require.True(t, ok)
-				require.Zero(t, actual)
-				require.Equal(t, 50, sd5Count(t, h))
-				var total, bytes int
-				require.NoError(t, db.QueryRow(`SELECT sum(jsonb_array_length(effects)),sum(octet_length(effects::text)) FROM escalation_policy_delete_audit_events WHERE record_kind='success_witness'`).Scan(&total, &bytes))
-				require.Equal(t, count, total)
-				require.LessOrEqual(t, bytes, epaudit.MaxJSONBytes)
-				t.Logf("actual 50-root count boundary: effects=%d PG bytes=%d", total, bytes)
+			before, audits := serviceManagementSnapshot(t, h), smokeContract4SuccessState(t, h)
+			preview, previewErr := smokeDeletionPreview(t, h, sd3System(), input)
+			if count > ds.DefaultBudget().MaxDependencies {
+				smokeDeletionCode(t, previewErr, ds.DeletionPreviewLimitExceeded)
+				require.Nil(t, preview)
+				smokeContract4Reject(t, h, sd5App(h), sd3System(), input, nil, ds.DeletionPreviewLimitExceeded)
 			} else {
-				require.Error(t, err)
-				require.False(t, ok)
-				require.Equal(t, count, actual)
-				require.Zero(t, sd5Count(t, h))
-				var observations, attempts int
-				require.NoError(t, db.QueryRow(`SELECT count(*),count(DISTINCT attempt_id) FROM escalation_policy_delete_audit_events`).Scan(&observations, &attempts))
-				require.Equal(t, 50, observations)
-				require.Equal(t, 1, attempts, "sticky capacity failure must not retry")
+				require.NoError(t, previewErr)
+				require.True(t, preview.CanProceed)
+				require.True(t, preview.Complete)
+				confirmation := smokePlanConfirmation(t, h, sd3System(), input)
+				if count >= ds.DefaultBudget().MaxDependencies-50 {
+					smokeContract4Reject(t, h, sd5App(h), sd3System(), input, confirmation, ds.DeletionPreviewLimitExceeded)
+				} else {
+					ok, err := sd5App(h).Mutation().DeleteAll(sd3System(), input, confirmation)
+					require.NoError(t, err)
+					require.True(t, ok)
+					require.Equal(t, 50, sd5Count(t, h))
+					require.EqualValues(t, count, sd8Scalar(t, h, `SELECT sum(jsonb_array_length(effects)) FROM escalation_policy_delete_audit_events WHERE record_kind='success_witness'`))
+					require.Zero(t, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_steps WHERE escalation_policy_id=ANY($1::uuid[])`, pq.Array(roots)))
+					for _, root := range roots {
+						require.Zero(t, serviceManagementCount(t, h, "escalation_policies", root))
+					}
+					t.Logf("NEW LEGAL EQUIVALENT COVERAGE: 50 roots + %d Steps + Organization = 10000 stable rows, complete B2 effects committed", count)
+					return
+				}
 			}
+			require.Equal(t, before, serviceManagementSnapshot(t, h))
+			require.Equal(t, audits, smokeContract4SuccessState(t, h))
+			require.EqualValues(t, count, sd8Scalar(t, h, `SELECT count(*) FROM escalation_policy_steps WHERE escalation_policy_id=ANY($1::uuid[])`, pq.Array(roots)))
+			if count >= epaudit.MaxEffects {
+				t.Log("LEGACY AUDIT BOUNDARY NOT REACHABLE: original 16384/16385 fixtures retained, earlier budget refused before Audit")
+			}
+
 		})
 	}
 }
@@ -86,28 +101,22 @@ func TestEscalationPolicyDeleteAuditByteBudgetAcrossRoots(t *testing.T) {
 			// projection by exactly one byte. This reaches 8 MiB and 8 MiB+1 exactly.
 			_, err = db.Exec(`INSERT INTO user_favorites(id,user_id,tgt_escalation_policy_id) SELECT CASE WHEN n<=$3 THEN 100000000000000000+n ELSE 1000000000000000000+n END,id,CASE WHEN n%2=0 THEN $1::uuid ELSE $2::uuid END FROM (SELECT id,row_number() OVER(ORDER BY id) n FROM users WHERE name='SD5 byte owner') owners`, root, other, reduce)
 			require.NoError(t, err)
-			ok, err := smokeDeleteAll(t, h, sd5App(h), sd3System(), []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root), sd3Target(assignment.TargetTypeEscalationPolicy, other)})
-			if extra == 0 {
-				require.NoError(t, err)
-				require.True(t, ok)
-				var bytes, effects int
-				require.NoError(t, db.QueryRow(`SELECT sum(octet_length(effects::text)),sum(jsonb_array_length(effects)) FROM escalation_policy_delete_audit_events WHERE record_kind='success_witness'`).Scan(&bytes, &effects))
-				require.Equal(t, epaudit.MaxJSONBytes, bytes)
-				require.Equal(t, count, effects)
-				require.Equal(t, 2, sd5Count(t, h))
-				t.Logf("actual multi-root byte boundary: effects=%d PG bytes=%d", effects, bytes)
-			} else {
-				require.Error(t, err)
-				require.False(t, ok)
-				require.Zero(t, sd5Count(t, h))
-				var actual int
-				require.NoError(t, db.QueryRow(`SELECT count(*) FROM user_favorites WHERE tgt_escalation_policy_id IN ($1,$2)`, root, other).Scan(&actual))
-				require.Equal(t, count, actual)
-				require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", root))
-				require.Equal(t, 1, serviceManagementCount(t, h, "escalation_policies", other))
-			}
+			// CONTRACT ADAPTATION: do not lower the original exact 8 MiB
+			// fixtures or require an unreachable downstream Audit observation.
+			input := []assignment.RawTarget{sd3Target(assignment.TargetTypeEscalationPolicy, root), sd3Target(assignment.TargetTypeEscalationPolicy, other)}
+			preview, previewErr := smokeDeletionPreview(t, h, sd3System(), input)
+			smokeDeletionCode(t, previewErr, ds.DeletionPreviewLimitExceeded)
+			require.Nil(t, preview)
+			smokeContract4Reject(t, h, sd5App(h), sd3System(), input, nil, ds.DeletionPreviewLimitExceeded)
+			require.EqualValues(t, count, sd8Scalar(t, h, `SELECT count(*) FROM user_favorites WHERE tgt_escalation_policy_id IN($1,$2)`, root, other))
+			t.Logf("LEGACY AUDIT BOUNDARY NOT REACHABLE: original exact %d+%d JSONB-byte projection (%d favorites) precedes Audit at current weighted budget", epaudit.MaxJSONBytes, extra, count)
+
 		})
 	}
+	for _, count := range []int{(ds.DefaultBudget().MaxDependencies - 4) / 3, (ds.DefaultBudget().MaxDependencies-4)/3 + 1, (ds.DefaultBudget().MaxDependencies-4)/3 + 2} {
+		t.Run(fmt.Sprintf("current_weight_%d", count), func(t *testing.T) { closureFavoriteBudget(t, assignment.TargetTypeEscalationPolicy, count) })
+	}
+
 }
 
 func TestEscalationPolicyDeleteAuditFailureCapacity250(t *testing.T) {
