@@ -93,10 +93,30 @@ function testEP(screen: ScreenFormat): void {
     })
 
     it('should delete a policy', () => {
+      cy.intercept('POST', '**/api/graphql*', (req) => {
+        if (req.body.query?.includes('query EPDeletionPreview'))
+          req.alias = 'epDeletionPreview'
+        if (req.body.query?.includes('mutation EPDeleteWithSafety'))
+          req.alias = 'epSafeDelete'
+      })
       cy.get('[data-cy="card-actions"]')
         .find('button[aria-label="Delete"]')
         .click()
+      cy.wait('@epDeletionPreview').then(({ response }) => {
+        expect(response?.body.errors).to.eq(undefined)
+        const result = response?.body.data.deletionPreview
+        expect(result.complete).to.eq(true)
+        expect(result.impacts.pageInfo.hasNextPage).to.eq(false)
+        expect(
+          result.targets.map((target: { id: string }) => target.id),
+        ).to.deep.eq([ep.id])
+        if (result.requiresConfirmation)
+          cy.dialog().find('input[type=checkbox]').check()
+      })
       cy.dialogFinish('Confirm')
+      cy.wait('@epSafeDelete')
+        .its('response.body.data.deleteAll')
+        .should('eq', true)
 
       cy.url().should('eq', Cypress.config().baseUrl + '/escalation-policies')
       cy.pageSearch(ep.name)
