@@ -219,6 +219,7 @@ export function deletionResponseAllowsRefresh(
   // may justify that invalidation; it is never evidence that Delete succeeded.
   return Array.from(fields.others).some(
     (key) =>
+      Object.prototype.hasOwnProperty.call(data, key) &&
       data[key] != null &&
       data[key] !== false &&
       !result.error?.graphQLErrors?.some(

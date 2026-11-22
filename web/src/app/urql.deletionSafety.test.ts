@@ -316,6 +316,45 @@ const refreshCases: RefreshCase[] = [
   },
 ]
 
+// JSON.parse deliberately constructs own __proto__ properties as real wire JSON
+// would; an object literal's __proto__ setter would test a different condition.
+for (const key of ['saved', 'toString', 'constructor', '__proto__']) {
+  for (const deleteAll of [false, null, undefined]) {
+    refreshCases.push({
+      name: `FIX2 missing own ${key} with Delete ${String(deleteAll)}`,
+      text: `mutation { deleteAll(input: []) ${key}: ${favorite} }`,
+      body: { data: deleteAll === undefined ? {} : { deleteAll } },
+      cache: false,
+      apollo: false,
+    })
+  }
+  for (const value of [true, false, null, 0, '']) {
+    const data = JSON.parse(
+      `{"deleteAll":false,"${key}":${JSON.stringify(value)}}`,
+    )
+    const successful = value != null && value !== false
+    refreshCases.push({
+      name: `FIX2 own ${key} value ${JSON.stringify(value)}`,
+      text: `mutation { deleteAll(input: []) ${key}: ${favorite} }`,
+      body: { data },
+      cache: successful,
+      apollo: successful,
+    })
+  }
+  for (const path of [undefined, [key], ['deleteAll']]) {
+    refreshCases.push({
+      name: `FIX2 own ${key} with error path ${JSON.stringify(path)}`,
+      text: `mutation { deleteAll(input: []) ${key}: ${favorite} }`,
+      body: {
+        data: JSON.parse(`{"deleteAll":false,"${key}":true}`),
+        errors: [{ message: 'Synthetic rejection', path }],
+      },
+      cache: path?.[0] === 'deleteAll',
+      apollo: false,
+    })
+  }
+}
+
 test.each(refreshCases)(
   'actual client/cache/retry/fetch exchanges: $name',
   async (scenario) => {

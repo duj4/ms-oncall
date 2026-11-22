@@ -590,6 +590,71 @@ test('unscoped GraphQL errors cannot prove a successful sibling', () => {
   ).toBe(false)
 })
 
+test.each(['saved', 'toString', 'constructor', '__proto__'])(
+  'missing own sibling %s cannot justify refresh for a failed or unknown Delete',
+  (key) => {
+    const document = parse(`mutation { deleteAll ${key}: setFavorite }`)
+    for (const deleteAll of [false, null, undefined]) {
+      const data = deleteAll === undefined ? {} : { deleteAll }
+      expect(Object.prototype.hasOwnProperty.call(data, key)).toBe(false)
+      expect(deletionResponseAllowsRefresh(document, { data })).toBe(false)
+    }
+  },
+)
+
+test.each(['saved', 'toString', 'constructor', '__proto__'])(
+  'own sibling %s retains its actual value and existing success contract',
+  (key) => {
+    const document = parse(`mutation { deleteAll ${key}: setFavorite }`)
+    for (const value of [true, false, null, undefined, 0, '', {}]) {
+      // defineProperty creates an own __proto__ key without changing the prototype.
+      const data = Object.defineProperty({ deleteAll: false }, key, {
+        value,
+        enumerable: true,
+      })
+      const descriptors = Object.getOwnPropertyDescriptors(data)
+      expect(Object.prototype.hasOwnProperty.call(data, key)).toBe(true)
+      expect(deletionResponseAllowsRefresh(document, { data })).toBe(
+        value != null && value !== false,
+      )
+      expect(deletionResponseSucceeded(document, data)).toBe(false)
+      expect(Object.getOwnPropertyDescriptors(data)).toEqual(descriptors)
+      expect(Object.getPrototypeOf(data)).toBe(Object.prototype)
+    }
+  },
+)
+
+test('an arbitrary inherited successful sibling is not response evidence', () => {
+  const data = Object.assign(Object.create({ saved: true }), {
+    deleteAll: false,
+  })
+  expect(
+    deletionResponseAllowsRefresh(
+      parse('mutation { deleteAll saved: setFavorite }'),
+      { data },
+    ),
+  ).toBe(false)
+})
+
+test.each(['toString', 'constructor', '__proto__'])(
+  'own alias %s works with null prototypes and a shadowed hasOwnProperty',
+  (key) => {
+    const document = parse(`mutation { deleteAll ${key}: setFavorite }`)
+    const data = Object.assign(Object.create(null), {
+      deleteAll: false,
+      hasOwnProperty: false,
+      [key]: true,
+    })
+    expect(deletionResponseAllowsRefresh(document, { data })).toBe(true)
+    for (const path of [undefined, [key]]) {
+      const error = { graphQLErrors: [{ path }] }
+      expect(deletionResponseAllowsRefresh(document, { data, error })).toBe(
+        false,
+      )
+    }
+  },
+)
+
 test('unexpected response fields fail closed; GraphQL __typename remains compatible', async () => {
   const base = fixture({ requiresConfirmation: true, impacts: page([edge()]) })
   const malformed = [
