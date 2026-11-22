@@ -1,4 +1,15 @@
-import { DocumentNode, visit } from 'graphql'
+import {
+  DocumentNode,
+  DirectiveNode,
+  FragmentDefinitionNode,
+  SelectionSetNode,
+  getDirectiveValues,
+  getOperationAST,
+  GraphQLIncludeDirective,
+  GraphQLSkipDirective,
+  valueFromASTUntyped,
+  visit,
+} from 'graphql'
 import { gql } from 'urql'
 import type {
   DeletionImpact,
@@ -95,21 +106,125 @@ function onlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
   )
 }
 
-// Keep the existing Apollo bridge, but never announce an uncertain deletion
-// as a success. Field names (including aliases) come from the GraphQL AST.
+// Unlike the conservative retry scan, collect only executed root fields of the
+// selected mutation. Undefined means execution cannot be determined safely.
+function mutationFields(
+  document: DocumentNode,
+  variables: Record<string, unknown>,
+  operationName?: string,
+): { deletions: Set<string>; others: Set<string> } | undefined {
+  const operation = getOperationAST(document, operationName)
+  if (operation?.operation !== 'mutation') return
+  const values = { ...variables }
+  for (const variable of operation.variableDefinitions || []) {
+    const name = variable.variable.name.value
+    if (values[name] === undefined && variable.defaultValue)
+      values[name] = valueFromASTUntyped(variable.defaultValue)
+  }
+  const fragments = new Map<string, FragmentDefinitionNode>()
+  for (const definition of document.definitions)
+    if (definition.kind === 'FragmentDefinition')
+      fragments.set(definition.name.value, definition)
+  const fields = { deletions: new Set<string>(), others: new Set<string>() }
+  const visiting = new Set<string>()
+  const included = (node: {
+    readonly directives?: readonly DirectiveNode[]
+  }): boolean => {
+    for (const [directive, excluded] of [
+      [GraphQLSkipDirective, true],
+      [GraphQLIncludeDirective, false],
+    ] as const) {
+      const args = getDirectiveValues(directive, node, values)
+      if (!args) continue
+      if (typeof args.if !== 'boolean')
+        throw new Error('Unknown directive value')
+      if (args.if === excluded) return false
+    }
+    return true
+  }
+  const collect = (selection: SelectionSetNode): void => {
+    for (const node of selection.selections) {
+      if (!included(node)) continue
+      if (node.kind === 'Field') {
+        if (node.name.value === '__typename') continue
+        const target =
+          node.name.value === 'deleteAll' ? fields.deletions : fields.others
+        target.add(node.alias?.value || node.name.value)
+      } else if (node.kind === 'InlineFragment') {
+        if (!node.typeCondition || node.typeCondition.name.value === 'Mutation')
+          collect(node.selectionSet)
+      } else {
+        const name = node.name.value
+        const fragment = fragments.get(name)
+        if (!fragment || visiting.has(name)) throw new Error('Unknown fragment')
+        if (fragment.typeCondition.name.value !== 'Mutation') continue
+        visiting.add(name)
+        collect(fragment.selectionSet)
+        visiting.delete(name)
+      }
+    }
+  }
+  try {
+    collect(operation.selectionSet)
+    return fields
+  } catch {
+    return undefined
+  }
+}
+
 export function deletionResponseSucceeded(
   document: DocumentNode,
   data: unknown,
+  variables: Record<string, unknown> = {},
+  operationName?: string,
 ): boolean {
   if (!isRecord(data)) return false
-  const fields: string[] = []
-  visit(document, {
-    Field(node) {
-      if (node.name.value === 'deleteAll')
-        fields.push(node.alias?.value || node.name.value)
-    },
-  })
-  return fields.length > 0 && fields.every((key) => data[key] === true)
+  const fields = mutationFields(document, variables, operationName)
+  return (
+    !!fields?.deletions.size &&
+    Array.from(fields.deletions).every((key) => data[key] === true)
+  )
+}
+
+export function deletionResponseAllowsRefresh(
+  document: DocumentNode,
+  result: {
+    data?: unknown
+    error?: SafetyError
+    stale?: boolean
+    hasNext?: boolean
+  },
+  variables: Record<string, unknown> = {},
+  operationName?: string,
+): boolean {
+  const fields = mutationFields(document, variables, operationName)
+  if (!fields) return false
+  // A skipped/unselected Delete did not fail. Preserve the original operation's
+  // cache semantics and Apollo's existing no-error rule.
+  if (!fields.deletions.size) return true
+  if (
+    result.stale ||
+    result.hasNext ||
+    result.error?.networkError ||
+    !isRecord(result.data)
+  )
+    return false
+  const data = result.data
+  if (
+    !result.error &&
+    Array.from(fields.deletions).every((key) => data[key] === true)
+  )
+    return true
+  // Stock cacheExchange invalidates at operation granularity. A completed sibling
+  // may justify that invalidation; it is never evidence that Delete succeeded.
+  return Array.from(fields.others).some(
+    (key) =>
+      data[key] != null &&
+      data[key] !== false &&
+      !result.error?.graphQLErrors?.some(
+        ({ path }) => !path?.length || path[0] === key,
+      ),
+  )
 }
 
 export type DeletionPhase =
@@ -132,7 +247,10 @@ export interface DeletionState {
 }
 type SafetyError = {
   networkError?: unknown
-  graphQLErrors?: ReadonlyArray<{ extensions?: Record<string, unknown> }>
+  graphQLErrors?: ReadonlyArray<{
+    extensions?: Record<string, unknown>
+    path?: ReadonlyArray<string | number>
+  }>
 }
 export type PreviewResult = {
   data?: { deletionPreview?: unknown } | null
@@ -386,6 +504,10 @@ export async function loadEPDeletionPreview(
     }
     if (result.stale || result.hasNext) throw new PreviewFailure('unsupported')
     const page = validatePage(result.data?.deletionPreview, id)
+    // Reaching a successor means the prior page promised more data at this
+    // version. An empty successor contradicts that promise, even at termination.
+    if (after !== null && !page.impacts.edges.length)
+      throw new PreviewFailure('unsupported')
     if (
       combined &&
       (page.impactVersion !== combined.impactVersion ||

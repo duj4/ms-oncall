@@ -7,6 +7,7 @@ import {
   Exchange,
   Operation,
   Client,
+  getOperationName,
 } from 'urql'
 import { pipe, tap, map } from 'wonka'
 import {
@@ -18,7 +19,7 @@ import { pathPrefix, isCypress } from './env'
 import { containsRootCreate } from './util/rootCreatePolicy'
 import {
   containsDeleteAll,
-  deletionResponseSucceeded,
+  deletionResponseAllowsRefresh,
 } from './util/deletionSafety'
 
 const refetch = new Map<Client, (force: boolean) => void>()
@@ -112,14 +113,18 @@ const apolloRefetchExchange: Exchange = ({ forward }) => {
         if (result.operation.kind !== 'mutation') return result
         if (
           containsDeleteAll(result.operation.query) &&
-          (result.error ||
-            result.stale ||
-            result.hasNext ||
-            !deletionResponseSucceeded(result.operation.query, result.data))
+          !deletionResponseAllowsRefresh(
+            result.operation.query,
+            result,
+            result.operation.variables || {},
+            // Match fetchExchange's actual operationName, including documents
+            // containing more than one named operation.
+            getOperationName(result.operation.query),
+          )
         ) {
           // cacheExchange otherwise invalidates additionalTypenames even for
-          // rejected or uncertain mutations. Keep failure from refreshing the
-          // policy page into its legacy missing-resource success redirect.
+          // rejected or uncertain mutations. Suppress Delete-only failure
+          // effects without suppressing a completed sibling mutation's refresh.
           return {
             ...result,
             operation: makeOperation('mutation', result.operation, {

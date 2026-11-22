@@ -10,6 +10,8 @@ import {
   cascadeObjects,
   containsDeleteAll,
   deletionFailure,
+  deletionResponseAllowsRefresh,
+  deletionResponseSucceeded,
   deletionMutation,
   deletionPreviewQuery,
   epDeleteVariables,
@@ -148,6 +150,83 @@ test('serial complete pagination accepts differing assessedAt, preserves exact v
   expect(progress).toHaveBeenCalledWith(1)
   expect(p.impacts.edges).toHaveLength(2)
   expect(p.impactVersion).toBe('opaque version, unchanged')
+})
+
+test('an empty first page remains a valid complete review', async () => {
+  const p = await load([{ data: { deletionPreview: fixture() } }])
+  expect(p.impacts.edges).toEqual([])
+  expect(epDeleteVariables(id, p, false).confirmation.acknowledgeImpacts).toBe(
+    false,
+  )
+})
+
+test.each<[string, DeletionPreview['impacts']]>([
+  ['empty terminal page', page([])],
+  ['empty continuing page', page([], true)],
+  [
+    'missing successor cursor',
+    { edges: [edge(101)], pageInfo: { endCursor: null, hasNextPage: false } },
+  ],
+  [
+    'non-advancing successor cursor',
+    page([{ ...edge(101), cursor: 'cursor-100' }]),
+  ],
+])(
+  '100 edges followed by %s discards the entire plan',
+  async (_name, impacts) => {
+    const progress = jest.fn()
+    await expect(
+      load(
+        [
+          {
+            data: {
+              deletionPreview: fixture({
+                requiresConfirmation: true,
+                impacts: page(
+                  Array.from({ length: 100 }, (_, n) => edge(n + 1)),
+                  true,
+                ),
+              }),
+            },
+          },
+          {
+            data: {
+              deletionPreview: fixture({ requiresConfirmation: true, impacts }),
+            },
+          },
+        ],
+        progress,
+      ),
+    ).rejects.toMatchObject({ phase: 'unsupported' })
+    expect(progress).toHaveBeenCalledTimes(1)
+    expect(progress).toHaveBeenCalledWith(100)
+  },
+)
+
+test('100 edges followed by a nonempty terminal page produces a complete review', async () => {
+  const p = await load([
+    {
+      data: {
+        deletionPreview: fixture({
+          requiresConfirmation: true,
+          impacts: page(
+            Array.from({ length: 100 }, (_, n) => edge(n + 1)),
+            true,
+          ),
+        }),
+      },
+    },
+    {
+      data: {
+        deletionPreview: fixture({
+          requiresConfirmation: true,
+          impacts: page([edge(101)]),
+        }),
+      },
+    },
+  ])
+  expect(p.impacts.edges).toHaveLength(101)
+  expect(p.impacts.pageInfo.hasNextPage).toBe(false)
 })
 
 test.each([
@@ -416,6 +495,98 @@ test('AST detects real fields behind aliases/fragments, not operation names or s
         'mutation deleteAll { updateService(input: {name: "deleteAll"}) { id } }',
       ),
     ),
+  ).toBe(false)
+})
+
+test.each([
+  { stale: true },
+  { hasNext: true },
+  { error: { networkError: new Error('Synthetic transport failure') } },
+])(
+  'uncertain Delete results never refresh, even with sibling data: %j',
+  (extra) => {
+    expect(
+      deletionResponseAllowsRefresh(
+        parse('mutation { deleteAll setFavorite }'),
+        { data: { deleteAll: true, setFavorite: true }, ...extra },
+      ),
+    ).toBe(false)
+  },
+)
+
+test.each([
+  'mutation { deleteAll @skip(if: $unknown) setFavorite }',
+  'mutation { ...Missing setFavorite }',
+  'mutation { ...Cycle setFavorite } fragment Cycle on Mutation { ...Cycle deleteAll }',
+  'mutation One { deleteAll } mutation Two { setFavorite }',
+])('undetermined selected fields fail closed: %s', (text) => {
+  expect(
+    deletionResponseAllowsRefresh(parse(text), {
+      data: { deleteAll: true, setFavorite: true },
+    }),
+  ).toBe(false)
+})
+
+test('selected operation name and reachable root fields determine Delete success', () => {
+  const document = parse(`
+    mutation Favorite { setFavorite }
+    mutation Delete($include: Boolean = true) { ...Outer ...Outer }
+    fragment Outer on Mutation { ... on Mutation @include(if: $include) { removed: deleteAll } }
+    fragment Unused on Mutation { other: deleteAll }
+  `)
+  expect(
+    deletionResponseSucceeded(document, { removed: true }, {}, 'Delete'),
+  ).toBe(true)
+  expect(
+    deletionResponseSucceeded(
+      document,
+      { removed: false, setFavorite: true },
+      {},
+      'Delete',
+    ),
+  ).toBe(false)
+  expect(
+    deletionResponseSucceeded(document, { setFavorite: true }, {}, 'Favorite'),
+  ).toBe(false)
+  expect(
+    deletionResponseSucceeded(
+      document,
+      { removed: true },
+      { include: false },
+      'Delete',
+    ),
+  ).toBe(false)
+  expect(
+    deletionResponseAllowsRefresh(
+      document,
+      { data: { setFavorite: true } },
+      {},
+      'Favorite',
+    ),
+  ).toBe(true)
+})
+
+test('a successful sibling does not turn a false, missing or skipped Delete into success', () => {
+  for (const text of [
+    'mutation { deleteAll setFavorite }',
+    'mutation { deleteAll @skip(if: true) setFavorite }',
+    'mutation { setFavorite { deleteAll } }',
+  ]) {
+    const document = parse(text)
+    for (const deleteAll of [false, null, undefined]) {
+      const data = { deleteAll, setFavorite: true }
+      expect(deletionResponseSucceeded(document, data)).toBe(false)
+      expect(deletionResponseAllowsRefresh(document, { data })).toBe(true)
+    }
+  }
+})
+
+test('unscoped GraphQL errors cannot prove a successful sibling', () => {
+  expect(
+    deletionResponseAllowsRefresh(parse('mutation { deleteAll setFavorite }'), {
+      data: { deleteAll: false, setFavorite: true },
+      error: { graphQLErrors: [{}] },
+    }),
   ).toBe(false)
 })
 
