@@ -1,4 +1,8 @@
 import {
+  DeletionRootProfile,
+  epDeletionProfile,
+} from './deletionSafetyProfiles'
+import {
   DocumentNode,
   DirectiveNode,
   FragmentDefinitionNode,
@@ -265,38 +269,6 @@ export class PreviewFailure extends Error {
   }
 }
 const policies = ['BLOCK', 'CASCADE', 'WARNING', 'INFORMATIONAL']
-// Verified EP graph vocabulary only; this enables no other Root adapter.
-const resourceTypes = [
-  'ESCALATION_POLICY',
-  'ESCALATION_POLICY_STEP',
-  'ESCALATION_POLICY_ACTION',
-  'SERVICE',
-  'ALERT',
-  'SCHEDULE',
-  'ROTATION',
-  'USER',
-  'NOTIFICATION_CHANNEL',
-  'ESCALATION_POLICY_STATE',
-  'ESCALATION_HISTORY',
-  'FAVORITE',
-  'OUTGOING_MESSAGE',
-  'MESSAGE_STATUS_HISTORY',
-]
-const relations = [
-  'SERVICE_POLICY',
-  'SERVICE_ALERT',
-  'POLICY_STEP',
-  'POLICY_ACTION',
-  'STEP_ACTION',
-  'STEP_ROUTING',
-  'EXECUTION_STATE',
-  'ACTION_TARGET',
-  'ESCALATION_HISTORY',
-  'OUTGOING_MESSAGE',
-  'MESSAGE_STATUS',
-  'RETAINED_CHANNEL',
-  'FAVORITE',
-]
 const changes = [
   'DELETED',
   'RELATION_REMOVED',
@@ -308,14 +280,17 @@ const actions = ['NONE', 'DETACH_REFERENCE', 'CLOSE_ALERT', 'CONFIRM_IMPACT']
 function nonempty(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
-function resource(value: unknown): value is DeletionResource {
+function resource(
+  value: unknown,
+  profile: DeletionRootProfile,
+): value is DeletionResource {
   if (
     !isRecord(value) ||
     !onlyKeys(value, ['type', 'id', 'name', 'label', 'organization']) ||
     !nonempty(value.id) ||
     !nonempty(value.label) ||
     typeof value.type !== 'string' ||
-    !resourceTypes.includes(value.type) ||
+    !profile.resourceTypes.includes(value.type) ||
     !(value.name === null || typeof value.name === 'string')
   )
     return false
@@ -327,7 +302,10 @@ function resource(value: unknown): value is DeletionResource {
       typeof value.organization.name === 'string')
   )
 }
-function validImpact(value: unknown): value is DeletionImpact {
+function validImpact(
+  value: unknown,
+  profile: DeletionRootProfile,
+): value is DeletionImpact {
   if (
     !isRecord(value) ||
     !onlyKeys(value, [
@@ -348,11 +326,11 @@ function validImpact(value: unknown): value is DeletionImpact {
     return false
   return (
     nonempty(value.edgeID) &&
-    resource(value.target) &&
-    resource(value.referencingResource) &&
-    (value.parent === null || resource(value.parent)) &&
+    resource(value.target, profile) &&
+    resource(value.referencingResource, profile) &&
+    (value.parent === null || resource(value.parent, profile)) &&
     typeof value.relation === 'string' &&
-    relations.includes(value.relation) &&
+    profile.relations.includes(value.relation) &&
     typeof value.change === 'string' &&
     changes.includes(value.change) &&
     typeof value.policy === 'string' &&
@@ -365,7 +343,11 @@ function validImpact(value: unknown): value is DeletionImpact {
     typeof value.isPlannedCoDeletion === 'boolean'
   )
 }
-function validatePage(value: unknown, id: string): DeletionPreview {
+function validatePage(
+  value: unknown,
+  id: string,
+  profile: DeletionRootProfile,
+): DeletionPreview {
   if (
     !isRecord(value) ||
     !onlyKeys(value, [
@@ -390,8 +372,8 @@ function validatePage(value: unknown, id: string): DeletionPreview {
     typeof value.requiresConfirmation !== 'boolean' ||
     !Array.isArray(value.targets) ||
     value.targets.length !== 1 ||
-    !resource(value.targets[0]) ||
-    value.targets[0].type !== 'ESCALATION_POLICY' ||
+    !resource(value.targets[0], profile) ||
+    value.targets[0].type !== profile.previewType ||
     value.targets[0].id !== id ||
     !Array.isArray(value.notices) ||
     !value.notices.every((n) => typeof n === 'string') ||
@@ -410,7 +392,7 @@ function validatePage(value: unknown, id: string): DeletionPreview {
       !isRecord(edge) ||
       !onlyKeys(edge, ['cursor', 'node']) ||
       !nonempty(edge.cursor) ||
-      !validImpact(edge.node)
+      !validImpact(edge.node, profile)
     )
       throw new PreviewFailure('unsupported')
   }
@@ -422,25 +404,37 @@ function validatePage(value: unknown, id: string): DeletionPreview {
     throw new PreviewFailure('unsupported')
   return value as unknown as DeletionPreview
 }
-export function epPreviewVariables(
-  id: string,
-  after: string | null,
-): {
+export interface DeletionPreviewVariables {
   input: {
     operation: 'DELETE_RESOURCES'
-    targets: [{ type: 'ESCALATION_POLICY'; id: string }]
+    targets: [{ type: DeletionRootProfile['previewType']; id: string }]
   }
   first: number
   after: string | null
-} {
+}
+export interface DeletionDeleteVariables {
+  input: [{ type: DeletionRootProfile['deleteType']; id: string }]
+  confirmation: { expectedImpactVersion: string; acknowledgeImpacts: boolean }
+}
+export function previewVariables(
+  profile: DeletionRootProfile,
+  id: string,
+  after: string | null,
+): DeletionPreviewVariables {
   return {
     input: {
       operation: 'DELETE_RESOURCES',
-      targets: [{ type: 'ESCALATION_POLICY', id }],
+      targets: [{ type: profile.previewType, id }],
     },
     first: 100,
     after,
   }
+}
+export function epPreviewVariables(
+  id: string,
+  after: string | null,
+): DeletionPreviewVariables {
+  return previewVariables(epDeletionProfile, id, after)
 }
 
 export function deletionFailure(
@@ -476,10 +470,11 @@ export function deletionFailure(
 
 // Pages remain disposable until the entire sequence validates. Cancellation
 // invalidates even responses in flight; partial data never unlocks deletion.
-export async function loadEPDeletionPreview(
+export async function loadDeletionPreview(
+  profile: DeletionRootProfile,
   id: string,
   fetchPage: (
-    variables: ReturnType<typeof epPreviewVariables>,
+    variables: ReturnType<typeof previewVariables>,
   ) => Promise<PreviewResult>,
   active: () => boolean,
   progress: (loaded: number) => void,
@@ -491,7 +486,7 @@ export async function loadEPDeletionPreview(
   // The merged planner permits at most 30,000 impacts (100 per request).
   for (let pageNumber = 0; pageNumber < 300; pageNumber++) {
     if (!active()) throw new PreviewFailure('cancelled')
-    const result = await fetchPage(epPreviewVariables(id, after))
+    const result = await fetchPage(previewVariables(profile, id, after))
     if (!active()) throw new PreviewFailure('cancelled')
     if (result.error) {
       const failure = deletionFailure(result.error)
@@ -504,7 +499,7 @@ export async function loadEPDeletionPreview(
       )
     }
     if (result.stale || result.hasNext) throw new PreviewFailure('unsupported')
-    const page = validatePage(result.data?.deletionPreview, id)
+    const page = validatePage(result.data?.deletionPreview, id, profile)
     // Reaching a successor means the prior page promised more data at this
     // version. An empty successor contradicts that promise, even at termination.
     if (after !== null && !page.impacts.edges.length)
@@ -554,6 +549,16 @@ export async function loadEPDeletionPreview(
   }
   throw new PreviewFailure('limit')
 }
+export function loadEPDeletionPreview(
+  id: string,
+  fetchPage: (
+    variables: ReturnType<typeof epPreviewVariables>,
+  ) => Promise<PreviewResult>,
+  active: () => boolean,
+  progress: (loaded: number) => void,
+): Promise<DeletionPreview> {
+  return loadDeletionPreview(epDeletionProfile, id, fetchPage, active, progress)
+}
 export function isDeletionBlocked(preview: DeletionPreview): boolean {
   return (
     !preview.canProceed ||
@@ -582,18 +587,16 @@ export function cascadeObjects(preview: DeletionPreview): DeletionResource[] {
   }
   return Array.from(objects.values())
 }
-export function epDeleteVariables(
+export function deleteVariables(
+  profile: DeletionRootProfile,
   id: string,
   preview: DeletionPreview,
   acknowledged: boolean,
-): {
-  input: [{ type: 'escalationPolicy'; id: string }]
-  confirmation: { expectedImpactVersion: string; acknowledgeImpacts: boolean }
-} {
+): DeletionDeleteVariables {
   if (
     preview.targets.length !== 1 ||
     preview.targets[0].id !== id ||
-    preview.targets[0].type !== 'ESCALATION_POLICY' ||
+    preview.targets[0].type !== profile.previewType ||
     preview.operation !== 'DELETE_RESOURCES' ||
     preview.policyVersion !== 'deletion-safety-spec1-v2' ||
     !preview.complete ||
@@ -604,10 +607,18 @@ export function epDeleteVariables(
   )
     throw new PreviewFailure('unsupported')
   return {
-    input: [{ type: 'escalationPolicy', id }],
+    input: [{ type: profile.deleteType, id }],
     confirmation: {
       expectedImpactVersion: preview.impactVersion,
       acknowledgeImpacts: preview.requiresConfirmation && acknowledged,
     },
   }
+}
+
+export function epDeleteVariables(
+  id: string,
+  preview: DeletionPreview,
+  acknowledged: boolean,
+): DeletionDeleteVariables {
+  return deleteVariables(epDeletionProfile, id, preview, acknowledged)
 }

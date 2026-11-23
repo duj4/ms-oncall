@@ -1,3 +1,4 @@
+import { scheduleDeletionProfile } from '../util/deletionSafetyProfiles'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material/styles'
@@ -147,4 +148,55 @@ test('during delete Escape, backdrop and cancel cannot close the dialog', () => 
   element.props.onClose()
   expect(p.onClose).not.toHaveBeenCalled()
   expect(render(p)).toMatch(/<button[^>]*disabled[^>]*>Cancel<\/button>/)
+})
+
+test('Schedule shows backend owned rules, retained Rotation, parent and flags without an invented cascade count', () => {
+  const p = props()
+  p.profile = scheduleDeletionProfile
+  const preview = p.state.preview!
+  preview.targets[0].type = 'SCHEDULE'
+  preview.targets[0].label = 'Synthetic schedule'
+  const owned = preview.impacts.edges[0].node
+  owned.target.type = 'SCHEDULE'
+  owned.relation = 'SCHEDULE_RULE'
+  owned.referencingResource.type = 'SCHEDULE_RULE'
+  owned.referencingResource.label = 'Synthetic owned rule'
+  owned.isPlannedCoDeletion = true
+  preview.impacts.edges.push({
+    cursor: 'second',
+    node: {
+      ...owned,
+      edgeID: 'retained-rotation',
+      target: {
+        ...preview.targets[0],
+        type: 'ROTATION',
+        id: 'rotation-id',
+        label: 'Retained rotation',
+      },
+      relation: 'RULE_TARGET',
+      policy: 'INFORMATIONAL',
+      change: 'PRESERVED',
+      requiredAction: 'NONE',
+      isDerived: true,
+    },
+  })
+  const html = render(p)
+  for (const text of [
+    'Delete Schedule',
+    'Selected schedule',
+    'Synthetic schedule',
+    'Synthetic owned rule',
+    'CASCADE',
+    'INFORMATIONAL',
+    'RULE_TARGET',
+    'PRESERVED',
+    'Retained rotation',
+    'Parent:',
+    'Derived explanation',
+    'Included in the backend deletion plan.',
+    'Deleting a schedule does not automatically delete rotations.',
+  ])
+    expect(html).toContain(text)
+  expect(html).not.toContain('unique policy steps/actions')
+  expect(html).not.toContain('cascade-count')
 })

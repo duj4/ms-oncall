@@ -18,7 +18,13 @@ import {
 import DialogTitleWrapper from './components/DialogTitleWrapper'
 import Spinner from '../loading/components/Spinner'
 
+import {
+  DeletionRootProfile,
+  epDeletionProfile,
+} from '../util/deletionSafetyProfiles'
+
 export interface DeletionSafetyDialogProps {
+  profile?: DeletionRootProfile
   state: DeletionState
   acknowledged: boolean
   onAcknowledge: (checked: boolean) => void
@@ -33,7 +39,7 @@ const messages = {
   blocked:
     'Deletion is blocked. Resolve the listed dependencies, then check again.',
   failed:
-    'The request could not be verified. Check your current access and policy selection, then check again.',
+    'The request could not be verified. Check your current access and resource selection, then check again.',
   unsupported:
     'The deletion impact could not be fully verified. Deletion is unavailable.',
   limit:
@@ -47,6 +53,7 @@ export default function DeletionSafetyDialog(
   props: DeletionSafetyDialogProps,
 ): React.JSX.Element {
   const { state, acknowledged } = props
+  const profile = props.profile || epDeletionProfile
   const busy = state.phase === 'deleting'
   const review = state.phase === 'review' || state.phase === 'confirming'
   const confirm =
@@ -61,7 +68,9 @@ export default function DeletionSafetyDialog(
   }
   const message =
     state.phase in messages
-      ? messages[state.phase as keyof typeof messages]
+      ? state.phase === 'success'
+        ? `The ${profile.noun} was deleted.`
+        : messages[state.phase as keyof typeof messages]
       : ''
   return (
     <Dialog
@@ -75,9 +84,15 @@ export default function DeletionSafetyDialog(
     >
       <DialogTitleWrapper
         fullScreen={false}
-        title={<span id='deletion-safety-title'>Delete Escalation Policy</span>}
+        title={<span id='deletion-safety-title'>{profile.title}</span>}
       />
       <DialogContent>
+        {profile.previewType === 'SCHEDULE' && (
+          <Alert severity='info'>
+            Deleting a schedule does not automatically delete rotations. Review
+            the backend dependencies and retained references below.
+          </Alert>
+        )}
         {state.message && <Alert severity='info'>{state.message}</Alert>}
         {message && (
           <Alert
@@ -103,20 +118,24 @@ export default function DeletionSafetyDialog(
         )}
         {busy && (
           <Typography role='status'>
-            Deleting policy… Keep this dialog open while the result is pending.
+            Deleting {profile.noun}… Keep this dialog open while the result is
+            pending.
           </Typography>
         )}
         {state.preview && (
           <React.Fragment>
-            <Typography component='h3'>Selected policy</Typography>
+            <Typography component='h3'>Selected {profile.noun}</Typography>
             <Typography>{identity(state.preview.targets[0])}</Typography>
             <Typography>
               {state.preview.impacts.edges.length} relationships reviewed.
             </Typography>
-            <Typography data-cy='cascade-count'>
-              {cascadeObjects(state.preview).length} unique policy steps/actions
-              would be deleted by cascade. Other relationships are listed below.
-            </Typography>
+            {profile.previewType === 'ESCALATION_POLICY' && (
+              <Typography data-cy='cascade-count'>
+                {cascadeObjects(state.preview).length} unique policy
+                steps/actions would be deleted by cascade. Other relationships
+                are listed below.
+              </Typography>
+            )}
             {state.preview.notices.map((notice, i) => (
               <Typography key={i}>{notice}</Typography>
             ))}
