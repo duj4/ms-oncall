@@ -93,6 +93,12 @@ export default function DeletionSafetyDialog(
             the backend dependencies and retained references below.
           </Alert>
         )}
+        {profile.previewType === 'ROTATION' && (
+          <Alert severity='info'>
+            Deleting a rotation does not automatically delete schedules or
+            users. Existing references may block deletion.
+          </Alert>
+        )}
         {state.message && <Alert severity='info'>{state.message}</Alert>}
         {message && (
           <Alert

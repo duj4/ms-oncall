@@ -1,4 +1,7 @@
-import { scheduleDeletionProfile } from '../util/deletionSafetyProfiles'
+import {
+  scheduleDeletionProfile,
+  rotationDeletionProfile,
+} from '../util/deletionSafetyProfiles'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material/styles'
@@ -199,4 +202,67 @@ test('Schedule shows backend owned rules, retained Rotation, parent and flags wi
     expect(html).toContain(text)
   expect(html).not.toContain('unique policy steps/actions')
   expect(html).not.toContain('cascade-count')
+})
+
+test('Rotation displays actual participants/state and preserved User targets with no EP count or Schedule copy', () => {
+  const p = props()
+  p.profile = rotationDeletionProfile
+  const preview = p.state.preview!
+  preview.targets[0].type = 'ROTATION'
+  const owned = preview.impacts.edges[0].node
+  owned.relation = 'ROTATION_PARTICIPANT'
+  owned.referencingResource.type = 'ROTATION_PARTICIPANT'
+  owned.referencingResource.label = 'Synthetic owned participant'
+  preview.impacts.edges.push(
+    {
+      cursor: 'state',
+      node: {
+        ...owned,
+        edgeID: 'state',
+        relation: 'ROTATION_STATE',
+        referencingResource: {
+          ...root,
+          type: 'ROTATION_STATE',
+          id: '1',
+          label: 'Synthetic owned state',
+        },
+      },
+    },
+    {
+      cursor: 'user',
+      node: {
+        ...owned,
+        edgeID: 'user',
+        relation: 'PARTICIPANT_USER',
+        policy: 'INFORMATIONAL',
+        change: 'PRESERVED',
+        requiredAction: 'NONE',
+        target: {
+          ...root,
+          type: 'USER',
+          label: 'Preserved user',
+        },
+      },
+    },
+  )
+  const html = render(p)
+  for (const text of [
+    'Delete Rotation',
+    'Selected rotation',
+    'ROTATION_PARTICIPANT',
+    'ROTATION_STATE',
+    'PARTICIPANT_USER',
+    'Preserved user',
+    'Synthetic owned participant',
+    'Synthetic owned state',
+    'CASCADE',
+    'Parent:',
+    'Required action:',
+    'The affected resource would be deleted.',
+    'Deleting a rotation does not automatically delete schedules or users.',
+    'Existing references may block deletion.',
+  ])
+    expect(html).toContain(text)
+  expect(html).not.toContain('cascade-count')
+  expect(html).not.toContain('Deleting a schedule')
 })
