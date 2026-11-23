@@ -1,9 +1,9 @@
 // Only these reviewed single-root adapters are supported. Keep their backend
 // vocabularies separate: a Schedule relationship must not become valid for EP.
 export interface DeletionRootProfile {
-  readonly previewType: 'ESCALATION_POLICY' | 'SCHEDULE'
-  readonly deleteType: 'escalationPolicy' | 'schedule'
-  readonly typename: 'EscalationPolicy' | 'Schedule'
+  readonly previewType: 'ESCALATION_POLICY' | 'SCHEDULE' | 'ROTATION'
+  readonly deleteType: 'escalationPolicy' | 'schedule' | 'rotation'
+  readonly typename: 'EscalationPolicy' | 'Schedule' | 'Rotation'
   readonly listPath: string
   readonly title: string
   readonly noun: string
@@ -99,5 +99,36 @@ export const scheduleDeletionProfile: DeletionRootProfile = {
     'OUTGOING_MESSAGE',
     'MESSAGE_STATUS',
     'PENDING_SIGNAL',
+  ],
+}
+
+// Rotation closure: queries.go Rotation/Participant projections and FAVORITE;
+// planner.go projects PARTICIPANT_USER as INFORMATIONAL/PRESERVED when its
+// owned participant is deleted, retaining the User target. Surviving Action/Rule references remain BLOCK.
+export const rotationDeletionProfile: DeletionRootProfile = {
+  previewType: 'ROTATION',
+  deleteType: 'rotation',
+  typename: 'Rotation',
+  listPath: '/rotations',
+  title: 'Delete Rotation',
+  noun: 'rotation',
+  resourceTypes: [
+    'ROTATION',
+    'ROTATION_PARTICIPANT',
+    'ROTATION_STATE',
+    'USER',
+    'SCHEDULE',
+    'SCHEDULE_RULE',
+    'ESCALATION_POLICY_STEP',
+    'ESCALATION_POLICY_ACTION',
+    'FAVORITE',
+  ],
+  relations: [
+    'ACTION_TARGET',
+    'RULE_TARGET',
+    'ROTATION_PARTICIPANT',
+    'PARTICIPANT_USER',
+    'ROTATION_STATE',
+    'FAVORITE',
   ],
 }

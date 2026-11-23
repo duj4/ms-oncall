@@ -1,7 +1,6 @@
 import React, { Suspense, useState } from 'react'
 import { gql, useQuery } from 'urql'
 import _ from 'lodash'
-import { Redirect } from 'wouter'
 import { Edit, Delete } from '@mui/icons-material'
 import DetailsPage from '../details/DetailsPage'
 import RotationEditDialog from './RotationEditDialog'
@@ -47,29 +46,38 @@ export default function RotationDetails(props: {
 
   const data = _.get(_data, 'rotation', null)
 
-  if (fetching && !data?.name) return <Spinner />
-  if (error) return <GenericError error={error.message} />
-
-  if (!data)
-    return showDelete ? (
-      <Redirect to='/rotations' />
-    ) : (
-      <ObjectNotFound type='rotation' />
+  const deleteDialog = showDelete && (
+    <RotationDeleteDialog
+      key={props.rotationID}
+      rotationID={props.rotationID}
+      onClose={() => setShowDelete(false)}
+    />
+  )
+  // Parent query loading, errors and absence are not a deletion receipt. Keep
+  // the active controller mounted in the same position until its own result.
+  if ((fetching && !data?.name) || error || !data) {
+    return (
+      <React.Fragment>
+        {deleteDialog}
+        {fetching && !data?.name ? (
+          <Spinner />
+        ) : error ? (
+          <GenericError error={error.message} />
+        ) : (
+          <ObjectNotFound type='rotation' />
+        )}
+      </React.Fragment>
     )
+  }
 
   return (
     <React.Fragment>
+      {deleteDialog}
       <Suspense>
         {showEdit && (
           <RotationEditDialog
             rotationID={props.rotationID}
             onClose={() => setShowEdit(false)}
-          />
-        )}
-        {showDelete && (
-          <RotationDeleteDialog
-            rotationID={props.rotationID}
-            onClose={() => setShowDelete(false)}
           />
         )}
       </Suspense>

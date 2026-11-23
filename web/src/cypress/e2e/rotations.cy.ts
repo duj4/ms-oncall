@@ -227,13 +227,26 @@ function testRotations(screen: ScreenFormat): void {
     })
 
     it('should allow deleting the rotation', () => {
+      cy.intercept('POST', '**/api/graphql*', (req) => {
+        if (req.body.query?.includes('query EPDeletionPreview'))
+          req.alias = 'rotationDeletionPreview'
+        if (req.body.query?.includes('mutation EPDeleteWithSafety'))
+          req.alias = 'rotationSafeDelete'
+      })
       cy.get('[data-cy="card-actions"]')
         .find('button[aria-label="Delete"]')
         .click()
-
-      cy.dialogTitle('Are you sure?')
+      cy.dialogTitle('Delete Rotation')
+      cy.wait('@rotationDeletionPreview')
+      cy.dialog().should('contain', 'relationships reviewed')
+      cy.dialog().then(($dialog) => {
+        if ($dialog.find('input[type=checkbox]').length)
+          cy.wrap($dialog).find('input[type=checkbox]').check()
+      })
       cy.dialogFinish('Confirm')
-
+      cy.wait('@rotationSafeDelete')
+        .its('response.body.data.deleteAll')
+        .should('eq', true)
       cy.url().should('eq', Cypress.config().baseUrl + '/rotations')
       cy.pageSearch(rot.name)
       cy.get('body').should('contain', 'No results')
