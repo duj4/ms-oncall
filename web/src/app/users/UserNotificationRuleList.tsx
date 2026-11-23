@@ -11,7 +11,6 @@ import {
 import makeStyles from '@mui/styles/makeStyles'
 import { Add, Delete } from '@mui/icons-material'
 import { formatNotificationRule, sortNotificationRules } from './util'
-import UserNotificationRuleDeleteDialog from './UserNotificationRuleDeleteDialog'
 import { styles as globalStyles } from '../styles/materialStyles'
 import UserNotificationRuleCreateDialog from './UserNotificationRuleCreateDialog'
 import { useIsWidthDown } from '../util/useWidth'
@@ -19,6 +18,8 @@ import { ObjectNotFound, GenericError } from '../error-pages'
 import { User } from '../../schema'
 import CompList from '../lists/CompList'
 import { CompListItemText } from '../lists/CompListItems'
+
+const deletionQueryContext = { suspense: false }
 
 const query = gql`
   query nrList($id: ID!) {
@@ -61,22 +62,24 @@ const useStyles = makeStyles((theme: Theme) => {
 export default function UserNotificationRuleList(props: {
   userID: string
   readOnly: boolean
+  onDelete: (ruleID: string) => void
+  deletionActive: boolean
 }): ReactNode {
   const classes = useStyles()
   const mobile = useIsWidthDown('md')
   const [showAddDialog, setShowAddDialog] = useState(false)
-  const [deleteID, setDeleteID] = useState(null)
 
   const [{ data, error }] = useQuery({
     query,
     variables: { id: props.userID },
+    context: props.deletionActive ? deletionQueryContext : undefined,
   })
 
   if (data && !data.user)
     return <ObjectNotFound type='notifcation rules list' />
   if (error) return <GenericError error={error.message} />
 
-  const { user }: { user: User } = data
+  const user: User | undefined = data?.user
 
   return (
     <Grid item xs={12}>
@@ -125,7 +128,7 @@ export default function UserNotificationRuleList(props: {
                   props.readOnly ? null : (
                     <IconButton
                       aria-label='Delete notification rule'
-                      onClick={() => setDeleteID(nr.id)}
+                      onClick={() => props.onDelete(nr.id)}
                       color='secondary'
                     >
                       <Delete />
@@ -142,12 +145,6 @@ export default function UserNotificationRuleList(props: {
           <UserNotificationRuleCreateDialog
             userID={props.userID}
             onClose={() => setShowAddDialog(false)}
-          />
-        )}
-        {deleteID && (
-          <UserNotificationRuleDeleteDialog
-            ruleID={deleteID}
-            onClose={() => setDeleteID(null)}
           />
         )}
       </Suspense>

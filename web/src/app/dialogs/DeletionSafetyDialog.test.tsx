@@ -1,7 +1,9 @@
 import {
   scheduleDeletionProfile,
   rotationDeletionProfile,
+  notificationRuleDeletionProfile,
 } from '../util/deletionSafetyProfiles'
+import { notificationRulePreview } from '../users/notificationRuleDeletionFixtures'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material/styles'
@@ -94,6 +96,32 @@ function render(p: DeletionSafetyDialogProps): string {
 function confirmDisabled(html: string): boolean {
   return /<button[^>]*disabled[^>]*>Confirm<\/button>/.test(html)
 }
+test.each(['alternative', 'last-immediate', 'open-cycle', 'both'] as const)(
+  'NotificationRule explains deleted configuration versus retained User/contact: %s',
+  (risk) => {
+    const p = props()
+    p.profile = notificationRuleDeletionProfile
+    p.state.preview = notificationRulePreview(risk)
+    const html = render(p)
+    for (const text of [
+      'Delete Notification Rule',
+      'Selected notification rule',
+      'NOTIFICATION_CONFIGURATION',
+      'RETAINED_CONTACT',
+      'INFORMATIONAL',
+      'The selected rule is deleted; the user is preserved.',
+      'The contact method is preserved.',
+      'The owning user is preserved.',
+      'Derived explanation; not an additional deleted object.',
+    ])
+      expect(html).toContain(text)
+    expect(confirmDisabled(html)).toBe(risk !== 'alternative')
+    expect(html.includes('WARNING')).toBe(risk !== 'alternative')
+    expect(html).not.toContain('cascade-count')
+    expect(html).not.toContain('CASCADE')
+    expect(html).not.toContain('version-1')
+  },
+)
 test('loading displays only loaded relationship count and cannot confirm', () => {
   const p = props('loading')
   p.state.loaded = 100

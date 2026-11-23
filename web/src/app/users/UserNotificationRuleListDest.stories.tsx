@@ -1,13 +1,14 @@
 import React from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import UserNotificationRuleList from './UserNotificationRuleList'
-import { expect, within, userEvent, screen } from 'storybook/test'
+import { expect, within, userEvent, screen, fn } from 'storybook/test'
 import { handleDefaultConfig } from '../storybook/graphql'
 import { HttpResponse, graphql } from 'msw'
 
 const meta = {
   title: 'users/UserNotificationRuleList',
   component: UserNotificationRuleList,
+  args: { onDelete: fn(), deletionActive: false },
   tags: ['autodocs'],
   parameters: {
     msw: {
