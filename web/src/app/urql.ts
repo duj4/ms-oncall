@@ -2,12 +2,14 @@ import { retryExchange } from '@urql/exchange-retry'
 import {
   cacheExchange,
   createClient,
+  makeOperation,
   fetchExchange,
   Exchange,
   Operation,
   Client,
+  getOperationName,
 } from 'urql'
-import { pipe, tap } from 'wonka'
+import { pipe, tap, map } from 'wonka'
 import {
   GraphQLClient,
   GraphQLClientWithErrors,
@@ -15,6 +17,10 @@ import {
 } from './apollo'
 import { pathPrefix, isCypress } from './env'
 import { containsRootCreate } from './util/rootCreatePolicy'
+import {
+  containsDeleteAll,
+  deletionResponseAllowsRefresh,
+} from './util/deletionSafety'
 
 const refetch = new Map<Client, (force: boolean) => void>()
 export function disposeClient(client: Client): void {
@@ -103,12 +109,35 @@ const apolloRefetchExchange: Exchange = ({ forward }) => {
     const operationResult$ = forward(operations$)
     return pipe(
       operationResult$,
-      tap((result) => {
-        if (result.error) return
-        if (result.operation.kind !== 'mutation') return
+      map((result) => {
+        if (result.operation.kind !== 'mutation') return result
+        if (
+          containsDeleteAll(result.operation.query) &&
+          !deletionResponseAllowsRefresh(
+            result.operation.query,
+            result,
+            result.operation.variables || {},
+            // Match fetchExchange's actual operationName, including documents
+            // containing more than one named operation.
+            getOperationName(result.operation.query),
+          )
+        ) {
+          // cacheExchange otherwise invalidates additionalTypenames even for
+          // rejected or uncertain mutations. Suppress Delete-only failure
+          // effects without suppressing a completed sibling mutation's refresh.
+          return {
+            ...result,
+            operation: makeOperation('mutation', result.operation, {
+              ...result.operation.context,
+              additionalTypenames: [],
+            }),
+          }
+        }
+        if (result.error) return result
         GraphQLClient.reFetchObservableQueries(true)
         GraphQLClientWithErrors.reFetchObservableQueries(true)
         refetchOrganizationQueries().catch(() => undefined)
+        return result
       }),
     )
   }
@@ -124,7 +153,9 @@ export function newClient(url: string): Client {
       apolloRefetchExchange,
       retryExchange({
         retryIf: (error, operation) =>
-          !containsRootCreate(operation.query) && !!error.networkError,
+          !containsRootCreate(operation.query) &&
+          !containsDeleteAll(operation.query) &&
+          !!error.networkError,
       }) as Exchange,
       fetchExchange,
     ],
