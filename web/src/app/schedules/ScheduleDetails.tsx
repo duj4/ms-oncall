@@ -16,7 +16,6 @@ import { ScheduleAvatar } from '../util/avatars'
 import ScheduleOverrideDialog from './ScheduleOverrideDialog'
 import { useIsWidthDown } from '../util/useWidth'
 import { TempSchedValue, defaultTempSchedValue } from './temp-sched/sharedUtils'
-import { Redirect } from 'wouter'
 import { useScheduleTZ } from './useScheduleTZ'
 import { useURLParam } from '../actions'
 
@@ -108,25 +107,33 @@ export default function ScheduleDetails({
 
   const data = _.get(_data, 'schedule', null)
 
-  if (error) return <GenericError error={error.message} />
-
-  if (!data) {
-    return showDelete ? <Redirect to='/schedules' /> : <ObjectNotFound />
+  const deleteDialog = showDelete && (
+    <ScheduleDeleteDialog
+      key={scheduleID}
+      scheduleID={scheduleID}
+      onClose={() => setShowDelete(false)}
+    />
+  )
+  // A missing/failed query is not evidence that this deletion committed. Keep
+  // its controller at the same position through parent refetches, including
+  // CommitUnknown. Only an explicit successful mutation may navigate away.
+  if (error || !data) {
+    return (
+      <React.Fragment>
+        {deleteDialog}
+        {error ? <GenericError error={error.message} /> : <ObjectNotFound />}
+      </React.Fragment>
+    )
   }
 
   return (
     <React.Fragment>
+      {deleteDialog}
       <Suspense>
         {showEdit && (
           <ScheduleEditDialog
             scheduleID={scheduleID}
             onClose={() => setShowEdit(false)}
-          />
-        )}
-        {showDelete && (
-          <ScheduleDeleteDialog
-            scheduleID={scheduleID}
-            onClose={() => setShowDelete(false)}
           />
         )}
         {configTempSchedule && (
