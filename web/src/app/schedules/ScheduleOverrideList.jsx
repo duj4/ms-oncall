@@ -21,6 +21,7 @@ import CreateFAB from '../lists/CreateFAB'
 import ListPageControls from '../lists/ListPageControls'
 import CompList from '../lists/CompList'
 import { CompListItemText } from '../lists/CompListItems'
+import Spinner from '../loading/components/Spinner'
 
 const query = gql`
   query scheduleOverrides($input: UserOverrideSearchOptions) {
@@ -48,11 +49,10 @@ const query = gql`
 `
 const context = { suspense: false }
 
-export default function ScheduleOverrideList({ scheduleID }) {
+function ScheduleOverrideListContent({ scheduleID, onDelete }) {
   const isMobile = useIsWidthDown('md')
 
   const [editID, setEditID] = useState(null)
-  const [deleteID, setDeleteID] = useState(null)
 
   const [userFilter, setUserFilter] = useURLParam('userFilter', [])
   const [showPast, setShowPast] = useURLParam('showPast', false)
@@ -81,8 +81,8 @@ export default function ScheduleOverrideList({ scheduleID }) {
     variables: { input: inputVars },
     context,
   })
-  const nextCursor = q.data?.userOverrides.pageInfo.hasNextPage
-    ? q.data?.userOverrides.pageInfo.endCursor
+  const nextCursor = q.data?.userOverrides?.pageInfo?.hasNextPage
+    ? q.data?.userOverrides?.pageInfo?.endCursor
     : ''
 
   const subText = (n) => {
@@ -189,7 +189,7 @@ export default function ScheduleOverrideList({ scheduleID }) {
                 </React.Fragment>
               }
             >
-              {q.data?.userOverrides.nodes.map((n) => (
+              {q.data?.userOverrides?.nodes?.map((n) => (
                 <CompListItemText
                   key={n.id}
                   title={n.addUser ? n.addUser.name : n.removeUser.name}
@@ -208,7 +208,7 @@ export default function ScheduleOverrideList({ scheduleID }) {
                         },
                         {
                           label: 'Delete',
-                          onClick: () => setDeleteID(n.id),
+                          onClick: () => onDelete(n.id),
                         },
                       ]}
                     />
@@ -252,12 +252,6 @@ export default function ScheduleOverrideList({ scheduleID }) {
         )}
 
         {/* edit dialogs by ID */}
-        {deleteID && (
-          <ScheduleOverrideDeleteDialog
-            overrideID={deleteID}
-            onClose={() => setDeleteID(null)}
-          />
-        )}
         {editID && (
           <ScheduleOverrideEditDialog
             overrideID={editID}
@@ -266,5 +260,27 @@ export default function ScheduleOverrideList({ scheduleID }) {
         )}
       </Suspense>
     </OverrideDialogContext.Provider>
+  )
+}
+
+export default function ScheduleOverrideList({ scheduleID }) {
+  const [deletion, setDeletion] = useState(null)
+  return (
+    <React.Fragment>
+      <Suspense fallback={<Spinner />}>
+        <ScheduleOverrideListContent
+          scheduleID={scheduleID}
+          onDelete={(id) => setDeletion({ scheduleID, id })}
+        />
+      </Suspense>
+      {/* Keep the active controller outside list/timezone/create/edit Suspense.
+          A different Schedule invalidates the selection without remounting it. */}
+      {deletion && (
+        <ScheduleOverrideDeleteDialog
+          overrideID={deletion.scheduleID === scheduleID ? deletion.id : ''}
+          onClose={() => setDeletion(null)}
+        />
+      )}
+    </React.Fragment>
   )
 }

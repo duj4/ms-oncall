@@ -1,7 +1,9 @@
+import { userOverridePreview } from '../schedules/userOverrideDeletionFixtures'
 import {
   scheduleDeletionProfile,
   rotationDeletionProfile,
   notificationRuleDeletionProfile,
+  userOverrideDeletionProfile,
 } from '../util/deletionSafetyProfiles'
 import { notificationRulePreview } from '../users/notificationRuleDeletionFixtures'
 import React from 'react'
@@ -294,3 +296,38 @@ test('Rotation displays actual participants/state and preserved User targets wit
   expect(html).not.toContain('cascade-count')
   expect(html).not.toContain('Deleting a schedule')
 })
+
+describe.each(['active', 'future', 'ended'] as const)(
+  'Override %s',
+  (period) => {
+    test.each(['add-only', 'remove-only', 'replace'] as const)(
+      '%s explains deleted Override and retained Schedule/User',
+      (shape) => {
+        const p = props()
+        p.profile = userOverrideDeletionProfile
+        p.state.preview = userOverridePreview(period, shape)
+        const html = render(p)
+        for (const text of [
+          'Delete Override',
+          'Selected user override',
+          'OVERRIDE_COVERAGE',
+          'The selected override is deleted; its schedule is preserved.',
+          'The owning schedule is preserved.',
+          'Derived explanation; not an additional deleted object.',
+        ])
+          expect(html).toContain(text)
+        expect(html.includes('The added user is preserved.')).toBe(
+          shape !== 'remove-only',
+        )
+        expect(html.includes('The removed user is preserved.')).toBe(
+          shape !== 'add-only',
+        )
+        expect(html.includes('WARNING')).toBe(period !== 'ended')
+        expect(html.includes('type="checkbox"')).toBe(period !== 'ended')
+        expect(confirmDisabled(html)).toBe(period !== 'ended')
+        expect(html).not.toContain('CASCADE')
+        expect(html).not.toContain('version-1')
+      },
+    )
+  },
+)
