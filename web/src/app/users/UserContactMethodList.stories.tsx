@@ -1,4 +1,5 @@
-import React from 'react'
+import UserContactMethodDeleteDialog from './UserContactMethodDeleteDialog'
+import React, { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import UserContactMethodList from './UserContactMethodList'
 import { expect, within, userEvent, screen } from 'storybook/test'
@@ -8,6 +9,7 @@ import { Destination } from '../../schema'
 
 const meta = {
   title: 'users/UserContactMethodList',
+  args: { deletionActive: false, onDelete: () => {} },
   component: UserContactMethodList,
   tags: ['autodocs'],
   parameters: {
@@ -116,7 +118,22 @@ const meta = {
     },
   },
   render: function Component(args) {
-    return <UserContactMethodList {...args} />
+    const [deleting, setDeleting] = useState('')
+    return (
+      <React.Fragment>
+        {deleting && (
+          <UserContactMethodDeleteDialog
+            contactMethodID={deleting}
+            onClose={() => setDeleting('')}
+          />
+        )}
+        <UserContactMethodList
+          {...args}
+          deletionActive={!!deleting}
+          onDelete={setDeleting}
+        />
+      </React.Fragment>
+    )
   },
 } satisfies Meta<typeof UserContactMethodList>
 

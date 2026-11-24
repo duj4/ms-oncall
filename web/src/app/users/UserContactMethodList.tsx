@@ -6,7 +6,6 @@ import { Theme } from '@mui/material/styles'
 import { Add } from '@mui/icons-material'
 import { sortContactMethods } from './util'
 import OtherActions from '../util/OtherActions'
-import UserContactMethodDeleteDialog from './UserContactMethodDeleteDialog'
 import { Warning } from '../icons'
 import UserContactMethodVerificationDialog from './UserContactMethodVerificationDialog'
 import { useIsWidthDown } from '../util/useWidth'
@@ -19,6 +18,8 @@ import UserContactMethodEditDialog from './UserContactMethodEditDialog'
 import UserContactMethodCreateDialog from './UserContactMethodCreateDialog'
 import CompList from '../lists/CompList'
 import { CompListItemText } from '../lists/CompListItems'
+
+const deletionQueryContext = { suspense: false }
 
 const query = gql`
   query cmList($id: ID!) {
@@ -60,6 +61,8 @@ interface ListItemAction {
 interface UserContactMethodListProps {
   userID: string
   readOnly?: boolean
+  onDelete: (contactMethodID: string) => void
+  deletionActive: boolean
 }
 
 const useStyles = makeStyles((theme: Theme) => ({
@@ -75,7 +78,6 @@ export default function UserContactMethodList(
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showVerifyDialogByID, setShowVerifyDialogByID] = useState('')
   const [showEditDialogByID, setShowEditDialogByID] = useState('')
-  const [showDeleteDialogByID, setShowDeleteDialogByID] = useState('')
   const [showSendTestByID, setShowSendTestByID] = useState('')
   const destinationTypes = useContactMethodTypes()
 
@@ -84,6 +86,7 @@ export default function UserContactMethodList(
     variables: {
       id: props.userID,
     },
+    context: props.deletionActive ? deletionQueryContext : undefined,
   })
 
   const { userID: currentUserID } = useSessionInfo()
@@ -123,7 +126,7 @@ export default function UserContactMethodList(
       },
       {
         label: 'Delete',
-        onClick: () => setShowDeleteDialogByID(cm.id),
+        onClick: () => props.onDelete(cm.id),
         disabled: false,
         tooltip: '',
       },
@@ -249,12 +252,6 @@ export default function UserContactMethodList(
             <UserContactMethodEditDialog
               contactMethodID={showEditDialogByID}
               onClose={() => setShowEditDialogByID('')}
-            />
-          )}
-          {showDeleteDialogByID && (
-            <UserContactMethodDeleteDialog
-              contactMethodID={showDeleteDialogByID}
-              onClose={() => setShowDeleteDialogByID('')}
             />
           )}
           {showSendTestByID && (

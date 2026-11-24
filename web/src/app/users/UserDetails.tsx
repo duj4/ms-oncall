@@ -21,6 +21,7 @@ import { useIsWidthDown } from '../util/useWidth'
 import UserShiftsCalendar from './UserShiftsCalendar'
 import UserContactMethodCreateDialog from './UserContactMethodCreateDialog'
 import UserNotificationRuleDeleteDialog from './UserNotificationRuleDeleteDialog'
+import UserContactMethodDeleteDialog from './UserContactMethodDeleteDialog'
 
 const deletionQueryContext = { suspense: false }
 
@@ -82,24 +83,41 @@ export default function UserDetails(props: {
     userID: string
     ruleID: string
   } | null>(null)
+  const [deleteContact, setDeleteContact] = useState<{
+    userID: string
+    contactMethodID: string
+  } | null>(null)
+  const deletionActive = !!deleteRule || !!deleteContact
   const mobile = useIsWidthDown('md')
 
   const [{ data, error }] = useQuery<{ user: User }>({
     query: isAdmin || userID === currentUserID ? profileQuery : userQuery,
     variables: { id: userID },
-    context: deleteRule ? deletionQueryContext : undefined,
+    context: deletionActive ? deletionQueryContext : undefined,
   })
 
   const user = data?.user
-  // Keep one controller at the same tree position through both parent queries'
-  // refetch/error/null states. Neither missing User data nor a missing rule is
+  // Keep each active controller at the same tree position through User/list
+  // refetch/error/null states. Missing User, contact or rule data is never
   // a receipt. Changing User invalidates the selection without remounting a
   // pending/unknown commit into a fresh deletion.
-  const deleteDialog = deleteRule && (
-    <UserNotificationRuleDeleteDialog
-      ruleID={deleteRule.userID === userID ? deleteRule.ruleID : ''}
-      onClose={() => setDeleteRule(null)}
-    />
+  const deleteDialog = (
+    <React.Fragment>
+      {deleteContact && (
+        <UserContactMethodDeleteDialog
+          contactMethodID={
+            deleteContact.userID === userID ? deleteContact.contactMethodID : ''
+          }
+          onClose={() => setDeleteContact(null)}
+        />
+      )}
+      {deleteRule && (
+        <UserNotificationRuleDeleteDialog
+          ruleID={deleteRule.userID === userID ? deleteRule.ruleID : ''}
+          onClose={() => setDeleteRule(null)}
+        />
+      )}
+    </React.Fragment>
   )
   if (error || !user)
     return (
@@ -237,11 +255,18 @@ export default function UserDetails(props: {
         subheader={user.email}
         pageContent={
           <Grid container spacing={2}>
-            <UserContactMethodList userID={userID} readOnly={props.readOnly} />
+            <UserContactMethodList
+              userID={userID}
+              readOnly={props.readOnly}
+              deletionActive={deletionActive}
+              onDelete={(contactMethodID) =>
+                setDeleteContact({ userID, contactMethodID })
+              }
+            />
             <UserNotificationRuleList
               userID={userID}
               readOnly={props.readOnly}
-              deletionActive={!!deleteRule}
+              deletionActive={deletionActive}
               onDelete={(ruleID) => setDeleteRule({ userID, ruleID })}
             />
             {!mobile && (

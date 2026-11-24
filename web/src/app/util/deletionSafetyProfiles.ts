@@ -9,18 +9,21 @@ export interface DeletionRootProfile {
     | 'ROTATION'
     | 'NOTIFICATION_RULE'
     | 'USER_OVERRIDE'
+    | 'CONTACT_METHOD'
   readonly deleteType:
     | 'escalationPolicy'
     | 'schedule'
     | 'rotation'
     | 'notificationRule'
     | 'userOverride'
+    | 'contactMethod'
   readonly typename:
     | 'EscalationPolicy'
     | 'Schedule'
     | 'Rotation'
     | 'UserNotificationRule'
     | 'UserOverride'
+    | 'UserContactMethod'
   readonly additionalTypenames?: readonly string[]
   readonly listPath?: string
   readonly title: string
@@ -223,4 +226,155 @@ export const userOverrideDeletionProfile: DeletionRootProfile = {
         impact.change === 'PRESERVED' &&
         impact.policy === 'INFORMATIONAL' &&
         impact.requiredAction === 'NONE',
+}
+
+// ContactMethod closure: contactProjections plus OutgoingMessage ->
+// PendingSignal/MessageStatus and VerificationState -> OutgoingMessage.
+// Planner derived rows retain the original edge identities; co-deletion refers
+// to referencingResource, never necessarily the displayed target or parent.
+export const contactMethodDeletionProfile: DeletionRootProfile = {
+  previewType: 'CONTACT_METHOD',
+  deleteType: 'contactMethod',
+  typename: 'UserContactMethod',
+  additionalTypenames: ['UserContactMethod', 'UserNotificationRule', 'User'],
+  title: 'Delete Contact Method',
+  noun: 'contact method',
+  resourceTypes: [
+    'CONTACT_METHOD',
+    'NOTIFICATION_RULE',
+    'USER',
+    'AUTH_SUBJECT',
+    'VERIFICATION_STATE',
+    'ALERT_STATUS_SUBSCRIPTION',
+    'OUTGOING_MESSAGE',
+    'PENDING_SIGNAL',
+    'MESSAGE_STATUS_HISTORY',
+  ],
+  relations: [
+    'CONTACT_NOTIFICATION_RULE',
+    'STATUS_CONTACT',
+    'IMMEDIATE_ROUTE',
+    'CONTACT_AUTH_SUBJECT',
+    'VERIFICATION',
+    'CONTACT_SUBSCRIPTION',
+    'NOTIFICATION_CONFIGURATION',
+    'RETAINED_CONTACT',
+    'OUTGOING_MESSAGE',
+    'PENDING_SIGNAL',
+    'MESSAGE_STATUS',
+  ],
+  supportsImpact: (impact, rootID) => {
+    const {
+      target,
+      referencingResource: ref,
+      parent,
+      relation,
+      isDerived,
+      isPlannedCoDeletion: co,
+      policy,
+      change,
+      requiredAction,
+    } = impact
+    const root = target.type === 'CONTACT_METHOD' && target.id === rootID
+    const info = policy === 'INFORMATIONAL' && requiredAction === 'NONE'
+    const confirmed = (p: string): boolean =>
+      policy === p && requiredAction === 'CONFIRM_IMPACT'
+    if (relation === 'CONTACT_NOTIFICATION_RULE')
+      return (
+        root &&
+        ref.type === 'NOTIFICATION_RULE' &&
+        parent?.type === 'USER' &&
+        co &&
+        (isDerived
+          ? info && change === 'PRESERVED'
+          : confirmed('CASCADE') && change === 'DELETED')
+      )
+    if (relation === 'RETAINED_CONTACT')
+      return (
+        target.type === 'NOTIFICATION_RULE' &&
+        ref.type === 'CONTACT_METHOD' &&
+        ref.id === rootID &&
+        parent?.type === 'USER' &&
+        co &&
+        info &&
+        change === 'PRESERVED'
+      )
+    if (isDerived || parent !== null) return false
+    switch (relation) {
+      case 'STATUS_CONTACT':
+        return (
+          root &&
+          ref.type === 'USER' &&
+          !co &&
+          confirmed('WARNING') &&
+          change === 'RELATION_REMOVED'
+        )
+      case 'IMMEDIATE_ROUTE':
+        return (
+          root &&
+          ref.type === 'USER' &&
+          !co &&
+          ((confirmed('WARNING') && change === 'RELATION_REMOVED') ||
+            (info && change === 'PRESERVED'))
+        )
+      case 'NOTIFICATION_CONFIGURATION':
+        return (
+          target.type === 'NOTIFICATION_RULE' &&
+          ref.type === 'USER' &&
+          !co &&
+          change === 'DELETED' &&
+          (info || confirmed('WARNING'))
+        )
+      case 'CONTACT_AUTH_SUBJECT':
+        return (
+          root &&
+          ref.type === 'AUTH_SUBJECT' &&
+          co &&
+          confirmed('WARNING') &&
+          change === 'DELETED'
+        )
+      case 'VERIFICATION':
+        return (
+          root &&
+          ref.type === 'VERIFICATION_STATE' &&
+          co &&
+          info &&
+          change === 'DELETED'
+        )
+      case 'CONTACT_SUBSCRIPTION':
+        return (
+          root &&
+          ref.type === 'ALERT_STATUS_SUBSCRIPTION' &&
+          co &&
+          confirmed('CASCADE') &&
+          change === 'DELETED'
+        )
+      case 'OUTGOING_MESSAGE':
+        return (
+          ref.type === 'OUTGOING_MESSAGE' &&
+          co &&
+          change === 'DELETED' &&
+          ((root && confirmed('WARNING')) ||
+            (target.type === 'VERIFICATION_STATE' && info))
+        )
+      case 'PENDING_SIGNAL':
+        return (
+          target.type === 'OUTGOING_MESSAGE' &&
+          ref.type === 'PENDING_SIGNAL' &&
+          co &&
+          confirmed('WARNING') &&
+          change === 'DELETED'
+        )
+      case 'MESSAGE_STATUS':
+        return (
+          target.type === 'OUTGOING_MESSAGE' &&
+          ref.type === 'MESSAGE_STATUS_HISTORY' &&
+          co &&
+          info &&
+          change === 'DELETED'
+        )
+      default:
+        return false
+    }
+  },
 }
