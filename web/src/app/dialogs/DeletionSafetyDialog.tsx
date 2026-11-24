@@ -215,11 +215,15 @@ export default function DeletionSafetyDialog(
                               object.
                             </Typography>
                           )}
-                          {node.isPlannedCoDeletion && (
-                            <Typography>
-                              Included in the backend deletion plan.
-                            </Typography>
-                          )}
+                          {node.isPlannedCoDeletion &&
+                            !(
+                              profile.previewType === 'USER_OVERRIDE' &&
+                              node.change === 'PRESERVED'
+                            ) && (
+                              <Typography>
+                                Included in the backend deletion plan.
+                              </Typography>
+                            )}
                         </li>
                       ))}
                     </ul>
