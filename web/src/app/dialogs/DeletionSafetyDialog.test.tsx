@@ -1,7 +1,10 @@
+import { userOverridePreview } from '../schedules/userOverrideDeletionFixtures'
 import {
+  epDeletionProfile,
   scheduleDeletionProfile,
   rotationDeletionProfile,
   notificationRuleDeletionProfile,
+  userOverrideDeletionProfile,
 } from '../util/deletionSafetyProfiles'
 import { notificationRulePreview } from '../users/notificationRuleDeletionFixtures'
 import React from 'react'
@@ -95,6 +98,11 @@ function render(p: DeletionSafetyDialogProps): string {
 }
 function confirmDisabled(html: string): boolean {
   return /<button[^>]*disabled[^>]*>Confirm<\/button>/.test(html)
+}
+function impactRows(html: string): string[] {
+  return (html.match(/<li>[\s\S]*?<\/li>/g) || []).map((row) =>
+    row.replace(/<style[^>]*>[\s\S]*?<\/style>/g, '').replace(/<[^>]*>/g, ''),
+  )
 }
 test.each(['alternative', 'last-immediate', 'open-cycle', 'both'] as const)(
   'NotificationRule explains deleted configuration versus retained User/contact: %s',
@@ -293,4 +301,128 @@ test('Rotation displays actual participants/state and preserved User targets wit
     expect(html).toContain(text)
   expect(html).not.toContain('cascade-count')
   expect(html).not.toContain('Deleting a schedule')
+})
+
+describe.each(['active', 'future', 'ended'] as const)(
+  'Override %s',
+  (period) => {
+    test.each(['add-only', 'remove-only', 'replace'] as const)(
+      '%s explains deleted Override and retained Schedule/User',
+      (shape) => {
+        const p = props()
+        p.profile = userOverrideDeletionProfile
+        p.state.preview = userOverridePreview(period, shape)
+        const original = JSON.stringify(p.state.preview)
+        const html = render(p)
+        for (const text of [
+          'Delete Override',
+          'Selected user override',
+          'OVERRIDE_COVERAGE',
+          'The selected override is deleted; its schedule is preserved.',
+          'The owning schedule is preserved.',
+          'Derived explanation; not an additional deleted object.',
+        ])
+          expect(html).toContain(text)
+        expect(html.includes('The added user is preserved.')).toBe(
+          shape !== 'remove-only',
+        )
+        expect(html.includes('The removed user is preserved.')).toBe(
+          shape !== 'add-only',
+        )
+        expect(html.includes('WARNING')).toBe(period !== 'ended')
+        expect(html.includes('type="checkbox"')).toBe(period !== 'ended')
+        expect(confirmDisabled(html)).toBe(period !== 'ended')
+        const informational = html.match(
+          /<section aria-label="INFORMATIONAL">([\s\S]*?)<\/section>/,
+        )![1]
+        const retainedRows: string[] = []
+        for (const side of ['add', 'remove'] as const) {
+          if (shape === 'add-only' && side === 'remove') continue
+          if (shape === 'remove-only' && side === 'add') continue
+          const details =
+            `Target: Synthetic USER (USER 30000000-0000-4000-8000-00000000000${side === 'add' ? 1 : 2})` +
+            'Referencing resource: Synthetic USER_OVERRIDE (USER_OVERRIDE 10000000-0000-4000-8000-000000000001)' +
+            'Parent: Synthetic SCHEDULE (SCHEDULE 20000000-0000-4000-8000-000000000001)' +
+            `Relation: OVERRIDE_${side === 'add' ? 'ADD' : 'REMOVE'}_USER · Change: PRESERVED · Required action: NONE` +
+            'The affected resource is preserved.'
+          retainedRows.push(
+            `The ${side === 'add' ? 'added' : 'removed'} user is preserved.` +
+              details,
+            'The owning schedule is preserved.' +
+              details +
+              'Derived explanation; not an additional deleted object.',
+          )
+        }
+        expect(impactRows(informational)).toEqual(
+          period === 'ended'
+            ? [impactRows(html)[0], ...retainedRows]
+            : retainedRows,
+        )
+        expect(impactRows(html)).toEqual([
+          'The selected override is deleted; its schedule is preserved. This affects on-call coverage.' +
+            'Target: Synthetic USER_OVERRIDE (USER_OVERRIDE 10000000-0000-4000-8000-000000000001)' +
+            'Referencing resource: Synthetic SCHEDULE (SCHEDULE 20000000-0000-4000-8000-000000000001)' +
+            `Relation: OVERRIDE_COVERAGE · Change: DELETED · Required action: ${period === 'ended' ? 'NONE' : 'CONFIRM_IMPACT'}` +
+            'The affected resource would be deleted.',
+          ...retainedRows,
+        ])
+        expect(html).not.toContain('Included in the backend deletion plan.')
+        expect(JSON.stringify(p.state.preview)).toBe(original)
+        expect(
+          p.state.preview.impacts.edges
+            .filter(({ node }) => node.change === 'PRESERVED')
+            .every(({ node }) => node.isPlannedCoDeletion),
+        ).toBe(true)
+        p.acknowledged = true
+        expect(confirmDisabled(render(p))).toBe(false)
+        expect(html).not.toContain('CASCADE')
+        expect(html).not.toContain('version-1')
+      },
+    )
+  },
+)
+
+// Presentation-only flag matrix. NotificationRule's profile rejects planned
+// co-deletion; its real preview shapes are covered separately above.
+test.each([
+  ['EscalationPolicy', epDeletionProfile],
+  ['Schedule', scheduleDeletionProfile],
+  ['Rotation', rotationDeletionProfile],
+  ['NotificationRule', notificationRuleDeletionProfile],
+] as const)(
+  '%s retains the shared dialog co-deletion hint branch',
+  (_, profile) => {
+    const p = props()
+    p.profile = profile
+    const node = p.state.preview!.impacts.edges[0].node
+    node.isPlannedCoDeletion = true
+    for (const change of ['DELETED', 'PRESERVED']) {
+      node.change = change
+      const rows = impactRows(render(p))
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toContain(`Change: ${change}`)
+      expect(rows[0]).toContain('Target:')
+      expect(rows[0]).toContain('Referencing resource:')
+      expect(rows[0]).toContain('Parent:')
+      expect(rows[0]).toContain('Included in the backend deletion plan.')
+      expect(confirmDisabled(render(p))).toBe(true)
+    }
+    node.isPlannedCoDeletion = false
+    expect(render(p)).not.toContain('Included in the backend deletion plan.')
+  },
+)
+
+test('UserOverride retains the hint for a planned deleted impact', () => {
+  const p = props()
+  p.profile = userOverrideDeletionProfile
+  p.state.preview = userOverridePreview('active', 'replace')
+  p.state.preview.impacts.edges[0].node.isPlannedCoDeletion = true
+  const rows = impactRows(render(p))
+  expect(rows[0]).toContain('Change: DELETED')
+  expect(rows[0]).toContain('Included in the backend deletion plan.')
+  for (const row of rows.slice(1)) {
+    expect(row).toContain('Change: PRESERVED')
+    expect(row).not.toContain('Included in the backend deletion plan.')
+  }
+  expect(confirmDisabled(render(p))).toBe(true)
 })

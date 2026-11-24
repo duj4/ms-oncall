@@ -106,6 +106,14 @@ export default function DeletionSafetyDialog(
             below.
           </Alert>
         )}
+        {profile.previewType === 'USER_OVERRIDE' && (
+          <Alert severity='info'>
+            Only the selected user override is deleted. Its schedule and the
+            added or removed users are preserved. Removing the override may
+            change current or future on-call assignments. Review the backend
+            coverage impact below.
+          </Alert>
+        )}
         {state.message && <Alert severity='info'>{state.message}</Alert>}
         {message && (
           <Alert
@@ -164,6 +172,17 @@ export default function DeletionSafetyDialog(
                     <ul>
                       {edges.map(({ node }) => (
                         <li key={node.edgeID}>
+                          {profile.previewType === 'USER_OVERRIDE' && (
+                            <Typography>
+                              {node.relation === 'OVERRIDE_COVERAGE'
+                                ? 'The selected override is deleted; its schedule is preserved. This affects on-call coverage.'
+                                : node.isDerived
+                                  ? 'The owning schedule is preserved.'
+                                  : node.relation === 'OVERRIDE_ADD_USER'
+                                    ? 'The added user is preserved.'
+                                    : 'The removed user is preserved.'}
+                            </Typography>
+                          )}
                           {profile.previewType === 'NOTIFICATION_RULE' && (
                             <Typography>
                               {node.relation === 'NOTIFICATION_CONFIGURATION'
@@ -196,11 +215,15 @@ export default function DeletionSafetyDialog(
                               object.
                             </Typography>
                           )}
-                          {node.isPlannedCoDeletion && (
-                            <Typography>
-                              Included in the backend deletion plan.
-                            </Typography>
-                          )}
+                          {node.isPlannedCoDeletion &&
+                            !(
+                              profile.previewType === 'USER_OVERRIDE' &&
+                              node.change === 'PRESERVED'
+                            ) && (
+                              <Typography>
+                                Included in the backend deletion plan.
+                              </Typography>
+                            )}
                         </li>
                       ))}
                     </ul>

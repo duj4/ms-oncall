@@ -8,16 +8,19 @@ export interface DeletionRootProfile {
     | 'SCHEDULE'
     | 'ROTATION'
     | 'NOTIFICATION_RULE'
+    | 'USER_OVERRIDE'
   readonly deleteType:
     | 'escalationPolicy'
     | 'schedule'
     | 'rotation'
     | 'notificationRule'
+    | 'userOverride'
   readonly typename:
     | 'EscalationPolicy'
     | 'Schedule'
     | 'Rotation'
     | 'UserNotificationRule'
+    | 'UserOverride'
   readonly additionalTypenames?: readonly string[]
   readonly listPath?: string
   readonly title: string
@@ -181,4 +184,43 @@ export const notificationRuleDeletionProfile: DeletionRootProfile = {
         impact.change === 'PRESERVED' &&
         impact.policy === 'INFORMATIONAL' &&
         impact.requiredAction === 'NONE'),
+}
+
+// queries.go(UserOverride), policy.go(affectTarget), and planner.go's
+// retainedReference projection: coverage affects the override, while user
+// edges keep USER as target and the deleted override as referencingResource.
+// Derived rows retain those identities and explain the preserved Schedule.
+export const userOverrideDeletionProfile: DeletionRootProfile = {
+  previewType: 'USER_OVERRIDE',
+  deleteType: 'userOverride',
+  typename: 'UserOverride',
+  additionalTypenames: ['UserOverride', 'Schedule'],
+  title: 'Delete Override',
+  noun: 'user override',
+  resourceTypes: ['USER_OVERRIDE', 'SCHEDULE', 'USER'],
+  relations: ['OVERRIDE_COVERAGE', 'OVERRIDE_ADD_USER', 'OVERRIDE_REMOVE_USER'],
+  supportsImpact: (impact, rootID) =>
+    impact.relation === 'OVERRIDE_COVERAGE'
+      ? impact.target.type === 'USER_OVERRIDE' &&
+        impact.target.id === rootID &&
+        impact.referencingResource.type === 'SCHEDULE' &&
+        impact.parent === null &&
+        !impact.isDerived &&
+        !impact.isPlannedCoDeletion &&
+        impact.change === 'DELETED' &&
+        ((impact.policy === 'WARNING' &&
+          impact.requiredAction === 'CONFIRM_IMPACT') ||
+          (impact.policy === 'INFORMATIONAL' &&
+            impact.requiredAction === 'NONE'))
+      : ['OVERRIDE_ADD_USER', 'OVERRIDE_REMOVE_USER'].includes(
+          impact.relation,
+        ) &&
+        impact.target.type === 'USER' &&
+        impact.referencingResource.type === 'USER_OVERRIDE' &&
+        impact.referencingResource.id === rootID &&
+        impact.parent?.type === 'SCHEDULE' &&
+        impact.isPlannedCoDeletion &&
+        impact.change === 'PRESERVED' &&
+        impact.policy === 'INFORMATIONAL' &&
+        impact.requiredAction === 'NONE',
 }
