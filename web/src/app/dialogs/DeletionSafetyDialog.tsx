@@ -106,6 +106,13 @@ export default function DeletionSafetyDialog(
             below.
           </Alert>
         )}
+        {profile.previewType === 'CONTACT_METHOD' && (
+          <Alert severity='info'>
+            The selected contact method is the only explicit deletion root. Its
+            user is preserved. Review the backend cascade plan and notification
+            path changes below.
+          </Alert>
+        )}
         {profile.previewType === 'USER_OVERRIDE' && (
           <Alert severity='info'>
             Only the selected user override is deleted. Its schedule and the
@@ -157,6 +164,24 @@ export default function DeletionSafetyDialog(
                 are listed below.
               </Typography>
             )}
+            {profile.previewType === 'CONTACT_METHOD' && (
+              <Typography data-cy='contact-rule-cascade-count'>
+                {
+                  new Set(
+                    state.preview.impacts.edges
+                      .filter(
+                        ({ node }) =>
+                          node.relation === 'CONTACT_NOTIFICATION_RULE' &&
+                          !node.isDerived &&
+                          node.policy === 'CASCADE' &&
+                          node.change === 'DELETED',
+                      )
+                      .map(({ node }) => node.referencingResource.id),
+                  ).size
+                }{' '}
+                unique notification rules would be deleted by backend cascade.
+              </Typography>
+            )}
             {state.preview.notices.map((notice, i) => (
               <Typography key={i}>{notice}</Typography>
             ))}
@@ -172,6 +197,24 @@ export default function DeletionSafetyDialog(
                     <ul>
                       {edges.map(({ node }) => (
                         <li key={node.edgeID}>
+                          {profile.previewType === 'CONTACT_METHOD' && (
+                            <Typography>
+                              {node.isDerived
+                                ? 'The owning user is preserved; this is an explanation of the relationship below.'
+                                : node.relation === 'CONTACT_NOTIFICATION_RULE'
+                                  ? 'This notification rule is deleted by backend cascade.'
+                                  : node.relation ===
+                                      'NOTIFICATION_CONFIGURATION'
+                                    ? 'The cascaded notification rule is deleted; the user is preserved. Review the notification configuration risk.'
+                                    : node.relation === 'RETAINED_CONTACT'
+                                      ? 'This row describes the cascaded rule contact reference. The selected contact method remains the explicit deletion root; the user is preserved.'
+                                      : node.relation === 'STATUS_CONTACT'
+                                        ? 'The user status notification setting is unlinked; the user is preserved.'
+                                        : node.relation === 'IMMEDIATE_ROUTE'
+                                          ? 'The user is preserved. Review the backend notification path risk.'
+                                          : 'The referencing resource would be deleted as part of the backend plan.'}
+                            </Typography>
+                          )}
                           {profile.previewType === 'USER_OVERRIDE' && (
                             <Typography>
                               {node.relation === 'OVERRIDE_COVERAGE'
@@ -208,7 +251,11 @@ export default function DeletionSafetyDialog(
                             Relation: {node.relation} · Change: {node.change} ·
                             Required action: {node.requiredAction}
                           </Typography>
-                          <Typography>{node.impact}</Typography>
+                          {!(
+                            profile.previewType === 'CONTACT_METHOD' &&
+                            node.relation === 'RETAINED_CONTACT' &&
+                            !node.isDerived
+                          ) && <Typography>{node.impact}</Typography>}
                           {node.isDerived && (
                             <Typography>
                               Derived explanation; not an additional deleted
@@ -217,11 +264,14 @@ export default function DeletionSafetyDialog(
                           )}
                           {node.isPlannedCoDeletion &&
                             !(
-                              profile.previewType === 'USER_OVERRIDE' &&
+                              (profile.previewType === 'USER_OVERRIDE' ||
+                                profile.previewType === 'CONTACT_METHOD') &&
                               node.change === 'PRESERVED'
                             ) && (
                               <Typography>
-                                Included in the backend deletion plan.
+                                {profile.previewType === 'CONTACT_METHOD'
+                                  ? 'The referencing resource is included in the backend deletion plan.'
+                                  : 'Included in the backend deletion plan.'}
                               </Typography>
                             )}
                         </li>

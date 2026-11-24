@@ -1,5 +1,7 @@
+import { contactMethodPreview } from '../users/contactMethodDeletionFixtures'
 import { userOverridePreview } from '../schedules/userOverrideDeletionFixtures'
 import {
+  contactMethodDeletionProfile,
   epDeletionProfile,
   scheduleDeletionProfile,
   rotationDeletionProfile,
@@ -423,6 +425,54 @@ test('UserOverride retains the hint for a planned deleted impact', () => {
   for (const row of rows.slice(1)) {
     expect(row).toContain('Change: PRESERVED')
     expect(row).not.toContain('Included in the backend deletion plan.')
+    if (row.includes('Change: PRESERVED'))
+      expect(row).not.toContain(
+        'The referencing resource is included in the backend deletion plan.',
+      )
   }
   expect(confirmDisabled(render(p))).toBe(true)
+})
+
+test('ContactMethod displays actual cascade closure, unique rules and preserved User without reversing co-deletion', () => {
+  const p = props()
+  p.profile = contactMethodDeletionProfile
+  p.state.preview = contactMethodPreview('both', undefined, 2, true)
+  const html = render(p)
+  expect(html).toContain(
+    '2 unique notification rules would be deleted by backend cascade.',
+  )
+  expect(html).toContain(
+    'The selected contact method is the only explicit deletion root.',
+  )
+  for (const relation of contactMethodDeletionProfile.relations)
+    expect(html).toContain(relation)
+  for (const row of impactRows(html)) {
+    if (row.includes('Derived explanation'))
+      expect(row).toContain('The owning user is preserved')
+    expect(row).not.toContain('Included in the backend deletion plan.')
+    if (row.includes('Change: PRESERVED'))
+      expect(row).not.toContain(
+        'The referencing resource is included in the backend deletion plan.',
+      )
+    if (
+      row.includes('Relation: RETAINED_CONTACT') &&
+      !row.includes('Derived explanation')
+    ) {
+      expect(row).toContain(
+        'selected contact method remains the explicit deletion root',
+      )
+      expect(row).not.toContain('The affected resource is preserved.')
+    }
+    if (row.includes('Relation: NOTIFICATION_CONFIGURATION'))
+      expect(row).toContain('the user is preserved')
+  }
+})
+test('ContactMethod zero rules and informational route need only final confirmation', () => {
+  const p = props()
+  p.profile = contactMethodDeletionProfile
+  p.state.preview = contactMethodPreview('alternative', undefined, 0)
+  const html = render(p)
+  expect(html).toContain('0 unique notification rules')
+  expect(html).not.toContain('type="checkbox"')
+  expect(confirmDisabled(html)).toBe(false)
 })
