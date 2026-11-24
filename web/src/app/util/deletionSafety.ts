@@ -392,7 +392,8 @@ function validatePage(
       !isRecord(edge) ||
       !onlyKeys(edge, ['cursor', 'node']) ||
       !nonempty(edge.cursor) ||
-      !validImpact(edge.node, profile)
+      !validImpact(edge.node, profile) ||
+      (profile.supportsImpact && !profile.supportsImpact(edge.node, id))
     )
       throw new PreviewFailure('unsupported')
   }

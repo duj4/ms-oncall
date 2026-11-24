@@ -20,6 +20,7 @@ export function useDeletionSafety(
   profile: DeletionRootProfile,
   id: string,
   onClose: () => void,
+  onSuccess?: () => void,
 ): DeletionSafetyDialogProps {
   const client = useClient()
   const [, navigate] = useLocation()
@@ -65,6 +66,13 @@ export function useDeletionSafety(
         return
       const request = ++generation.current
       cancelPage.current?.()
+      // A changed parent may invalidate a nested resource selection. Keep the
+      // controller mounted, but never preview/commit an absent selection.
+      if (!id) {
+        clearAck()
+        update({ phase: 'failed', loaded: 0 })
+        return
+      }
       const valid = (): boolean =>
         active.current &&
         generation.current === request &&
@@ -175,7 +183,9 @@ export function useDeletionSafety(
         .mutation<{
           deleteAll: boolean
         }>(deletionMutation, variables, {
-          additionalTypenames: [profile.typename],
+          additionalTypenames: profile.additionalTypenames
+            ? [...profile.additionalTypenames]
+            : [profile.typename],
         })
         .toPromise()
     } catch {
@@ -203,7 +213,8 @@ export function useDeletionSafety(
       cancelPage.current?.()
       release.current?.()
       release.current = undefined
-      navigate(profile.listPath)
+      if (onSuccess) onSuccess()
+      else if (profile.listPath) navigate(profile.listPath)
       return
     }
     const failure =

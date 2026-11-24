@@ -99,6 +99,13 @@ export default function DeletionSafetyDialog(
             users. Existing references may block deletion.
           </Alert>
         )}
+        {profile.previewType === 'NOTIFICATION_RULE' && (
+          <Alert severity='info'>
+            Only the selected notification rule is deleted. Its user and contact
+            method are preserved. Review any notification configuration risks
+            below.
+          </Alert>
+        )}
         {state.message && <Alert severity='info'>{state.message}</Alert>}
         {message && (
           <Alert
@@ -157,6 +164,15 @@ export default function DeletionSafetyDialog(
                     <ul>
                       {edges.map(({ node }) => (
                         <li key={node.edgeID}>
+                          {profile.previewType === 'NOTIFICATION_RULE' && (
+                            <Typography>
+                              {node.relation === 'NOTIFICATION_CONFIGURATION'
+                                ? 'The selected rule is deleted; the user is preserved. This affects notification configuration.'
+                                : node.isDerived
+                                  ? 'The owning user is preserved.'
+                                  : 'The contact method is preserved.'}
+                            </Typography>
+                          )}
                           <Typography>
                             Target: {identity(node.target)}
                           </Typography>

@@ -1,14 +1,30 @@
+import type { DeletionImpact } from '../../schema'
+
 // Only these reviewed single-root adapters are supported. Keep their backend
 // vocabularies separate: a Schedule relationship must not become valid for EP.
 export interface DeletionRootProfile {
-  readonly previewType: 'ESCALATION_POLICY' | 'SCHEDULE' | 'ROTATION'
-  readonly deleteType: 'escalationPolicy' | 'schedule' | 'rotation'
-  readonly typename: 'EscalationPolicy' | 'Schedule' | 'Rotation'
-  readonly listPath: string
+  readonly previewType:
+    | 'ESCALATION_POLICY'
+    | 'SCHEDULE'
+    | 'ROTATION'
+    | 'NOTIFICATION_RULE'
+  readonly deleteType:
+    | 'escalationPolicy'
+    | 'schedule'
+    | 'rotation'
+    | 'notificationRule'
+  readonly typename:
+    | 'EscalationPolicy'
+    | 'Schedule'
+    | 'Rotation'
+    | 'UserNotificationRule'
+  readonly additionalTypenames?: readonly string[]
+  readonly listPath?: string
   readonly title: string
   readonly noun: string
   readonly resourceTypes: readonly string[]
   readonly relations: readonly string[]
+  readonly supportsImpact?: (impact: DeletionImpact, rootID: string) => boolean
 }
 export const epDeletionProfile: DeletionRootProfile = {
   previewType: 'ESCALATION_POLICY',
@@ -131,4 +147,38 @@ export const rotationDeletionProfile: DeletionRootProfile = {
     'ROTATION_STATE',
     'FAVORITE',
   ],
+}
+
+// queries.go contactProjections(NotificationRule) projects exactly these two
+// relations. policy.go affects the rule itself for NOTIFICATION_CONFIGURATION;
+// planner.go also explains the retained User parent of RETAINED_CONTACT.
+// There is no NotificationRule details/list route: its owner stays on UserDetails.
+export const notificationRuleDeletionProfile: DeletionRootProfile = {
+  previewType: 'NOTIFICATION_RULE',
+  deleteType: 'notificationRule',
+  typename: 'UserNotificationRule',
+  additionalTypenames: ['UserNotificationRule', 'UserContactMethod', 'User'],
+  title: 'Delete Notification Rule',
+  noun: 'notification rule',
+  resourceTypes: ['NOTIFICATION_RULE', 'USER', 'CONTACT_METHOD'],
+  relations: ['NOTIFICATION_CONFIGURATION', 'RETAINED_CONTACT'],
+  supportsImpact: (impact, rootID) =>
+    impact.target.type === 'NOTIFICATION_RULE' &&
+    impact.target.id === rootID &&
+    !impact.isPlannedCoDeletion &&
+    (impact.relation === 'NOTIFICATION_CONFIGURATION'
+      ? impact.referencingResource.type === 'USER' &&
+        impact.parent === null &&
+        !impact.isDerived &&
+        impact.change === 'DELETED' &&
+        ((impact.policy === 'INFORMATIONAL' &&
+          impact.requiredAction === 'NONE') ||
+          (impact.policy === 'WARNING' &&
+            impact.requiredAction === 'CONFIRM_IMPACT'))
+      : impact.relation === 'RETAINED_CONTACT' &&
+        impact.referencingResource.type === 'CONTACT_METHOD' &&
+        impact.parent?.type === 'USER' &&
+        impact.change === 'PRESERVED' &&
+        impact.policy === 'INFORMATIONAL' &&
+        impact.requiredAction === 'NONE'),
 }

@@ -20,6 +20,9 @@ import { User } from '../../schema'
 import { useIsWidthDown } from '../util/useWidth'
 import UserShiftsCalendar from './UserShiftsCalendar'
 import UserContactMethodCreateDialog from './UserContactMethodCreateDialog'
+import UserNotificationRuleDeleteDialog from './UserNotificationRuleDeleteDialog'
+
+const deletionQueryContext = { suspense: false }
 
 const userQuery = gql`
   query userInfo($id: ID!) {
@@ -75,16 +78,36 @@ export default function UserDetails(props: {
     string | null | undefined
   >(null)
   const [showUserDeleteDialog, setShowUserDeleteDialog] = useState(false)
+  const [deleteRule, setDeleteRule] = useState<{
+    userID: string
+    ruleID: string
+  } | null>(null)
   const mobile = useIsWidthDown('md')
 
   const [{ data, error }] = useQuery<{ user: User }>({
     query: isAdmin || userID === currentUserID ? profileQuery : userQuery,
     variables: { id: userID },
+    context: deleteRule ? deletionQueryContext : undefined,
   })
 
   const user = data?.user
-  if (error) return <GenericError error={error.message} />
-  if (!user) return <ObjectNotFound />
+  // Keep one controller at the same tree position through both parent queries'
+  // refetch/error/null states. Neither missing User data nor a missing rule is
+  // a receipt. Changing User invalidates the selection without remounting a
+  // pending/unknown commit into a fresh deletion.
+  const deleteDialog = deleteRule && (
+    <UserNotificationRuleDeleteDialog
+      ruleID={deleteRule.userID === userID ? deleteRule.ruleID : ''}
+      onClose={() => setDeleteRule(null)}
+    />
+  )
+  if (error || !user)
+    return (
+      <React.Fragment>
+        {deleteDialog}
+        {error ? <GenericError error={error.message} /> : <ObjectNotFound />}
+      </React.Fragment>
+    )
 
   const svcCount = user.onCallOverview.serviceCount
   const sessCount = user?.sessions?.length ?? 0
@@ -151,6 +174,7 @@ export default function UserDetails(props: {
 
   return (
     <React.Fragment>
+      {deleteDialog}
       {/* dialogs only shown on mobile via FAB button */}
       {mobile && !props.readOnly ? (
         <SpeedDial
@@ -217,6 +241,8 @@ export default function UserDetails(props: {
             <UserNotificationRuleList
               userID={userID}
               readOnly={props.readOnly}
+              deletionActive={!!deleteRule}
+              onDelete={(ruleID) => setDeleteRule({ userID, ruleID })}
             />
             {!mobile && (
               <Suspense>
