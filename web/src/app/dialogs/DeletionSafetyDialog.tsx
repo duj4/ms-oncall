@@ -87,6 +87,15 @@ export default function DeletionSafetyDialog(
         title={<span id='deletion-safety-title'>{profile.title}</span>}
       />
       <DialogContent>
+        {profile.previewType === 'SERVICE' && (
+          <Alert severity='info'>
+            The selected service is the only explicit deletion root. Its
+            escalation policy is preserved; use the separate escalation policy
+            deletion flow to delete it. Open alerts may block deletion and must
+            be handled first. Closed alerts and integration keys may be deleted
+            by cascade. Other effects follow the backend plan below.
+          </Alert>
+        )}
         {profile.previewType === 'SCHEDULE' && (
           <Alert severity='info'>
             Deleting a schedule does not automatically delete rotations. Review
@@ -182,6 +191,38 @@ export default function DeletionSafetyDialog(
                 unique notification rules would be deleted by backend cascade.
               </Typography>
             )}
+            {profile.previewType === 'SERVICE' && (
+              <Typography data-cy='service-cascade-count'>
+                {
+                  new Set(
+                    state.preview.impacts.edges
+                      .filter(
+                        ({ node }) =>
+                          node.relation === 'SERVICE_ALERT' &&
+                          !node.isDerived &&
+                          node.change === 'DELETED' &&
+                          node.policy === 'CASCADE',
+                      )
+                      .map(({ node }) => node.referencingResource.id),
+                  ).size
+                }{' '}
+                unique alerts and{' '}
+                {
+                  new Set(
+                    state.preview.impacts.edges
+                      .filter(
+                        ({ node }) =>
+                          node.relation === 'SERVICE_INTEGRATION_KEY' &&
+                          !node.isDerived &&
+                          node.change === 'DELETED' &&
+                          node.policy === 'CASCADE',
+                      )
+                      .map(({ node }) => node.referencingResource.id),
+                  ).size
+                }{' '}
+                unique integration keys would be deleted by backend cascade.
+              </Typography>
+            )}
             {state.preview.notices.map((notice, i) => (
               <Typography key={i}>{notice}</Typography>
             ))}
@@ -197,6 +238,21 @@ export default function DeletionSafetyDialog(
                     <ul>
                       {edges.map(({ node }) => (
                         <li key={node.edgeID}>
+                          {profile.previewType === 'SERVICE' && (
+                            <Typography>
+                              {node.isDerived
+                                ? 'Derived explanation; no additional deletion root.'
+                                : node.policy === 'BLOCK'
+                                  ? 'This alert blocks service deletion. Handle the open alert, then check again.'
+                                  : node.relation === 'RETAINED_POLICY'
+                                    ? 'The associated escalation policy is preserved.'
+                                    : node.relation === 'INTEGRATION_SOURCE'
+                                      ? 'The integration key target is deleted; this row describes its link to the selected service.'
+                                      : node.change === 'PRESERVED'
+                                        ? 'The referencing history resource is preserved.'
+                                        : 'The referencing resource would be deleted by the backend plan.'}
+                            </Typography>
+                          )}
                           {profile.previewType === 'CONTACT_METHOD' && (
                             <Typography>
                               {node.isDerived
@@ -263,6 +319,7 @@ export default function DeletionSafetyDialog(
                             </Typography>
                           )}
                           {node.isPlannedCoDeletion &&
+                            profile.previewType !== 'SERVICE' &&
                             !(
                               (profile.previewType === 'USER_OVERRIDE' ||
                                 profile.previewType === 'CONTACT_METHOD') &&

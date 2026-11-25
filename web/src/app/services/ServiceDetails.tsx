@@ -1,7 +1,6 @@
 import { labelsDisabled } from '../util/labelProductPolicy'
-import React, { Suspense, useState } from 'react'
+import React, { Suspense, useMemo, useState } from 'react'
 import { gql, useQuery } from 'urql'
-import { Redirect } from 'wouter'
 import _ from 'lodash'
 import { Button, Grid } from '@mui/material'
 import { Edit, Delete } from '@mui/icons-material'
@@ -93,122 +92,138 @@ export default function ServiceDetails(props: {
   const [showEdit, setShowEdit] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
   const [showMaintMode, setShowMaintMode] = useState(false)
+  const queryContext = useMemo(() => ({ suspense: !showDelete }), [showDelete])
   const [{ data, fetching, error }] = useQuery({
     query,
     variables: { serviceID, global },
+    pause: !serviceID,
+    context: queryContext,
   })
 
-  if (fetching && !_.get(data, 'service.id')) return <Spinner />
-  if (error) return <GenericError error={error.message} />
-
-  if (!_.get(data, 'service.id')) {
-    return showDelete ? <Redirect to='/services' /> : <ObjectNotFound />
+  // Keep the controller in this same tree position across parent refreshes and
+  // selection changes. A missing Service is never a successful delete receipt.
+  const deleteDialog = showDelete && (
+    <ServiceDeleteDialog
+      serviceID={serviceID}
+      onClose={() => setShowDelete(false)}
+    />
+  )
+  if ((fetching && !data?.service?.id) || error || !data?.service?.id) {
+    return (
+      <React.Fragment>
+        {deleteDialog}
+        {fetching && !data?.service?.id ? (
+          <Spinner />
+        ) : error ? (
+          <GenericError error={error.message} />
+        ) : (
+          <ObjectNotFound />
+        )}
+      </React.Fragment>
+    )
   }
 
   const labels: Label[] = data.service.labels || []
 
   return (
     <React.Fragment>
-      <DetailsPage
-        avatar={<ServiceAvatar />}
-        title={data.service.name}
-        notices={<ServiceNotices serviceID={serviceID} />}
-        labels={labels}
-        subheader={
-          <React.Fragment>
-            Escalation Policy:{' '}
-            {_.get(data, 'service.ep') ? (
-              <AppLink to={`/escalation-policies/${data.service.ep.id}`}>
-                {data.service.ep.name}
-              </AppLink>
-            ) : (
-              <Spinner text='Looking up policy...' />
-            )}
-          </React.Fragment>
-        }
-        details={data.service.description}
-        pageContent={
-          <Grid container spacing={2}>
-            <Grid item xs={12}>
-              <ServiceOnCallList serviceID={serviceID} />
+      {deleteDialog}
+      <Suspense fallback={<Spinner />}>
+        <DetailsPage
+          avatar={<ServiceAvatar />}
+          title={data.service.name}
+          notices={<ServiceNotices serviceID={serviceID} />}
+          labels={labels}
+          subheader={
+            <React.Fragment>
+              Escalation Policy:{' '}
+              {_.get(data, 'service.ep') ? (
+                <AppLink to={`/escalation-policies/${data.service.ep.id}`}>
+                  {data.service.ep.name}
+                </AppLink>
+              ) : (
+                <Spinner text='Looking up policy...' />
+              )}
+            </React.Fragment>
+          }
+          details={data.service.description}
+          pageContent={
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <ServiceOnCallList serviceID={serviceID} />
+              </Grid>
+              <Grid item xs={12}>
+                {!global && <ServiceRecentEvents serviceID={serviceID} />}
+              </Grid>
             </Grid>
-            <Grid item xs={12}>
-              {!global && <ServiceRecentEvents serviceID={serviceID} />}
-            </Grid>
-          </Grid>
-        }
-        primaryActions={[
-          <Button
-            color='primary'
-            variant='contained'
-            key='maintence-mode'
-            onClick={() => setShowMaintMode(true)}
-            aria-label='Maintenance Mode'
-          >
-            Maintenance Mode
-          </Button>,
-        ]}
-        secondaryActions={[
-          {
-            label: 'Edit',
-            icon: <Edit />,
-            handleOnClick: () => setShowEdit(true),
-          },
-          {
-            label: 'Delete',
-            icon: <Delete />,
-            handleOnClick: () => setShowDelete(true),
-          },
-          <QuerySetFavoriteButton
-            key='secondary-action-favorite'
-            id={serviceID}
-            type='service'
-          />,
-        ]}
-        links={[
-          {
-            label: 'Alerts',
-            status: alertStatus(data?.alerts?.nodes),
-            url: 'alerts',
-            subText: 'Manage alerts specific to this service',
-          },
-          {
-            label: 'Heartbeat Monitors',
-            url: 'heartbeat-monitors',
-            status: hbStatus(data?.service?.heartbeatMonitors),
-            subText: 'Manage endpoints monitored for you',
-          },
-          {
-            label: 'Integration Keys',
-            url: 'integration-keys',
-            subText: 'Manage keys used to create alerts',
-          },
-          ...(!labelsDisabled()
-            ? [
-                {
-                  label: 'Labels',
-                  url: 'labels',
-                  subText: 'Group together services',
-                },
-              ]
-            : []),
-          {
-            label: 'Alert Metrics',
-            url: 'alert-metrics',
-            subText: 'Review alert activity',
-          },
-        ]}
-      />
+          }
+          primaryActions={[
+            <Button
+              color='primary'
+              variant='contained'
+              key='maintence-mode'
+              onClick={() => setShowMaintMode(true)}
+              aria-label='Maintenance Mode'
+            >
+              Maintenance Mode
+            </Button>,
+          ]}
+          secondaryActions={[
+            {
+              label: 'Edit',
+              icon: <Edit />,
+              handleOnClick: () => setShowEdit(true),
+            },
+            {
+              label: 'Delete',
+              icon: <Delete />,
+              handleOnClick: () => setShowDelete(true),
+            },
+            <QuerySetFavoriteButton
+              key='secondary-action-favorite'
+              id={serviceID}
+              type='service'
+            />,
+          ]}
+          links={[
+            {
+              label: 'Alerts',
+              status: alertStatus(data?.alerts?.nodes),
+              url: 'alerts',
+              subText: 'Manage alerts specific to this service',
+            },
+            {
+              label: 'Heartbeat Monitors',
+              url: 'heartbeat-monitors',
+              status: hbStatus(data?.service?.heartbeatMonitors),
+              subText: 'Manage endpoints monitored for you',
+            },
+            {
+              label: 'Integration Keys',
+              url: 'integration-keys',
+              subText: 'Manage keys used to create alerts',
+            },
+            ...(!labelsDisabled()
+              ? [
+                  {
+                    label: 'Labels',
+                    url: 'labels',
+                    subText: 'Group together services',
+                  },
+                ]
+              : []),
+            {
+              label: 'Alert Metrics',
+              url: 'alert-metrics',
+              subText: 'Review alert activity',
+            },
+          ]}
+        />
+      </Suspense>
       <Suspense>
         {showEdit && (
           <ServiceEditDialog
             onClose={() => setShowEdit(false)}
-            serviceID={serviceID}
-          />
-        )}
-        {showDelete && (
-          <ServiceDeleteDialog
-            onClose={() => setShowDelete(false)}
             serviceID={serviceID}
           />
         )}

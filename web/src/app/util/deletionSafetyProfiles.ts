@@ -10,6 +10,7 @@ export interface DeletionRootProfile {
     | 'NOTIFICATION_RULE'
     | 'USER_OVERRIDE'
     | 'CONTACT_METHOD'
+    | 'SERVICE'
   readonly deleteType:
     | 'escalationPolicy'
     | 'schedule'
@@ -17,6 +18,7 @@ export interface DeletionRootProfile {
     | 'notificationRule'
     | 'userOverride'
     | 'contactMethod'
+    | 'service'
   readonly typename:
     | 'EscalationPolicy'
     | 'Schedule'
@@ -24,6 +26,7 @@ export interface DeletionRootProfile {
     | 'UserNotificationRule'
     | 'UserOverride'
     | 'UserContactMethod'
+    | 'Service'
   readonly additionalTypenames?: readonly string[]
   readonly listPath?: string
   readonly title: string
@@ -372,6 +375,185 @@ export const contactMethodDeletionProfile: DeletionRootProfile = {
           co &&
           info &&
           change === 'DELETED'
+        )
+      default:
+        return false
+    }
+  },
+}
+
+// Frozen Service closure: postgres/queries.go, policy.go and planner.go.
+// The only parent is the deleted Service owning an IntegrationKey. It cannot
+// produce a derived ancestor row. IntegrationSource affects its Key target;
+// co-deletion always describes the referencing resource, not the target.
+export const serviceDeletionProfile: DeletionRootProfile = {
+  previewType: 'SERVICE',
+  deleteType: 'service',
+  typename: 'Service',
+  listPath: '/services',
+  additionalTypenames: ['Service', 'Alert', 'IntegrationKey'],
+  title: 'Delete Service',
+  noun: 'service',
+  resourceTypes: [
+    'SERVICE',
+    'ESCALATION_POLICY',
+    'ALERT',
+    'INTEGRATION_KEY',
+    'ESCALATION_POLICY_STATE',
+    'FAVORITE',
+    'OUTGOING_MESSAGE',
+    'PENDING_SIGNAL',
+    'MESSAGE_STATUS_HISTORY',
+    'ALERT_DATA',
+    'ALERT_FEEDBACK',
+    'ALERT_METRICS',
+    'ALERT_STATUS_SUBSCRIPTION',
+    'NOTIFICATION_POLICY_CYCLE',
+    'ALERT_LOG',
+  ],
+  relations: [
+    'RETAINED_POLICY',
+    'SERVICE_ALERT',
+    'SERVICE_INTEGRATION_KEY',
+    'SERVICE_STATE',
+    'FAVORITE',
+    'OUTGOING_MESSAGE',
+    'PENDING_SIGNAL',
+    'MESSAGE_STATUS',
+    'ALERT_DATA',
+    'ALERT_FEEDBACK',
+    'ALERT_METRICS',
+    'ALERT_SUBSCRIPTION',
+    'ALERT_CYCLE',
+    'ALERT_STATE',
+    'ALERT_LOG',
+    'INTEGRATION_SOURCE',
+    'INTEGRATION_LOG',
+  ],
+  supportsImpact: (impact, rootID) => {
+    const {
+      target,
+      referencingResource: ref,
+      parent,
+      relation,
+      isDerived,
+      isPlannedCoDeletion: co,
+      policy,
+      change,
+      requiredAction,
+    } = impact
+    if (isDerived) return false
+    const root = target.type === 'SERVICE' && target.id === rootID
+    const info = policy === 'INFORMATIONAL' && requiredAction === 'NONE'
+    const confirmed = (p: string): boolean =>
+      policy === p && requiredAction === 'CONFIRM_IMPACT'
+    const deleted = (p: string): boolean =>
+      co &&
+      change === 'DELETED' &&
+      (p === 'INFORMATIONAL' ? info : confirmed(p))
+    if (relation === 'SERVICE_INTEGRATION_KEY')
+      return (
+        root &&
+        ref.type === 'INTEGRATION_KEY' &&
+        parent?.type === 'SERVICE' &&
+        parent.id === rootID &&
+        deleted('CASCADE')
+      )
+    if (parent !== null) return false
+    switch (relation) {
+      case 'RETAINED_POLICY':
+        return (
+          root &&
+          ref.type === 'ESCALATION_POLICY' &&
+          !co &&
+          info &&
+          change === 'PRESERVED'
+        )
+      case 'SERVICE_ALERT':
+        return (
+          root &&
+          ref.type === 'ALERT' &&
+          (deleted('CASCADE') ||
+            (!co &&
+              policy === 'BLOCK' &&
+              change === 'PRESERVED' &&
+              requiredAction === 'CLOSE_ALERT'))
+        )
+      case 'SERVICE_STATE':
+        return (
+          root &&
+          ref.type === 'ESCALATION_POLICY_STATE' &&
+          deleted('INFORMATIONAL')
+        )
+      case 'FAVORITE':
+        return root && ref.type === 'FAVORITE' && deleted('INFORMATIONAL')
+      case 'INTEGRATION_SOURCE':
+        return (
+          target.type === 'INTEGRATION_KEY' &&
+          ref.type === 'SERVICE' &&
+          ref.id === rootID &&
+          deleted('WARNING')
+        )
+      case 'INTEGRATION_LOG':
+        return (
+          target.type === 'INTEGRATION_KEY' &&
+          ref.type === 'ALERT_LOG' &&
+          !co &&
+          info &&
+          change === 'PRESERVED'
+        )
+      case 'ALERT_LOG':
+        return (
+          target.type === 'ALERT' &&
+          ref.type === 'ALERT_LOG' &&
+          !co &&
+          info &&
+          change === 'PRESERVED'
+        )
+      case 'ALERT_SUBSCRIPTION':
+        return (
+          target.type === 'ALERT' &&
+          ref.type === 'ALERT_STATUS_SUBSCRIPTION' &&
+          deleted('CASCADE')
+        )
+      case 'ALERT_DATA':
+      case 'ALERT_FEEDBACK':
+      case 'ALERT_METRICS':
+        return (
+          target.type === 'ALERT' &&
+          ref.type === relation &&
+          deleted('INFORMATIONAL')
+        )
+      case 'ALERT_CYCLE':
+        return (
+          target.type === 'ALERT' &&
+          ref.type === 'NOTIFICATION_POLICY_CYCLE' &&
+          deleted('INFORMATIONAL')
+        )
+      case 'ALERT_STATE':
+        return (
+          target.type === 'ALERT' &&
+          ref.type === 'ESCALATION_POLICY_STATE' &&
+          deleted('INFORMATIONAL')
+        )
+      case 'OUTGOING_MESSAGE':
+        return (
+          (root ||
+            ['ALERT', 'NOTIFICATION_POLICY_CYCLE'].includes(target.type)) &&
+          ref.type === 'OUTGOING_MESSAGE' &&
+          deleted('WARNING')
+        )
+      case 'PENDING_SIGNAL':
+        return (
+          (root || target.type === 'OUTGOING_MESSAGE') &&
+          ref.type === 'PENDING_SIGNAL' &&
+          deleted('WARNING')
+        )
+      case 'MESSAGE_STATUS':
+        return (
+          target.type === 'OUTGOING_MESSAGE' &&
+          ref.type === 'MESSAGE_STATUS_HISTORY' &&
+          deleted('INFORMATIONAL')
         )
       default:
         return false
