@@ -454,6 +454,7 @@ type ComplexityRoot struct {
 	}
 
 	IntegrationKey struct {
+		AuditResourceID    func(childComplexity int) int
 		Config             func(childComplexity int) int
 		ExternalSystemName func(childComplexity int) int
 		Href               func(childComplexity int) int
@@ -1092,6 +1093,7 @@ type HeartbeatMonitorResolver interface {
 }
 type IntegrationKeyResolver interface {
 	ID(ctx context.Context, obj *integrationkey.IntegrationKey) (string, error)
+	AuditResourceID(ctx context.Context, obj *integrationkey.IntegrationKey) (string, error)
 
 	Type(ctx context.Context, obj *integrationkey.IntegrationKey) (IntegrationKeyType, error)
 
@@ -2741,6 +2743,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.HeartbeatMonitor.TimeoutMinutes(childComplexity), true
 
+	case "IntegrationKey.auditResourceID":
+		if e.ComplexityRoot.IntegrationKey.AuditResourceID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.IntegrationKey.AuditResourceID(childComplexity), true
 	case "IntegrationKey.config":
 		if e.ComplexityRoot.IntegrationKey.Config == nil {
 			break
@@ -6628,6 +6636,8 @@ func (ec *executionContext) childFields_IntegrationKey(ctx context.Context, fiel
 	switch field.Name {
 	case "id":
 		return ec.fieldContext_IntegrationKey_id(ctx, field)
+	case "auditResourceID":
+		return ec.fieldContext_IntegrationKey_auditResourceID(ctx, field)
 	case "serviceID":
 		return ec.fieldContext_IntegrationKey_serviceID(ctx, field)
 	case "type":
@@ -15058,6 +15068,29 @@ func (ec *executionContext) _IntegrationKey_id(ctx context.Context, field graphq
 	)
 }
 func (ec *executionContext) fieldContext_IntegrationKey_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("IntegrationKey", field, true, true, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _IntegrationKey_auditResourceID(ctx context.Context, field graphql.CollectedField, obj *integrationkey.IntegrationKey) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_IntegrationKey_auditResourceID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.IntegrationKey().AuditResourceID(ctx, obj)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_IntegrationKey_auditResourceID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("IntegrationKey", field, true, true, errors.New("field of type ID does not have child fields"))
 }
 
@@ -37216,6 +37249,42 @@ func (ec *executionContext) _IntegrationKey(ctx context.Context, sel ast.Selecti
 					}
 				}()
 				res = ec._IntegrationKey_id(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "auditResourceID":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._IntegrationKey_auditResourceID(ctx, field, obj)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
