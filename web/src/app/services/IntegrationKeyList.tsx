@@ -1,4 +1,4 @@
-import React, { Suspense, useState } from 'react'
+import React, { Suspense, useState, useMemo } from 'react'
 import { gql, useQuery } from 'urql'
 import Button from '@mui/material/Button'
 import Grid from '@mui/material/Grid'
@@ -28,8 +28,9 @@ import {
 import { ChevronDown } from 'mdi-material-ui'
 import CompList from '../lists/CompList'
 import { CompListItemText } from '../lists/CompListItems'
+import { useOrganizationManagement } from '../main/OrganizationManagement'
 
-const query = gql`
+export const integrationKeyListQuery = gql`
   query ($serviceID: ID!) {
     service(id: $serviceID) {
       id # need to tie the result to the correct record
@@ -101,18 +102,61 @@ export default function IntegrationKeyList(props: {
   const classes = useStyles()
   const isMobile = useIsWidthDown('md')
   const [create, setCreate] = useState<boolean>(false)
-  const [deleteDialog, setDeleteDialog] = useState<string | null>(null)
+  const scope = useOrganizationManagement()
+  const scopeKey = JSON.stringify([scope?.identity, scope?.target.id])
+  const [deleteSelection, setDeleteSelection] = useState<{
+    id: string
+    type: string
+    serviceID: string
+    scopeKey: string
+  } | null>(null)
+  const queryContext = useMemo(() => ({ suspense: false }), [])
 
-  const [{ fetching, error, data }] = useQuery({
-    query,
+  const [{ fetching, error, data }, refresh] = useQuery({
+    query: integrationKeyListQuery,
     variables: { serviceID: props.serviceID },
+    context: queryContext,
   })
   const types = useFeatures().integrationKeyTypes
   const typeLabel = (type: string): string =>
     types.find((t) => t.id === type)?.label || type
 
-  if (fetching && !data) return <Spinner />
-  if (error) return <GenericError error={error.message} />
+  const keys: IntegrationKey[] =
+    data?.service?.id === props.serviceID
+      ? data.service.integrationKeys || []
+      : []
+  const currentKey = keys.find((key) => key.id === deleteSelection?.id)
+  const validSelection =
+    deleteSelection?.serviceID === props.serviceID &&
+    deleteSelection?.scopeKey === scopeKey &&
+    (!currentKey || currentKey.type === deleteSelection?.type)
+  // This slot stays mounted outside list loading/error/null and Suspense.
+  // Losing a list row is not a successful deletion receipt.
+  const deleteDialog = deleteSelection && (
+    <IntegrationKeyDeleteDialog
+      integrationKeyID={validSelection ? deleteSelection.id : ''}
+      integrationKeyType={deleteSelection.type}
+      serviceID={props.serviceID}
+      onClose={() => setDeleteSelection(null)}
+      onSuccess={() => {
+        setDeleteSelection(null)
+        refresh({ requestPolicy: 'network-only' })
+      }}
+    />
+  )
+  if ((fetching && !data?.service) || error || !data?.service)
+    return (
+      <React.Fragment>
+        {deleteDialog}
+        {error ? (
+          <GenericError error={error.message} />
+        ) : fetching ? (
+          <Spinner />
+        ) : (
+          <CompList emptyMessage='No integration keys exist for this service.' />
+        )}
+      </React.Fragment>
+    )
 
   const uikActions = (key: IntegrationKey): React.ReactNode => {
     return (
@@ -133,7 +177,14 @@ export default function IntegrationKeyList(props: {
         <Grid item>
           <IconButton
             title='Delete this key.'
-            onClick={(): void => setDeleteDialog(key.id)}
+            onClick={(): void =>
+              setDeleteSelection({
+                id: key.id,
+                type: key.type,
+                serviceID: props.serviceID,
+                scopeKey,
+              })
+            }
             size='large'
           >
             <Trash />
@@ -143,7 +194,7 @@ export default function IntegrationKeyList(props: {
     )
   }
 
-  const items = (data.service.integrationKeys || [])
+  const items = keys
     .slice()
     .sort(sortItems)
     .filter((key: IntegrationKey) => !key.externalSystemName)
@@ -163,7 +214,7 @@ export default function IntegrationKeyList(props: {
       />
     ))
 
-  const extItems = (data.service.integrationKeys || [])
+  const extItems = keys
     .slice()
     .sort(sortItems)
     .filter((key: IntegrationKey) => !!key.externalSystemName)
@@ -178,6 +229,7 @@ export default function IntegrationKeyList(props: {
 
   return (
     <React.Fragment>
+      {deleteDialog}
       <Grid item xs={12} className={classes.spacing}>
         <Card>
           <CardContent>
@@ -233,12 +285,6 @@ export default function IntegrationKeyList(props: {
           <IntegrationKeyCreateDialog
             serviceID={props.serviceID}
             onClose={(): void => setCreate(false)}
-          />
-        )}
-        {deleteDialog && (
-          <IntegrationKeyDeleteDialog
-            integrationKeyID={deleteDialog}
-            onClose={(): void => setDeleteDialog(null)}
           />
         )}
       </Suspense>

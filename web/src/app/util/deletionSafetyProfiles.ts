@@ -1,3 +1,7 @@
+import {
+  supportsIntegrationKeyImpact,
+  IntegrationKeyDeletionSelection,
+} from './integrationKeyDeletion'
 import type { DeletionImpact } from '../../schema'
 
 // Only these reviewed single-root adapters are supported. Keep their backend
@@ -11,6 +15,7 @@ export interface DeletionRootProfile {
     | 'USER_OVERRIDE'
     | 'CONTACT_METHOD'
     | 'SERVICE'
+    | 'INTEGRATION_KEY'
   readonly deleteType:
     | 'escalationPolicy'
     | 'schedule'
@@ -19,6 +24,7 @@ export interface DeletionRootProfile {
     | 'userOverride'
     | 'contactMethod'
     | 'service'
+    | 'integrationKey'
   readonly typename:
     | 'EscalationPolicy'
     | 'Schedule'
@@ -27,13 +33,18 @@ export interface DeletionRootProfile {
     | 'UserOverride'
     | 'UserContactMethod'
     | 'Service'
+    | 'IntegrationKey'
   readonly additionalTypenames?: readonly string[]
   readonly listPath?: string
   readonly title: string
   readonly noun: string
   readonly resourceTypes: readonly string[]
   readonly relations: readonly string[]
-  readonly supportsImpact?: (impact: DeletionImpact, rootID: string) => boolean
+  readonly supportsImpact?: (
+    impact: DeletionImpact,
+    rootID: string,
+    integrationKey?: IntegrationKeyDeletionSelection,
+  ) => boolean
 }
 export const epDeletionProfile: DeletionRootProfile = {
   previewType: 'ESCALATION_POLICY',
@@ -559,4 +570,18 @@ export const serviceDeletionProfile: DeletionRootProfile = {
         return false
     }
   },
+}
+
+// Single Key root; its owning Service and historical AlertLogs survive.
+// The verified selection additionally checks the actual Service and Organization.
+export const integrationKeyDeletionProfile: DeletionRootProfile = {
+  previewType: 'INTEGRATION_KEY',
+  deleteType: 'integrationKey',
+  typename: 'IntegrationKey',
+  additionalTypenames: ['IntegrationKey', 'Service'],
+  title: 'Delete Integration Key',
+  noun: 'integration key',
+  resourceTypes: ['INTEGRATION_KEY', 'SERVICE', 'ALERT_LOG'],
+  relations: ['INTEGRATION_SOURCE', 'INTEGRATION_LOG'],
+  supportsImpact: supportsIntegrationKeyImpact,
 }

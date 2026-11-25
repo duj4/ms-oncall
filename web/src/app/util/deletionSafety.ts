@@ -1,4 +1,9 @@
 import {
+  IntegrationKeyDeletionSelection,
+  isVerifiedIntegrationKeySelection,
+  verifyIntegrationKeyPreview,
+} from './integrationKeyDeletion'
+import {
   DeletionRootProfile,
   epDeletionProfile,
 } from './deletionSafetyProfiles'
@@ -347,6 +352,7 @@ function validatePage(
   value: unknown,
   id: string,
   profile: DeletionRootProfile,
+  integrationKey?: IntegrationKeyDeletionSelection,
 ): DeletionPreview {
   if (
     !isRecord(value) ||
@@ -393,7 +399,8 @@ function validatePage(
       !onlyKeys(edge, ['cursor', 'node']) ||
       !nonempty(edge.cursor) ||
       !validImpact(edge.node, profile) ||
-      (profile.supportsImpact && !profile.supportsImpact(edge.node, id))
+      (profile.supportsImpact &&
+        !profile.supportsImpact(edge.node, id, integrationKey))
     )
       throw new PreviewFailure('unsupported')
   }
@@ -479,7 +486,14 @@ export async function loadDeletionPreview(
   ) => Promise<PreviewResult>,
   active: () => boolean,
   progress: (loaded: number) => void,
+  integrationKey?: IntegrationKeyDeletionSelection,
 ): Promise<DeletionPreview> {
+  if (
+    profile.previewType === 'INTEGRATION_KEY' &&
+    (!isVerifiedIntegrationKeySelection(integrationKey) ||
+      integrationKey.auditID !== id)
+  )
+    throw new PreviewFailure('unsupported')
   const cursors = new Set<string>()
   const edgeIDs = new Set<string>()
   let combined: DeletionPreview | undefined
@@ -500,7 +514,12 @@ export async function loadDeletionPreview(
       )
     }
     if (result.stale || result.hasNext) throw new PreviewFailure('unsupported')
-    const page = validatePage(result.data?.deletionPreview, id, profile)
+    const page = validatePage(
+      result.data?.deletionPreview,
+      id,
+      profile,
+      integrationKey,
+    )
     // Reaching a successor means the prior page promised more data at this
     // version. An empty successor contradicts that promise, even at termination.
     if (after !== null && !page.impacts.edges.length)
@@ -593,10 +612,21 @@ export function deleteVariables(
   id: string,
   preview: DeletionPreview,
   acknowledged: boolean,
+  integrationKey?: IntegrationKeyDeletionSelection,
 ): DeletionDeleteVariables {
+  const dualIdentity = profile.previewType === 'INTEGRATION_KEY'
+  if (
+    dualIdentity
+      ? profile.deleteType !== 'integrationKey' ||
+        !isVerifiedIntegrationKeySelection(integrationKey) ||
+        integrationKey.legacyID !== id ||
+        !verifyIntegrationKeyPreview(integrationKey, preview)
+      : integrationKey !== undefined
+  )
+    throw new PreviewFailure('unsupported')
   if (
     preview.targets.length !== 1 ||
-    preview.targets[0].id !== id ||
+    preview.targets[0].id !== (dualIdentity ? integrationKey!.auditID : id) ||
     preview.targets[0].type !== profile.previewType ||
     preview.operation !== 'DELETE_RESOURCES' ||
     preview.policyVersion !== 'deletion-safety-spec1-v2' ||
