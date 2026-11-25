@@ -60,6 +60,11 @@ type DeletionImpact {
   target: DeletionResource!
   referencingResource: DeletionResource!
   parent: DeletionResource
+  owner: DeletionResource
+  "The original direct edge ID for a derived explanation; null for direct impacts."
+  derivedFrom: ID
+  "The resource affected by this decision, including the exact ancestor of a derived explanation. Nullable for compatibility; successful previews always supply it."
+  affectedResource: DeletionResource
   relation: String!
   change: String!
   policy: DeletionPolicy!

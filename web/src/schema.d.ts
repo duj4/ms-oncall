@@ -432,12 +432,15 @@ export interface DebugSendSMSInput {
 }
 
 export interface DeletionImpact {
+  affectedResource?: null | DeletionResource
   canModifyReference: boolean
   change: string
+  derivedFrom?: null | string
   edgeID: string
   impact: string
   isDerived: boolean
   isPlannedCoDeletion: boolean
+  owner?: null | DeletionResource
   parent?: null | DeletionResource
   policy: DeletionPolicy
   referencingResource: DeletionResource
