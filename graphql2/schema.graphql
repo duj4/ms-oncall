@@ -1235,6 +1235,14 @@ type Label {
 
 type IntegrationKey {
   id: ID!
+  """
+  Non-credential resource identity used by Deletion Safety, protected by existing
+  Integration Key management authority. Distinct from id, which remains the
+  legacy selector. Do not pass this identity to legacy Key management operations.
+  An unavailable or inconsistent mapping produces an error, never a fallback.
+  This identity alone does not establish that the Key can be safely deleted.
+  """
+  auditResourceID: ID!
   serviceID: ID!
   type: IntegrationKeyType!
   name: String!

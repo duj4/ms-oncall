@@ -66,6 +66,8 @@ models:
     fields:
       id:
         resolver: true
+      auditResourceID:
+        resolver: true
   Label:
     model: github.com/target/goalert/label.Label
   ClockTime:

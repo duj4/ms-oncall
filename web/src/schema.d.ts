@@ -169,6 +169,7 @@ export interface ClauseInput {
 }
 
 export interface ClearTemporarySchedulesInput {
+  confirmation?: null | DeletionSafetyConfirmationInput
   end: ISOTimestamp
   scheduleID: string
   start: ISOTimestamp
@@ -744,6 +745,7 @@ export type InlineDisplayInfo =
 export type Int = string
 
 export interface IntegrationKey {
+  auditResourceID: string
   config: KeyConfig
   externalSystemName?: null | string
   href: string
@@ -951,6 +953,26 @@ export interface NotificationState {
 
 export type NotificationStatus = 'ERROR' | 'OK' | 'WARN'
 
+export interface OnCallJSONEffect {
+  change: string
+  ruleID: string
+  source: string
+}
+
+export interface OnCallJSONRule {
+  channelID: string
+  ruleID: string
+  time: string
+  weekdays: string
+}
+
+export interface OnCallJSONUpdatePreview {
+  after: OnCallJSONRule[]
+  before: OnCallJSONRule[]
+  contractVersion: number
+  effects: OnCallJSONEffect[]
+}
+
 export interface OnCallNotificationRule {
   dest: Destination
   id: string
@@ -1049,6 +1071,14 @@ export interface Query {
   messageLogs: MessageLogConnection
   messageStatusHistory: MessageStatusHistory[]
   phoneNumberInfo?: null | PhoneNumberInfo
+  previewClearTemporarySchedules: UpdateDeletionPreview
+  previewSetScheduleOnCallNotificationRules: UpdateDeletionPreview
+  previewSetTemporarySchedule: UpdateDeletionPreview
+  previewUpdateEscalationPolicy: UpdateDeletionPreview
+  previewUpdateEscalationPolicyStep: UpdateDeletionPreview
+  previewUpdateRotation: UpdateDeletionPreview
+  previewUpdateScheduleTarget: UpdateDeletionPreview
+  previewUpdateService: UpdateDeletionPreview
   rotation?: null | Rotation
   rotations: RotationConnection
   schedule?: null | Schedule
@@ -1162,6 +1192,28 @@ export interface ScheduleConnection {
   pageInfo: PageInfo
 }
 
+export interface ScheduleJSONCoverage {
+  end: ISOTimestamp
+  kind: string
+  start: ISOTimestamp
+  userID?: null | string
+}
+
+export interface ScheduleJSONCoverageChange {
+  change: string
+  coverage: ScheduleJSONCoverage
+  source: string
+}
+
+export interface ScheduleJSONUpdatePreview {
+  after: ScheduleJSONCoverage[]
+  before: ScheduleJSONCoverage[]
+  contractVersion: number
+  effects: ScheduleJSONCoverageChange[]
+  mode: string
+  operation: string
+}
+
 export interface ScheduleRule {
   end: ClockTime
   id: string
@@ -1195,6 +1247,7 @@ export interface ScheduleTarget {
 }
 
 export interface ScheduleTargetInput {
+  confirmation?: null | DeletionSafetyConfirmationInput
   newRotation?: null | CreateRotationInput
   rules: ScheduleRuleInput[]
   scheduleID?: null | string
@@ -1275,6 +1328,7 @@ export interface SetLabelInput {
 }
 
 export interface SetScheduleOnCallNotificationRulesInput {
+  confirmation?: null | DeletionSafetyConfirmationInput
   rules: OnCallNotificationRuleInput[]
   scheduleID: string
 }
@@ -1288,6 +1342,7 @@ export interface SetScheduleShiftInput {
 export interface SetTemporaryScheduleInput {
   clearEnd?: null | ISOTimestamp
   clearStart?: null | ISOTimestamp
+  confirmation?: null | DeletionSafetyConfirmationInput
   end: ISOTimestamp
   scheduleID: string
   shifts: SetScheduleShiftInput[]
@@ -1456,7 +1511,22 @@ export interface UpdateBasicAuthInput {
   userID: string
 }
 
+export interface UpdateDeletionPreview {
+  canProceed: boolean
+  complete: boolean
+  impactVersion: string
+  impacts: DeletionImpact[]
+  onCallJSONUpdate?: null | OnCallJSONUpdatePreview
+  operation: DeletionOperation
+  policyVersion: string
+  removed: DeletionResource[]
+  requiresConfirmation: boolean
+  root: DeletionResource
+  scheduleJSONUpdate?: null | ScheduleJSONUpdatePreview
+}
+
 export interface UpdateEscalationPolicyInput {
+  confirmation?: null | DeletionSafetyConfirmationInput
   description?: null | string
   id: string
   name?: null | string
@@ -1466,6 +1536,7 @@ export interface UpdateEscalationPolicyInput {
 
 export interface UpdateEscalationPolicyStepInput {
   actions?: null | DestinationInput[]
+  confirmation?: null | DeletionSafetyConfirmationInput
   delayMinutes?: null | number
   id: string
   multiAck?: null | boolean
@@ -1498,6 +1569,7 @@ export interface UpdateKeyConfigInput {
 
 export interface UpdateRotationInput {
   activeUserIndex?: null | number
+  confirmation?: null | DeletionSafetyConfirmationInput
   description?: null | string
   id: string
   name?: null | string
@@ -1516,6 +1588,7 @@ export interface UpdateScheduleInput {
 }
 
 export interface UpdateServiceInput {
+  confirmation?: null | DeletionSafetyConfirmationInput
   description?: null | string
   escalationPolicyID?: null | string
   id: string

@@ -10,6 +10,7 @@ import (
 	"github.com/target/goalert/gadb"
 	"github.com/target/goalert/graphql2"
 	"github.com/target/goalert/integrationkey"
+	"github.com/target/goalert/organization"
 	"github.com/target/goalert/search"
 	"github.com/target/goalert/validation"
 	"github.com/target/goalert/validation/validate"
@@ -274,6 +275,51 @@ func (key *IntegrationKey) ID(ctx context.Context, raw *integrationkey.Integrati
 		return "", err
 	}
 	return raw.ID, nil
+}
+
+// AuditResourceID reauthorizes even raw/cached parents. Read identity, ownership
+// and type in one statement so authorization and the returned identity refer to
+// the same DB record. No audit identity is stored on the serializable Key model.
+func (key *IntegrationKey) AuditResourceID(ctx context.Context, raw *integrationkey.IntegrationKey) (string, error) {
+	authority, err := integrationKeyManagementAuthority(ctx)
+	if err != nil {
+		return "", err
+	}
+	if raw == nil {
+		return "", integrationKeyAccessDenied()
+	}
+	id, err := uuid.Parse(raw.ID)
+	if err != nil || id == uuid.Nil {
+		return "", integrationKeyAccessDenied()
+	}
+	serviceID, err := uuid.Parse(raw.ServiceID)
+	if err != nil || serviceID == uuid.Nil {
+		return "", integrationKeyAccessDenied()
+	}
+
+	var actualID, auditID, actualServiceID, orgID uuid.UUID
+	var kind integrationkey.Type
+	err = key.DB.QueryRowContext(ctx, `
+		SELECT k.id, k.audit_resource_id, k.service_id, s.organization_id, k.type
+		FROM integration_keys k
+		JOIN services s ON s.id = k.service_id
+	`+integrationKeyNormalServiceJoin+`
+		WHERE k.id = $1 AND s.organization_id <> $2
+	`, id, organization.DefaultOrganizationID).Scan(&actualID, &auditID, &actualServiceID, &orgID, &kind)
+	// Never expose SQL errors/parameters or distinguish missing, broken and
+	// unauthorized mappings. In particular, never substitute the legacy ID.
+	if err != nil || actualID != id || auditID == uuid.Nil || auditID == id ||
+		actualServiceID != serviceID || orgID == uuid.Nil || orgID.String() == organization.DefaultOrganizationID || kind != raw.Type {
+		return "", integrationKeyAccessDenied()
+	}
+	if err := validate.OneOf("Type", kind, integrationkey.TypeGeneric, integrationkey.TypeGrafana,
+		integrationkey.TypeSite24x7, integrationkey.TypePrometheusAlertmanager, integrationkey.TypeEmail, integrationkey.TypeUniversal); err != nil {
+		return "", integrationKeyAccessDenied()
+	}
+	if _, err := authority.targetOrganization(orgID, kind); err != nil {
+		return "", integrationKeyAccessDenied()
+	}
+	return auditID.String(), nil
 }
 
 func (key *IntegrationKey) Href(ctx context.Context, raw *integrationkey.IntegrationKey) (string, error) {
