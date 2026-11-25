@@ -26,6 +26,7 @@ import {
 export interface DeletionSafetyDialogProps {
   profile?: DeletionRootProfile
   state: DeletionState
+  externalSystemName?: string | null
   acknowledged: boolean
   onAcknowledge: (checked: boolean) => void
   onConfirm: () => void
@@ -87,6 +88,20 @@ export default function DeletionSafetyDialog(
         title={<span id='deletion-safety-title'>{profile.title}</span>}
       />
       <DialogContent>
+        {profile.previewType === 'INTEGRATION_KEY' && (
+          <Alert severity='warning'>
+            Only the selected integration key is deleted. Its service and
+            historical alert logs are preserved. This key can no longer create
+            new alerts. External integrations may stop working. To restore them,
+            create a new key and reconfigure the alert source.
+            {props.externalSystemName && (
+              <React.Fragment>
+                {' '}
+                External system: {props.externalSystemName}.
+              </React.Fragment>
+            )}
+          </Alert>
+        )}
         {profile.previewType === 'SERVICE' && (
           <Alert severity='info'>
             The selected service is the only explicit deletion root. Its
@@ -271,6 +286,13 @@ export default function DeletionSafetyDialog(
                                           : 'The referencing resource would be deleted as part of the backend plan.'}
                             </Typography>
                           )}
+                          {profile.previewType === 'INTEGRATION_KEY' && (
+                            <Typography>
+                              {node.relation === 'INTEGRATION_SOURCE'
+                                ? 'The integration key is deleted; its owning service is preserved.'
+                                : 'The historical alert log is preserved.'}
+                            </Typography>
+                          )}
                           {profile.previewType === 'USER_OVERRIDE' && (
                             <Typography>
                               {node.relation === 'OVERRIDE_COVERAGE'
@@ -347,7 +369,12 @@ export default function DeletionSafetyDialog(
                     disabled={busy}
                   />
                 }
-                label='I have reviewed and acknowledge these deletion impacts.'
+                label={
+                  profile.previewType === 'INTEGRATION_KEY' &&
+                  props.externalSystemName
+                    ? 'I have reviewed these deletion impacts and understand that deleting this key may break the external integration. Recovery requires a new key and reconfiguration.'
+                    : 'I have reviewed and acknowledge these deletion impacts.'
+                }
               />
             )}
           </React.Fragment>

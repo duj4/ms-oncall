@@ -1,6 +1,14 @@
+import {
+  IntegrationKeyDeletionRequest,
+  IntegrationKeyDeletionSelection,
+  integrationKeyDeletionQuery,
+  verifyIntegrationKeyIdentity,
+  verifyIntegrationKeyPreview,
+} from './integrationKeyDeletion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useClient } from 'urql'
 import { useLocation } from 'wouter'
+import type { DeletionPreview } from '../../schema'
 import type { DeletionSafetyDialogProps } from '../dialogs/DeletionSafetyDialog'
 import type { DeletionRootProfile } from './deletionSafetyProfiles'
 import { useOrganizationManagement } from '../main/OrganizationManagement'
@@ -21,21 +29,35 @@ export function useDeletionSafety(
   id: string,
   onClose: () => void,
   onSuccess?: () => void,
+  integrationKey?: IntegrationKeyDeletionRequest,
 ): DeletionSafetyDialogProps {
   const client = useClient()
   const [, navigate] = useLocation()
   const scope = useOrganizationManagement()
   const scopeKey = JSON.stringify([scope?.identity, scope?.target.id])
-  const selection = { client, scopeKey, id, profile }
+  const serviceID = integrationKey?.serviceID
+  const keyType = integrationKey?.type
+  const organizationID = scope?.target.id
+  const selection = { client, scopeKey, id, profile, serviceID, keyType }
+  const identity = useRef<IntegrationKeyDeletionSelection>()
   const selected = useRef(selection)
   selected.current = selection
-  const reviewed = useRef<typeof selection>()
+  const reviewed = useRef<
+    typeof selection & { integrationKey?: IntegrationKeyDeletionSelection }
+  >()
   const sameSelection = (value: typeof selection | undefined): boolean =>
     !!value &&
     value.client === selected.current.client &&
     value.scopeKey === selected.current.scopeKey &&
     value.id === selected.current.id &&
-    value.profile === selected.current.profile
+    value.profile === selected.current.profile &&
+    value.serviceID === selected.current.serviceID &&
+    value.keyType === selected.current.keyType
+  // The reviewed capability binds BOTH namespaces as well as the selection
+  // context. Replacing or clearing the identity invalidates the old review.
+  const sameReview = (): boolean =>
+    sameSelection(reviewed.current) &&
+    reviewed.current?.integrationKey === identity.current
   const [state, setState] = useState<DeletionState>({
     phase: 'loading',
     loaded: 0,
@@ -76,41 +98,79 @@ export function useDeletionSafety(
       const valid = (): boolean =>
         active.current &&
         generation.current === request &&
-        sameSelection({ client, scopeKey, id, profile })
+        sameSelection({ client, scopeKey, id, profile, serviceID, keyType })
       clearAck()
       update({ phase: 'loading', loaded: 0, message })
-      loadDeletionPreview(
-        profile,
-        id,
-        (variables) =>
-          new Promise<PreviewResult>((resolve) => {
-            const subscription: { current?: { unsubscribe: () => void } } = {}
-            let finished = false
-            const finish = (result: PreviewResult): void => {
-              if (finished) return
-              finished = true
-              cancelPage.current = undefined
-              resolve(result)
-              subscription.current?.unsubscribe()
-            }
-            const cancel = (): void => finish({})
-            cancelPage.current = cancel
-            subscription.current = client
-              .query(deletionPreviewQuery, variables, {
-                requestPolicy: 'network-only',
-                suspense: false,
-              })
-              .subscribe(finish)
-            if (finished) subscription.current.unsubscribe()
-          }),
-        valid,
-        (loaded) => {
-          if (valid()) update({ phase: 'loading', loaded, message })
-        },
-      )
+      identity.current = undefined
+      const fetchResult = <T>(
+        document: Parameters<typeof client.query>[0],
+        variables: object,
+      ): Promise<T> =>
+        new Promise<T>((resolve) => {
+          const subscription: { current?: { unsubscribe: () => void } } = {}
+          let finished = false
+          const finish = (result: T): void => {
+            if (finished) return
+            finished = true
+            cancelPage.current = undefined
+            resolve(result)
+            subscription.current?.unsubscribe()
+          }
+          const cancel = (): void => finish({} as T)
+          cancelPage.current = cancel
+          subscription.current = client
+            .query(document, variables, {
+              requestPolicy: 'network-only',
+              suspense: false,
+            })
+            .subscribe((result) => finish(result as T))
+          if (finished) subscription.current.unsubscribe()
+        })
+      const load = async (): Promise<DeletionPreview> => {
+        let binding: IntegrationKeyDeletionSelection | undefined
+        if (profile.previewType === 'INTEGRATION_KEY') {
+          if (!serviceID || !keyType || !organizationID)
+            throw new PreviewFailure('failed')
+          const result = await fetchResult<
+            Parameters<typeof verifyIntegrationKeyIdentity>[0]
+          >(integrationKeyDeletionQuery, { id })
+          if (!valid()) throw new PreviewFailure('cancelled')
+          binding = verifyIntegrationKeyIdentity(result, {
+            id,
+            serviceID,
+            type: keyType,
+            organizationID,
+            scopeKey,
+          })
+        } else if (serviceID || keyType) throw new PreviewFailure('unsupported')
+        const result = await loadDeletionPreview(
+          profile,
+          binding?.auditID || id,
+          (variables) =>
+            fetchResult<PreviewResult>(deletionPreviewQuery, variables),
+          valid,
+          (loaded) => {
+            if (valid()) update({ phase: 'loading', loaded, message })
+          },
+          binding,
+        )
+        if (binding && !verifyIntegrationKeyPreview(binding, result))
+          throw new PreviewFailure('unsupported')
+        if (valid()) identity.current = binding
+        return result
+      }
+      load()
         .then((result) => {
           if (!valid()) return
-          reviewed.current = { client, scopeKey, id, profile }
+          reviewed.current = {
+            client,
+            scopeKey,
+            id,
+            profile,
+            serviceID,
+            keyType,
+            integrationKey: identity.current,
+          }
           update({
             phase: isDeletionBlocked(result) ? 'blocked' : 'review',
             loaded: result.impacts.edges.length,
@@ -126,7 +186,17 @@ export function useDeletionSafety(
           })
         })
     },
-    [client, id, profile, scopeKey, clearAck, update],
+    [
+      client,
+      id,
+      profile,
+      scopeKey,
+      serviceID,
+      keyType,
+      organizationID,
+      clearAck,
+      update,
+    ],
   )
   useEffect(() => {
     active.current = true
@@ -161,15 +231,21 @@ export function useDeletionSafety(
     if (
       pending.current ||
       !active.current ||
-      !sameSelection({ client, scopeKey, id, profile }) ||
+      !sameSelection({ client, scopeKey, id, profile, serviceID, keyType }) ||
       !['review', 'confirming'].includes(model.phase) ||
-      !sameSelection(reviewed.current) ||
+      !sameReview() ||
       !model.preview
     )
       return
     let variables
     try {
-      variables = deleteVariables(profile, id, model.preview, ack.current)
+      variables = deleteVariables(
+        profile,
+        id,
+        model.preview,
+        ack.current,
+        identity.current,
+      )
     } catch {
       return
     }
@@ -195,7 +271,7 @@ export function useDeletionSafety(
     if (
       !active.current ||
       request !== generation.current ||
-      !sameSelection({ client, scopeKey, id, profile })
+      !sameSelection({ client, scopeKey, id, profile, serviceID, keyType })
     )
       return
     pending.current = false
@@ -230,11 +306,10 @@ export function useDeletionSafety(
   }
   return {
     profile,
+    externalSystemName: identity.current?.externalSystemName,
     state:
-      state.preview && !sameSelection(reviewed.current)
-        ? { phase: 'loading', loaded: 0 }
-        : state,
-    acknowledged: sameSelection(reviewed.current) && acknowledged,
+      state.preview && !sameReview() ? { phase: 'loading', loaded: 0 } : state,
+    acknowledged: sameReview() && acknowledged,
     onAcknowledge: (checked) => {
       if (
         pending.current ||
