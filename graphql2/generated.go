@@ -266,12 +266,15 @@ type ComplexityRoot struct {
 	}
 
 	DeletionImpact struct {
+		AffectedResource    func(childComplexity int) int
 		CanModifyReference  func(childComplexity int) int
 		Change              func(childComplexity int) int
+		DerivedFrom         func(childComplexity int) int
 		EdgeID              func(childComplexity int) int
 		Impact              func(childComplexity int) int
 		IsDerived           func(childComplexity int) int
 		IsPlannedCoDeletion func(childComplexity int) int
+		Owner               func(childComplexity int) int
 		Parent              func(childComplexity int) int
 		Policy              func(childComplexity int) int
 		ReferencingResource func(childComplexity int) int
@@ -1979,6 +1982,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.DebugSendSMSInfo.ProviderURL(childComplexity), true
 
+	case "DeletionImpact.affectedResource":
+		if e.ComplexityRoot.DeletionImpact.AffectedResource == nil {
+			break
+		}
+
+		return e.ComplexityRoot.DeletionImpact.AffectedResource(childComplexity), true
 	case "DeletionImpact.canModifyReference":
 		if e.ComplexityRoot.DeletionImpact.CanModifyReference == nil {
 			break
@@ -1991,6 +2000,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.DeletionImpact.Change(childComplexity), true
+	case "DeletionImpact.derivedFrom":
+		if e.ComplexityRoot.DeletionImpact.DerivedFrom == nil {
+			break
+		}
+
+		return e.ComplexityRoot.DeletionImpact.DerivedFrom(childComplexity), true
 	case "DeletionImpact.edgeID":
 		if e.ComplexityRoot.DeletionImpact.EdgeID == nil {
 			break
@@ -2015,6 +2030,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.DeletionImpact.IsPlannedCoDeletion(childComplexity), true
+	case "DeletionImpact.owner":
+		if e.ComplexityRoot.DeletionImpact.Owner == nil {
+			break
+		}
+
+		return e.ComplexityRoot.DeletionImpact.Owner(childComplexity), true
 	case "DeletionImpact.parent":
 		if e.ComplexityRoot.DeletionImpact.Parent == nil {
 			break
@@ -6274,6 +6295,12 @@ func (ec *executionContext) childFields_DeletionImpact(ctx context.Context, fiel
 		return ec.fieldContext_DeletionImpact_referencingResource(ctx, field)
 	case "parent":
 		return ec.fieldContext_DeletionImpact_parent(ctx, field)
+	case "owner":
+		return ec.fieldContext_DeletionImpact_owner(ctx, field)
+	case "derivedFrom":
+		return ec.fieldContext_DeletionImpact_derivedFrom(ctx, field)
+	case "affectedResource":
+		return ec.fieldContext_DeletionImpact_affectedResource(ctx, field)
 	case "relation":
 		return ec.fieldContext_DeletionImpact_relation(ctx, field)
 	case "change":
@@ -12064,6 +12091,93 @@ func (ec *executionContext) _DeletionImpact_parent(ctx context.Context, field gr
 	)
 }
 func (ec *executionContext) fieldContext_DeletionImpact_parent(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DeletionImpact",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_DeletionResource(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DeletionImpact_owner(ctx context.Context, field graphql.CollectedField, obj *DeletionImpact) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_DeletionImpact_owner(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Owner, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *DeletionResource) graphql.Marshaler {
+			return ec.marshalODeletionResource2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionResource(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_DeletionImpact_owner(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DeletionImpact",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_DeletionResource(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DeletionImpact_derivedFrom(ctx context.Context, field graphql.CollectedField, obj *DeletionImpact) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_DeletionImpact_derivedFrom(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.DerivedFrom, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOID2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_DeletionImpact_derivedFrom(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("DeletionImpact", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _DeletionImpact_affectedResource(ctx context.Context, field graphql.CollectedField, obj *DeletionImpact) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_DeletionImpact_affectedResource(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.AffectedResource, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *DeletionResource) graphql.Marshaler {
+			return ec.marshalODeletionResource2ᚖgithubᚗcomᚋtargetᚋgoalertᚋgraphql2ᚐDeletionResource(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_DeletionImpact_affectedResource(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "DeletionImpact",
 		Field:      field,
@@ -35371,6 +35485,21 @@ func (ec *executionContext) _DeletionImpact(ctx context.Context, sel ast.Selecti
 			}
 		case "parent":
 			out.Values[i] = ec._DeletionImpact_parent(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "owner":
+			out.Values[i] = ec._DeletionImpact_owner(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "derivedFrom":
+			out.Values[i] = ec._DeletionImpact_derivedFrom(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "affectedResource":
+			out.Values[i] = ec._DeletionImpact_affectedResource(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}

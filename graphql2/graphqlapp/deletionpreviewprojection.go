@@ -3,7 +3,9 @@ package graphqlapp
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -27,18 +29,43 @@ var previewNameQueries = map[ds.ResourceKind]string{
 
 func projectDeletionPreview(ctx context.Context, tx *sql.Tx, a previewAuthority, plan ds.DeletionPlan, page []ds.DeletionImpact, binding deletionPreviewCursor, facts map[ds.Resource]collector.Target, signer DeletionCursorSigner) (*graphql2.DeletionPreview, error) {
 	resources := map[ds.Resource]*graphql2.DeletionResource{}
-	add := func(r ds.Resource) {
-		if r.Kind != ds.ResourceUnknown {
-			resources[r] = &graphql2.DeletionResource{ID: r.ID, Type: previewResourceNames[r.Kind], Label: previewResourceNames[r.Kind] + " " + r.ID}
+	add := func(r ds.Resource, optional bool) error {
+		if optional && r == (ds.Resource{}) {
+			return nil
 		}
+		name := previewResourceNames[r.Kind]
+		if name == "" || len(r.ID) == 0 || len(r.ID) > 256 || strings.ContainsFunc(r.ID, func(c rune) bool {
+			return (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && !strings.ContainsRune("-_:./", c)
+		}) {
+			return previewUnavailable()
+		}
+		resources[r] = &graphql2.DeletionResource{ID: r.ID, Type: name, Label: name + " " + r.ID}
+		return nil
 	}
 	for _, r := range plan.Targets() {
-		add(r)
+		if err := add(r, false); err != nil {
+			return nil, err
+		}
 	}
+	impacts := plan.Impacts()
 	for _, d := range page {
-		add(d.Target)
-		add(d.Referencing)
-		add(d.Parent)
+		// The immutable planner is the authority for causal and ownership facts.
+		// A page must contain exact plan rows, even when its direct cause is on
+		// another page. Do not infer ancestors or recompute policy/edge identities.
+		at, found := slices.BinarySearchFunc(impacts, d.EdgeID, func(d ds.DeletionImpact, id string) int { return comparePreviewString(d.EdgeID, id) })
+		if !found || !reflect.DeepEqual(d, impacts[at]) {
+			return nil, previewUnavailable()
+		}
+		for _, r := range []ds.Resource{d.Target, d.Referencing, d.Affected} {
+			if err := add(r, false); err != nil {
+				return nil, err
+			}
+		}
+		for _, r := range []ds.Resource{d.Parent, d.Owner} {
+			if err := add(r, true); err != nil {
+				return nil, err
+			}
+		}
 	}
 	grouped := map[ds.ResourceKind][]string{}
 	for r := range resources {
@@ -60,7 +87,7 @@ func projectDeletionPreview(ctx context.Context, tx *sql.Tx, a previewAuthority,
 				return nil, previewUnavailable()
 			}
 			r, ok := resources[ds.Resource{Kind: kind, ID: id}]
-			if !ok {
+			if !ok || r.Name != nil {
 				_ = rows.Close()
 				return nil, previewUnavailable()
 			}
@@ -76,6 +103,9 @@ func projectDeletionPreview(ctx context.Context, tx *sql.Tx, a previewAuthority,
 	}
 	organizations := map[uuid.UUID]*graphql2.DeletionOrganizationSummary{}
 	for r, t := range facts {
+		if resources[r] == nil {
+			return nil, previewUnavailable()
+		}
 		org := t.OrganizationID()
 		summary := organizations[org]
 		if summary == nil {
@@ -112,7 +142,17 @@ func projectDeletionPreview(ctx context.Context, tx *sql.Tx, a previewAuthority,
 			return nil, err
 		}
 		node := &graphql2.DeletionImpact{EdgeID: d.EdgeID, Target: resources[d.Target], ReferencingResource: resources[d.Referencing], Parent: resources[d.Parent], Relation: previewRelationshipNames[d.Relationship], Change: previewChangeNames[d.Change], Policy: policies[d.Policy], Impact: deletionImpactDescription(d), RequiredAction: previewActionNames[d.RequiredAction], CanModifyReference: a.canModify(d.Referencing, d.Owner), IsDerived: d.IsDerived, IsPlannedCoDeletion: d.IsPlannedCoDeletion}
-		if node.Target == nil || node.ReferencingResource == nil || node.Relation == "" || node.Change == "" || node.Policy == "" || node.RequiredAction == "" {
+		node.Owner = resources[d.Owner]
+		node.AffectedResource = resources[d.Affected]
+		if d.IsDerived {
+			if d.DerivedFrom == "" {
+				return nil, previewUnavailable()
+			}
+			node.DerivedFrom = &d.DerivedFrom
+		} else if d.DerivedFrom != "" {
+			return nil, previewUnavailable()
+		}
+		if node.Target == nil || node.ReferencingResource == nil || node.AffectedResource == nil || node.Relation == "" || node.Change == "" || node.Policy == "" || node.RequiredAction == "" {
 			return nil, previewUnavailable()
 		}
 		response.Impacts.Edges = append(response.Impacts.Edges, graphql2.DeletionImpactEdge{Cursor: cursor, Node: node})

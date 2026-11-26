@@ -107,7 +107,7 @@ func (a previewAuthority) canReadImpact(impact ds.DeletionImpact, owners map[ds.
 	if a.system || permission.Admin(a.ctx) {
 		return true
 	}
-	for _, r := range []ds.Resource{impact.Target, impact.Referencing, impact.Parent, impact.Owner} {
+	for _, r := range []ds.Resource{impact.Target, impact.Referencing, impact.Parent, impact.Owner, impact.Affected} {
 		switch r.Kind {
 		case ds.ResourceAuthSubject, ds.ResourceUserSession, ds.ResourceBasicAuthLink, ds.ResourceVerificationState:
 			owner := impact.Owner

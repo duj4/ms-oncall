@@ -404,6 +404,11 @@ type DeletionImpact struct {
 	Target              *DeletionResource `json:"target"`
 	ReferencingResource *DeletionResource `json:"referencingResource"`
 	Parent              *DeletionResource `json:"parent,omitempty"`
+	Owner               *DeletionResource `json:"owner,omitempty"`
+	// The original direct edge ID for a derived explanation; null for direct impacts.
+	DerivedFrom *string `json:"derivedFrom,omitempty"`
+	// The resource affected by this decision, including the exact ancestor of a derived explanation. Nullable for compatibility; successful previews always supply it.
+	AffectedResource    *DeletionResource `json:"affectedResource,omitempty"`
 	Relation            string            `json:"relation"`
 	Change              string            `json:"change"`
 	Policy              DeletionPolicy    `json:"policy"`
