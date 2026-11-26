@@ -1,5 +1,5 @@
 import React, { Suspense, useState } from 'react'
-import { gql, useQuery } from 'urql'
+import { useQuery } from 'urql'
 import { UserAvatar } from '../util/avatars'
 import UserPhoneNumberFilterContainer from './UserPhoneNumberFilterContainer'
 import UserCreateDialog from './UserCreateDialog'
@@ -12,22 +12,7 @@ import { FavoriteIcon } from '../util/SetFavoriteButton'
 import { CompListItemNav } from '../lists/CompListItems'
 import CompList from '../lists/CompList'
 
-const query = gql`
-  query usersQuery($input: UserSearchOptions) {
-    users(input: $input) {
-      nodes {
-        id
-        name
-        email
-        isFavorite
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-    }
-  }
-`
+import { userListQuery as query } from './userListQuery'
 
 const context = { suspense: false }
 

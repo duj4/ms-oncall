@@ -154,7 +154,9 @@ export function newClient(url: string): Client {
       retryExchange({
         retryIf: (error, operation) =>
           !containsRootCreate(operation.query) &&
-          !containsDeleteAll(operation.query) &&
+          !(
+            operation.kind === 'mutation' && containsDeleteAll(operation.query)
+          ) &&
           !!error.networkError,
       }) as Exchange,
       fetchExchange,

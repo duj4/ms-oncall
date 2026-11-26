@@ -2,7 +2,11 @@ import {
   supportsIntegrationKeyImpact,
   IntegrationKeyDeletionSelection,
 } from './integrationKeyDeletion'
-import type { DeletionImpact } from '../../schema'
+import type {
+  DeletionImpact,
+  DeletionPreview,
+  DeletionResource,
+} from '../../schema'
 
 // Only these reviewed single-root adapters are supported. Keep their backend
 // vocabularies separate: a Schedule relationship must not become valid for EP.
@@ -16,6 +20,7 @@ export interface DeletionRootProfile {
     | 'CONTACT_METHOD'
     | 'SERVICE'
     | 'INTEGRATION_KEY'
+    | 'USER'
   readonly deleteType:
     | 'escalationPolicy'
     | 'schedule'
@@ -25,6 +30,7 @@ export interface DeletionRootProfile {
     | 'contactMethod'
     | 'service'
     | 'integrationKey'
+    | 'user'
   readonly typename:
     | 'EscalationPolicy'
     | 'Schedule'
@@ -34,18 +40,26 @@ export interface DeletionRootProfile {
     | 'UserContactMethod'
     | 'Service'
     | 'IntegrationKey'
+    | 'User'
   readonly additionalTypenames?: readonly string[]
   readonly listPath?: string
   readonly title: string
   readonly noun: string
   readonly resourceTypes: readonly string[]
   readonly relations: readonly string[]
+  readonly validateResource?: (resource: DeletionResource) => boolean
+  readonly validatePreview?: (
+    preview: DeletionPreview,
+    rootID: string,
+    organizationID?: string,
+  ) => boolean
   readonly supportsImpact?: (
     impact: DeletionImpact,
     rootID: string,
     integrationKey?: IntegrationKeyDeletionSelection,
   ) => boolean
 }
+export { userDeletionProfile } from './userDeletion'
 export const epDeletionProfile: DeletionRootProfile = {
   previewType: 'ESCALATION_POLICY',
   deleteType: 'escalationPolicy',

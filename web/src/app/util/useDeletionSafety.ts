@@ -23,6 +23,11 @@ import {
   isDeletionBlocked,
   loadDeletionPreview,
 } from './deletionSafety'
+import {
+  beginUserDeletion,
+  finishUserDeletion,
+  userDeletionUnresolved,
+} from './userDeletionAttempt'
 
 export function useDeletionSafety(
   profile: DeletionRootProfile,
@@ -30,11 +35,16 @@ export function useDeletionSafety(
   onClose: () => void,
   onSuccess?: () => void,
   integrationKey?: IntegrationKeyDeletionRequest,
+  actorID?: string,
 ): DeletionSafetyDialogProps {
   const client = useClient()
   const [, navigate] = useLocation()
   const scope = useOrganizationManagement()
-  const scopeKey = JSON.stringify([scope?.identity, scope?.target.id])
+  const scopeKey = JSON.stringify([
+    scope?.identity,
+    scope?.target.id,
+    profile.previewType === 'USER' ? actorID : undefined,
+  ])
   const serviceID = integrationKey?.serviceID
   const keyType = integrationKey?.type
   const organizationID = scope?.target.id
@@ -88,6 +98,24 @@ export function useDeletionSafety(
         return
       const request = ++generation.current
       cancelPage.current?.()
+      if (profile.previewType === 'USER') {
+        try {
+          if (userDeletionUnresolved(id)) {
+            clearAck()
+            update({ phase: 'unknown', loaded: 0 })
+            return
+          }
+        } catch {
+          clearAck()
+          update({
+            phase: 'unsupported',
+            loaded: 0,
+            message:
+              'The deletion safety state could not be stored. No deletion request was sent.',
+          })
+          return
+        }
+      }
       // A changed parent may invalidate a nested resource selection. Keep the
       // controller mounted, but never preview/commit an absent selection.
       if (!id) {
@@ -153,6 +181,7 @@ export function useDeletionSafety(
             if (valid()) update({ phase: 'loading', loaded, message })
           },
           binding,
+          organizationID,
         )
         if (binding && !verifyIntegrationKeyPreview(binding, result))
           throw new PreviewFailure('unsupported')
@@ -200,6 +229,13 @@ export function useDeletionSafety(
   )
   useEffect(() => {
     active.current = true
+    if (profile.previewType === 'USER' && !sameSelection(reviewed.current)) {
+      // A new selection must read its own sent marker. The previous user's
+      // marker survives; its late response cannot update this controller.
+      pending.current = false
+      clearAck()
+      update({ phase: 'loading', loaded: 0 })
+    }
     const acquire = scope?.lock
     release.current = acquire?.()
     if (pending.current) {
@@ -250,6 +286,24 @@ export function useDeletionSafety(
       return
     }
     // Synchronous guard precedes every state update and asynchronous operation.
+    if (profile.previewType === 'USER') {
+      try {
+        if (!beginUserDeletion(id)) {
+          clearAck()
+          update({ phase: 'unknown', loaded: 0 })
+          return
+        }
+      } catch {
+        clearAck()
+        update({
+          phase: 'unsupported',
+          loaded: 0,
+          message:
+            'The deletion safety state could not be stored. No deletion request was sent.',
+        })
+        return
+      }
+    }
     pending.current = true
     const request = generation.current
     update({ ...model, phase: 'deleting' })
@@ -268,6 +322,18 @@ export function useDeletionSafety(
       // Abort/unmount/transport rejection does not prove rollback.
       result = undefined
     }
+    const succeeded =
+      !!result &&
+      !result.error &&
+      !result.stale &&
+      !result.hasNext &&
+      result.data?.deleteAll === true
+    const failure =
+      result?.stale || result?.hasNext || result?.data?.deleteAll === true
+        ? 'unknown'
+        : deletionFailure(result?.error)
+    if (profile.previewType === 'USER')
+      finishUserDeletion(id, succeeded || failure !== 'unknown')
     if (
       !active.current ||
       request !== generation.current ||
@@ -276,13 +342,7 @@ export function useDeletionSafety(
       return
     pending.current = false
     clearAck()
-    if (
-      result &&
-      !result.error &&
-      !result.stale &&
-      !result.hasNext &&
-      result.data?.deleteAll === true
-    ) {
+    if (succeeded) {
       update({ phase: 'success', loaded: 0 })
       active.current = false
       generation.current++
@@ -293,10 +353,6 @@ export function useDeletionSafety(
       else if (profile.listPath) navigate(profile.listPath)
       return
     }
-    const failure =
-      result?.stale || result?.hasNext || result?.data?.deleteAll === true
-        ? 'unknown'
-        : deletionFailure(result?.error)
     // Discard every old page/version/ack before recovery.
     update({ phase: failure === 'recheck' ? 'loading' : failure, loaded: 0 })
     if (failure === 'recheck')
