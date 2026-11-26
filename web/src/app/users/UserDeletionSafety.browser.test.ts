@@ -28,7 +28,10 @@ browserTests('User deletion actual React controller and URQL transport', () => {
         resolveDir: path.resolve(__dirname, '..'),
         loader: 'tsx',
         contents: `
-        import React,{useState} from 'react';
+        import React,{useState,useLayoutEffect,startTransition,Suspense} from 'react';
+        import {flushSync} from 'react-dom';
+        import {TestSessionContext} from './util/RequireConfig';
+        import {TestScopeContext} from './main/OrganizationManagement';
         import {createRoot} from 'react-dom/client';
         import {Provider,useQuery} from 'urql';
         import {ThemeProvider,createTheme} from '@mui/material/styles';
@@ -72,7 +75,36 @@ browserTests('User deletion actual React controller and URQL transport', () => {
           window.rerender=(id,scope)=>{if(id)window.selectedUser=id;if(scope!==undefined)window.scope=scope;setTick(x=>x+1)};
           return <Provider value={window.activeClient}><div data-testid="selection">{window.selectedUser}</div><div data-testid="path">{loc}</div><button onClick={()=>setOpen(true)}>Delete</button>{open&&<UserDeleteDialog userID={window.selectedUser} onClose={()=>{window.closeCount++;setOpen(false)}}/>}</Provider>;
         }
-        createRoot(document.getElementById('root')).render(<Provider value={client}><ThemeProvider theme={createTheme()}>{refreshProbe?<RefreshHarness/>:<Harness/>}</ThemeProvider></Provider>);
+        const lifecycleProbe=new URLSearchParams(location.search).has('lifecycleProbe');
+        const interrupted=new Promise(()=>{});
+        window.lifecycleEvents=[];
+        const record=(event,view)=>window.lifecycleEvents.push({event,id:view.id,client:view.clientIndex,scope:view.organization,actor:view.actor});
+        function LifecycleGate({view,open}){
+          record('render',view);
+          useLayoutEffect(()=>{
+            window.committedView=view;record('setup',view);
+            return ()=>record('cleanup',view);
+          },[view,open]);
+          if(view.suspend){record('suspend',view);throw interrupted}
+          return null;
+        }
+        function LifecycleHarness(){
+          const [view,setView]=useState({id:window.selectedUser,clientIndex:0,organization:null,actor:window.sessionUser,suspend:false,instance:0});
+          const [open,setOpen]=useState(false);const [loc]=useLocation();
+          window.lifecycleTransition=changes=>startTransition(()=>setView(v=>({...v,...changes,suspend:true})));
+          window.lifecycleCommit=changes=>flushSync(()=>setView(v=>({...v,...changes})));
+          window.lifecycleAbort=()=>flushSync(()=>setView({...window.committedView}));
+          window.lifecycleUnmount=()=>flushSync(()=>setOpen(false));
+          window.lifecycleRemount=()=>flushSync(()=>{setView(v=>({...v,instance:v.instance+1}));setOpen(true)});
+          const scope=view.organization?{identity:{userID:view.actor},target:{id:view.organization},lock:()=>()=>{}}:null;
+          return <Provider value={window.refreshClients[view.clientIndex]}><TestSessionContext.Provider value={{userID:view.actor,isAdmin:true}}><TestScopeContext.Provider value={scope}>
+            <div data-testid="selection">{view.id}</div><div data-testid="path">{loc}</div>
+            <button onClick={()=>setOpen(true)}>Delete</button>
+            {open&&<UserDeleteDialog key={view.instance} userID={view.id} onClose={()=>{record('close',view);window.closeCount++;setOpen(false)}}/>}
+            <LifecycleGate view={view} open={open}/>
+          </TestScopeContext.Provider></TestSessionContext.Provider></Provider>;
+        }
+        createRoot(document.getElementById('root')).render(<Provider value={client}><ThemeProvider theme={createTheme()}>{lifecycleProbe?<React.StrictMode><Suspense fallback={<div data-testid="suspended">Suspended</div>}><LifecycleHarness/></Suspense></React.StrictMode>:refreshProbe?<RefreshHarness/>:<Harness/>}</ThemeProvider></Provider>);
       `,
       },
       bundle: true,
@@ -99,8 +131,8 @@ browserTests('User deletion actual React controller and URQL transport', () => {
                 const sources: Record<string, string> = {
                   env: `export const isCypress=true,nonce='',pathPrefix='';`,
                   apollo: `export const GraphQLClient={reFetchObservableQueries(){}},GraphQLClientWithErrors=GraphQLClient;export async function refetchOrganizationQueries(){}`,
-                  RequireConfig: `export function useSessionInfo(){return {userID:window.sessionUser,isAdmin:true}};export function useConfigValue(){return [true]}`,
-                  OrganizationManagement: `export function useOrganizationManagement(){return window.scope}`,
+                  RequireConfig: `import {createContext,useContext} from 'react';export const TestSessionContext=createContext(null);export function useSessionInfo(){return useContext(TestSessionContext)||{userID:window.sessionUser,isAdmin:true}};export function useConfigValue(){return [true]}`,
+                  OrganizationManagement: `import {createContext,useContext} from 'react';export const TestScopeContext=createContext(undefined);export function useOrganizationManagement(){const value=useContext(TestScopeContext);return value===undefined?window.scope:value}`,
                   DetailsPage: `import React from 'react';export default function View(p){return <div>{p.secondaryActions.filter(x=>x.handleOnClick).map(x=><button key={x.label} onClick={x.handleOnClick}>{x.label}</button>)}</div>}`,
                   avatars: `export function UserAvatar(){return null}`,
                   useWidth: `export function useIsWidthDown(){return false}`,
@@ -187,6 +219,7 @@ browserTests('User deletion actual React controller and URQL transport', () => {
     probe?: string,
     configure?: (state: State) => void,
     refreshProbe = false,
+    lifecycleProbe = false,
   ): Promise<{ page: Page; state: State }> {
     const page = await browser.newPage()
     const state: State = {
@@ -423,6 +456,7 @@ browserTests('User deletion actual React controller and URQL transport', () => {
         userID +
         '?poll=0' +
         (refreshProbe ? '&refreshProbe=1' : '') +
+        (lifecycleProbe ? '&lifecycleProbe=1' : '') +
         (probe ? '&probe=' + probe : ''),
     )
     await page.getByRole('button', { name: 'Delete', exact: true }).click()
@@ -476,6 +510,321 @@ browserTests('User deletion actual React controller and URQL transport', () => {
     response.release()
     await (await received).finished()
   }
+
+  type LifecycleView = {
+    id: string
+    clientIndex: number
+    organization: string | null
+    actor: string
+    suspend: boolean
+  }
+  type LifecycleEvent = {
+    event: string
+    id: string
+    client: number
+    scope: string | null
+    actor: string
+  }
+  type LifecycleWindow = {
+    lifecycleEvents: LifecycleEvent[]
+    lifecycleTransition: (changes: Partial<LifecycleView>) => void
+    lifecycleCommit: (changes: Partial<LifecycleView>) => void
+    lifecycleAbort: () => void
+    lifecycleUnmount: () => void
+    lifecycleRemount: () => void
+  }
+  const lifecycleEvents = (page: Page): Promise<LifecycleEvent[]> =>
+    page.evaluate(() => (window as unknown as LifecycleWindow).lifecycleEvents)
+  async function lifecycleCommit(
+    page: Page,
+    changes: Partial<LifecycleView>,
+  ): Promise<void> {
+    await page.evaluate((value) => {
+      ;(window as unknown as LifecycleWindow).lifecycleCommit(value)
+    }, changes)
+  }
+  async function lifecycleSetup(): Promise<{ page: Page; state: State }> {
+    return setup(
+      userPreview(),
+      undefined,
+      (s) => {
+        s.deferLists = true
+      },
+      true,
+      true,
+    )
+  }
+  async function lifecycleEvidence(page: Page, state: State): Promise<void> {
+    const evidence = process.env.MS_ONCALL_BROWSER_CASE_EVIDENCE
+    if (evidence)
+      appendFileSync(
+        evidence,
+        JSON.stringify({
+          caseName: expect.getState().currentTestName,
+          lifecycle: await lifecycleEvents(page),
+          effects: await refreshEffects(page),
+          deletes: state.deletes.length,
+          lists: state.lists,
+        }) + '\n',
+      )
+  }
+  const abandonedIdentities = [
+    { name: 'user', changes: { id: otherUser } },
+    { name: 'client', changes: { clientIndex: 1 } },
+    {
+      name: 'organization',
+      changes: { organization: '30000000-0000-4000-8000-000000000001' },
+    },
+    { name: 'actor', changes: { actor: otherUser } },
+  ]
+  test.each(abandonedIdentities)(
+    'an abandoned $name selection render cannot discard the committed user successful refresh',
+    async ({ changes }) => {
+      const { page, state } = await lifecycleSetup()
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        const before = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'setup',
+        )
+        await page.evaluate((value) => {
+          ;(window as unknown as LifecycleWindow).lifecycleTransition(value)
+        }, changes)
+        await waitFor(async () =>
+          (await lifecycleEvents(page)).some((e) => e.event === 'suspend'),
+        )
+        expect(await page.getByTestId('selection').textContent()).toBe(userID)
+        expect(await page.getByTestId('suspended').count()).toBe(0)
+        expect(
+          (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+        ).toEqual(before)
+        await page.evaluate(() =>
+          (window as unknown as LifecycleWindow).lifecycleAbort(),
+        )
+        const commits = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'setup',
+        )
+        expect(commits.length).toBeGreaterThan(before.length)
+        expect(
+          commits.every(
+            (e) =>
+              e.id === userID &&
+              e.client === 0 &&
+              e.scope === null &&
+              e.actor === userID,
+          ),
+        ).toBe(true)
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(1)
+        await lifecycleEvidence(page, state)
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+  )
+  test.each(abandonedIdentities)(
+    'an abandoned $name selection render cannot discard the committed user refresh recovery',
+    async ({ changes }) => {
+      const { page, state } = await lifecycleSetup()
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        const before = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'setup',
+        )
+        await page.evaluate((value) => {
+          ;(window as unknown as LifecycleWindow).lifecycleTransition(value)
+        }, changes)
+        await waitFor(async () =>
+          (await lifecycleEvents(page)).some((e) => e.event === 'suspend'),
+        )
+        expect(
+          (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+        ).toEqual(before)
+        await page.evaluate(() =>
+          (window as unknown as LifecycleWindow).lifecycleAbort(),
+        )
+        expect(await page.getByTestId('selection').textContent()).toBe(userID)
+        const commits = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'setup',
+        )
+        expect(commits.length).toBeGreaterThan(before.length)
+        expect(
+          commits.every(
+            (e) =>
+              e.id === userID &&
+              e.client === 0 &&
+              e.scope === null &&
+              e.actor === userID,
+          ),
+        ).toBe(true)
+        state.listResponses[0].error = true
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        expect(await page.getByRole('dialog').textContent()).toContain(
+          'The user was deleted, but the user list could not be refreshed.',
+        )
+        await page
+          .getByRole('button', { name: 'Refresh user list', exact: true })
+          .click()
+        await waitFor(() => state.listResponses.length === 2)
+        await releaseList(page, state.listResponses[1])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(2)
+        await lifecycleEvidence(page, state)
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+  )
+  test('StrictMode repeated layout setup and cleanup retain a pending receipt for the same selection', async () => {
+    const { page, state } = await lifecycleSetup()
+    try {
+      const initial = await lifecycleEvents(page)
+      expect(
+        initial.filter((e) => e.event === 'setup').length,
+      ).toBeGreaterThanOrEqual(3)
+      expect(
+        initial.filter((e) => e.event === 'cleanup').length,
+      ).toBeGreaterThanOrEqual(2)
+      await confirm(page).click()
+      await waitFor(() => state.listResponses.length === 1)
+      for (let n = 0; n < 3; n++) await lifecycleCommit(page, {})
+      const repeated = await lifecycleEvents(page)
+      expect(
+        repeated.filter((e) => e.event === 'cleanup').length,
+      ).toBeGreaterThan(initial.filter((e) => e.event === 'cleanup').length)
+      expect(
+        repeated
+          .filter((e) => e.event === 'setup')
+          .every((e) => e.id === userID),
+      ).toBe(true)
+      await releaseList(page, state.listResponses[0])
+      expect(await refreshEffects(page)).toEqual({ closes: 1, navigations: 1 })
+      expect(state.deletes).toHaveLength(1)
+      expect(state.lists).toBe(1)
+      await lifecycleEvidence(page, state)
+    } finally {
+      state.listResponses.forEach((r) => r.release())
+      await page.close()
+    }
+  })
+  test.each(['pending', 'success', 'failure'] as const)(
+    'Suspense hide and reveal retain the committed receipt with a %s list result',
+    async (outcome) => {
+      const { page, state } = await lifecycleSetup()
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        const cleanups = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'cleanup',
+        ).length
+        await lifecycleCommit(page, { suspend: true })
+        await page.getByTestId('suspended').waitFor()
+        expect(
+          (await lifecycleEvents(page)).filter((e) => e.event === 'cleanup')
+            .length,
+        ).toBeGreaterThan(cleanups)
+        if (outcome !== 'pending') {
+          state.listResponses[0].error = outcome === 'failure'
+          await releaseList(page, state.listResponses[0])
+          expect(await refreshEffects(page)).toEqual({
+            closes: 0,
+            navigations: 0,
+          })
+          expect(await page.getByTestId('suspended').count()).toBe(1)
+        }
+        await lifecycleCommit(page, { suspend: false })
+        await waitFor(
+          async () => (await page.getByTestId('suspended').count()) === 0,
+        )
+        if (outcome === 'pending')
+          await releaseList(page, state.listResponses[0])
+        if (outcome === 'failure') {
+          expect(await refreshEffects(page)).toEqual({
+            closes: 0,
+            navigations: 0,
+          })
+          expect(await page.getByRole('dialog').textContent()).toContain(
+            'The user was deleted, but the user list could not be refreshed.',
+          )
+          await page
+            .getByRole('button', { name: 'Refresh user list', exact: true })
+            .click()
+          await waitFor(() => state.listResponses.length === 2)
+          await releaseList(page, state.listResponses[1])
+        }
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(outcome === 'failure' ? 2 : 1)
+        await lifecycleEvidence(page, state)
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+  )
+  test.each(['success', 'failure'] as const)(
+    'an actually unmounted dialog cannot affect a new instance after its old list %s',
+    async (outcome) => {
+      const { page, state } = await lifecycleSetup()
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        await page.evaluate(() =>
+          (window as unknown as LifecycleWindow).lifecycleUnmount(),
+        )
+        expect(await page.getByRole('dialog').count()).toBe(0)
+        await page.evaluate(() =>
+          (window as unknown as LifecycleWindow).lifecycleRemount(),
+        )
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        state.listResponses[0].error = outcome === 'failure'
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        expect(
+          await page
+            .getByRole('button', { name: 'Refresh user list', exact: true })
+            .count(),
+        ).toBe(0)
+        expect(await confirm(page).isDisabled()).toBe(false)
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 2)
+        await releaseList(page, state.listResponses[1])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        expect(state.deletes).toHaveLength(2)
+        expect(state.lists).toBe(2)
+        await lifecycleEvidence(page, state)
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+  )
+
   test('a pending refresh for user A cannot suppress user B successful refresh', async () => {
     const { page, state } = await setup(
       userPreview(),
