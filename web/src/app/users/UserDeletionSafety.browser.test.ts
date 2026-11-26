@@ -33,8 +33,9 @@ browserTests('User deletion actual React controller and URQL transport', () => {
         import {Provider,useQuery} from 'urql';
         import {ThemeProvider,createTheme} from '@mui/material/styles';
         import {useLocation} from 'wouter';
-        import {client} from './urql';
+        import {client,newClient} from './urql';
         import UserDetails from './users/UserDetails';
+        import UserDeleteDialog from './users/UserDeleteDialog';
         import {useDeletionSafety} from './util/useDeletionSafety';
         import * as profiles from './util/deletionSafetyProfiles';
         import DeletionSafetyDialog from './dialogs/DeletionSafetyDialog';
@@ -55,7 +56,23 @@ browserTests('User deletion actual React controller and URQL transport', () => {
           const [list]=useQuery({query:userListQuery,variables:{input:defaultUserListInput},context:listContext});
           return <><div data-testid="path">{loc}</div><div data-testid="list">{JSON.stringify(list.data)}</div>{probe?<><button onClick={()=>setOpen(true)}>Delete</button>{open&&<Probe/>}</>:<UserDetails userID={window.selectedUser} readOnly={false}/>}</>;
         }
-        createRoot(document.getElementById('root')).render(<Provider value={client}><ThemeProvider theme={createTheme()}><Harness/></ThemeProvider></Provider>);
+        const refreshProbe=new URLSearchParams(location.search).has('refreshProbe');
+        if(refreshProbe){
+          window.refreshClients=[client,newClient('/api/graphql')];window.activeClient=client;
+          window.closeCount=0;window.navigationCount=0;
+          for(const method of ['pushState','replaceState']){
+            const original=history[method];history[method]=function(...args){
+              if(args[2]&&new URL(args[2],location.href).pathname==='/users')window.navigationCount++;
+              return original.apply(this,args);
+            };
+          }
+        }
+        function RefreshHarness(){
+          const [,setTick]=useState(0);const [open,setOpen]=useState(false);const [loc]=useLocation();
+          window.rerender=(id,scope)=>{if(id)window.selectedUser=id;if(scope!==undefined)window.scope=scope;setTick(x=>x+1)};
+          return <Provider value={window.activeClient}><div data-testid="selection">{window.selectedUser}</div><div data-testid="path">{loc}</div><button onClick={()=>setOpen(true)}>Delete</button>{open&&<UserDeleteDialog userID={window.selectedUser} onClose={()=>{window.closeCount++;setOpen(false)}}/>}</Provider>;
+        }
+        createRoot(document.getElementById('root')).render(<Provider value={client}><ThemeProvider theme={createTheme()}>{refreshProbe?<RefreshHarness/>:<Harness/>}</ThemeProvider></Provider>);
       `,
       },
       bundle: true,
@@ -158,11 +175,18 @@ browserTests('User deletion actual React controller and URQL transport', () => {
     holdSuccessor: boolean
     nativeUnavailable: boolean
     holdList: boolean
+    deferLists: boolean
+    listResponses: Array<{
+      release: () => void
+      error: boolean
+      operationName: string
+    }>
   }
   async function setup(
     preview = userPreview(),
     probe?: string,
     configure?: (state: State) => void,
+    refreshProbe = false,
   ): Promise<{ page: Page; state: State }> {
     const page = await browser.newPage()
     const state: State = {
@@ -179,6 +203,8 @@ browserTests('User deletion actual React controller and URQL transport', () => {
       holdSuccessor: false,
       nativeUnavailable: false,
       holdList: false,
+      deferLists: false,
+      listResponses: [],
     }
     configure?.(state)
     const caseName = expect.getState().currentTestName
@@ -323,11 +349,30 @@ browserTests('User deletion actual React controller and URQL transport', () => {
       }
       if (body.query.includes('usersQuery')) {
         state.lists++
+        let responseError = state.listError
+        if (state.deferLists) {
+          const response = {
+            release: (): void => {},
+            error: state.listError,
+            operationName: body.operationName as string,
+          }
+          await new Promise<void>((resolve) => {
+            response.release = resolve
+            state.listResponses.push(response)
+          })
+          responseError = response.error
+        }
         if (state.holdList)
           await new Promise<void>((resolve) => {
-            state.releaseList = resolve
+            // Automatic invalidation and receipt queries may now be distinct.
+            // Release every held list response, preserving the original cases.
+            const previous = state.releaseList
+            state.releaseList = () => {
+              previous?.()
+              resolve()
+            }
           })
-        if (state.listError)
+        if (state.deferLists ? responseError : state.listError)
           return json({
             errors: [{ message: 'Synthetic list access failure' }],
           })
@@ -377,6 +422,7 @@ browserTests('User deletion actual React controller and URQL transport', () => {
         '/users/' +
         userID +
         '?poll=0' +
+        (refreshProbe ? '&refreshProbe=1' : '') +
         (probe ? '&probe=' + probe : ''),
     )
     await page.getByRole('button', { name: 'Delete', exact: true }).click()
@@ -394,6 +440,270 @@ browserTests('User deletion actual React controller and URQL transport', () => {
     }
     throw new Error('Condition did not complete')
   }
+  const otherUser = '90000000-0000-4000-8000-000000000001'
+  async function selectUser(page: Page, id: string): Promise<void> {
+    await page.evaluate((next) => {
+      ;(window as unknown as { rerender: (id: string) => void }).rerender(next)
+    }, id)
+    await page
+      .getByTestId('selection')
+      .filter({ hasText: new RegExp(`^${id}$`) })
+      .waitFor()
+    await waitFor(async () => !(await confirm(page).isDisabled()))
+  }
+  async function refreshEffects(
+    page: Page,
+  ): Promise<{ closes: number; navigations: number }> {
+    // Wait through transport delivery, Promise continuations and React commit.
+    return page.evaluate(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      const w = window as unknown as {
+        closeCount: number
+        navigationCount: number
+      }
+      return { closes: w.closeCount, navigations: w.navigationCount }
+    })
+  }
+  async function releaseList(
+    page: Page,
+    response: State['listResponses'][number],
+  ): Promise<void> {
+    const received = page.waitForResponse(
+      (r) =>
+        r.request().postDataJSON()?.operationName === response.operationName,
+    )
+    response.release()
+    await (await received).finished()
+  }
+  test('a pending refresh for user A cannot suppress user B successful refresh', async () => {
+    const { page, state } = await setup(
+      userPreview(),
+      undefined,
+      (s) => {
+        s.deferLists = true
+      },
+      true,
+    )
+    try {
+      await confirm(page).click()
+      await waitFor(() => state.listResponses.length === 1)
+      await selectUser(page, otherUser)
+      await confirm(page).click()
+      // B must physically issue its own query while A is still unresolved.
+      await waitFor(() => state.listResponses.length === 2)
+      expect(state.lists).toBe(2)
+      expect(state.listResponses[1].operationName).not.toBe(
+        state.listResponses[0].operationName,
+      )
+      expect(state.deletes.map((d) => d.input)).toEqual([
+        [{ type: 'user', id: userID }],
+        [{ type: 'user', id: otherUser }],
+      ])
+      await releaseList(page, state.listResponses[1])
+      await page.getByRole('dialog').waitFor({ state: 'hidden' })
+      expect(await page.getByTestId('path').textContent()).toBe('/users')
+      expect(await refreshEffects(page)).toEqual({ closes: 1, navigations: 1 })
+      await releaseList(page, state.listResponses[0])
+      expect(await refreshEffects(page)).toEqual({ closes: 1, navigations: 1 })
+      expect(state.deletes).toHaveLength(2)
+      expect(state.lists).toBe(2)
+    } finally {
+      state.listResponses.forEach((r) => r.release())
+      await page.close()
+    }
+  }, 20000)
+  test('an old A refresh cannot affect a new dialog after A to B to A selection', async () => {
+    const { page, state } = await setup(
+      userPreview(),
+      undefined,
+      (s) => {
+        s.deferLists = true
+      },
+      true,
+    )
+    try {
+      await confirm(page).click()
+      await waitFor(() => state.listResponses.length === 1)
+      await selectUser(page, otherUser)
+      await selectUser(page, userID)
+      expect(state.previews).toBe(3)
+      // Exercise F02 independently of F01: the new A is still reviewing.
+      await releaseList(page, state.listResponses[0])
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 0 })
+      expect(await page.getByRole('dialog').count()).toBe(1)
+      expect(await confirm(page).isDisabled()).toBe(false)
+      // A new authoritative receipt has its own failed-list recovery state.
+      await confirm(page).click()
+      await waitFor(() => state.listResponses.length === 2)
+      state.listResponses[1].error = true
+      await releaseList(page, state.listResponses[1])
+      const retry = page.getByRole('button', {
+        name: 'Refresh user list',
+        exact: true,
+      })
+      await retry.waitFor()
+      await retry.click()
+      await waitFor(() => state.listResponses.length === 3)
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 0 })
+      expect(await page.getByRole('dialog').count()).toBe(1)
+      expect(await retry.count()).toBe(0)
+      state.listResponses[2].error = true
+      await releaseList(page, state.listResponses[2])
+      await retry.waitFor()
+      expect(await confirm(page).isDisabled()).toBe(true)
+      // Repeated synchronous recovery clicks send only one list query.
+      await retry.evaluate((button) => {
+        if (!(button instanceof HTMLButtonElement))
+          throw new Error('Expected a button')
+        button.click()
+        button.click()
+        button.click()
+      })
+      await waitFor(() => state.listResponses.length === 4)
+      await releaseList(page, state.listResponses[3])
+      await page.getByRole('dialog').waitFor({ state: 'hidden' })
+      expect(await refreshEffects(page)).toEqual({ closes: 1, navigations: 1 })
+      expect(state.deletes).toHaveLength(2)
+      expect(state.deletes.map((d) => d.input)).toEqual([
+        [{ type: 'user', id: userID }],
+        [{ type: 'user', id: userID }],
+      ])
+      expect(state.lists).toBe(4)
+      expect(
+        new Set(state.listResponses.map((r) => r.operationName)).size,
+      ).toBe(4)
+    } finally {
+      state.listResponses.forEach((r) => r.release())
+      await page.close()
+    }
+  }, 20000)
+  test.each(['success', 'failure'] as const)(
+    'old A refresh %s and finally cannot change the new A pending receipt',
+    async (outcome) => {
+      const { page, state } = await setup(
+        userPreview(),
+        undefined,
+        (s) => {
+          s.deferLists = true
+        },
+        true,
+      )
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        await selectUser(page, otherUser)
+        await selectUser(page, userID)
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 2)
+        state.listResponses[0].error = outcome === 'failure'
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        expect(await page.getByRole('dialog').count()).toBe(1)
+        const retry = page.getByRole('button', {
+          name: 'Refresh user list',
+          exact: true,
+        })
+        expect(await retry.count()).toBe(0)
+        expect(await confirm(page).isDisabled()).toBe(true)
+        state.listResponses[1].error = true
+        await releaseList(page, state.listResponses[1])
+        await retry.waitFor()
+        await retry.click()
+        await waitFor(() => state.listResponses.length === 3)
+        await releaseList(page, state.listResponses[2])
+        await page.getByRole('dialog').waitFor({ state: 'hidden' })
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        expect(state.deletes).toHaveLength(2)
+        expect(state.lists).toBe(3)
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+    20000,
+  )
+  test.each(['client', 'organization', 'actor'] as const)(
+    'old refresh error stays invalid after %s identity changes and returns',
+    async (identity) => {
+      const { page, state } = await setup(
+        userPreview(),
+        undefined,
+        (s) => {
+          s.deferLists = true
+        },
+        true,
+      )
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        for (const restore of [false, true]) {
+          await page.evaluate(
+            ({ identity, restore, actor }) => {
+              const w = window as unknown as {
+                activeClient: unknown
+                refreshClients: unknown[]
+                sessionUser: string
+                rerender: (id: null, scope?: object | null) => void
+              }
+              if (identity === 'client')
+                w.activeClient = w.refreshClients[restore ? 0 : 1]
+              if (identity === 'actor')
+                w.sessionUser = restore
+                  ? actor
+                  : '90000000-0000-4000-8000-000000000001'
+              w.rerender(
+                null,
+                identity === 'organization'
+                  ? restore
+                    ? null
+                    : {
+                        identity: { userID: actor },
+                        target: { id: '90000000-0000-4000-8000-000000000002' },
+                        lock: () => () => {},
+                      }
+                  : undefined,
+              )
+            },
+            { identity, restore, actor: userID },
+          )
+          await waitFor(() => state.previews >= (restore ? 3 : 2))
+        }
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        state.listResponses[0].error = true
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        expect(await confirm(page).isDisabled()).toBe(false)
+        expect(
+          await page
+            .getByRole('button', { name: 'Refresh user list', exact: true })
+            .count(),
+        ).toBe(0)
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 2)
+        await releaseList(page, state.listResponses[1])
+        await page.getByRole('dialog').waitFor({ state: 'hidden' })
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        expect(state.deletes).toHaveLength(2)
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+    20000,
+  )
   test.each([
     'user',
     'escalationPolicy',
