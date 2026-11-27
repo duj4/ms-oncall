@@ -87,7 +87,7 @@ export default function UserDetails(props: {
     userID: string
     contactMethodID: string
   } | null>(null)
-  const deletionActive = !!deleteRule || !!deleteContact
+  const deletionActive = showUserDeleteDialog || !!deleteRule || !!deleteContact
   const mobile = useIsWidthDown('md')
 
   const [{ data, error }] = useQuery<{ user: User }>({
@@ -103,6 +103,12 @@ export default function UserDetails(props: {
   // pending/unknown commit into a fresh deletion.
   const deleteDialog = (
     <React.Fragment>
+      {showUserDeleteDialog && (
+        <UserDeleteDialog
+          userID={userID}
+          onClose={() => setShowUserDeleteDialog(false)}
+        />
+      )}
       {deleteContact && (
         <UserContactMethodDeleteDialog
           contactMethodID={
@@ -218,12 +224,6 @@ export default function UserDetails(props: {
             onClose={() => setShowEdit(false)}
             userID={userID}
             role={user.role}
-          />
-        )}
-        {showUserDeleteDialog && (
-          <UserDeleteDialog
-            userID={userID}
-            onClose={() => setShowUserDeleteDialog(false)}
           />
         )}
         {createCM && (

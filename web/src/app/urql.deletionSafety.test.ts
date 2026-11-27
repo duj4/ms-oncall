@@ -34,10 +34,9 @@ afterEach(() => {
 async function failures(
   document: Document,
   kind: 'mutation' | 'query' = 'mutation',
+  failure: Error = new TypeError('synthetic network failure'),
 ): Promise<number> {
-  const fetcher = jest
-    .fn()
-    .mockRejectedValue(new TypeError('synthetic network failure'))
+  const fetcher = jest.fn().mockRejectedValue(failure)
   global.fetch = fetcher
   const client: UrqlClient = newClient(
     'https://deletion-safety.invalid/api/graphql',
@@ -76,6 +75,44 @@ test.each([
     expect(await failures(gql(text))).toBe(1)
   },
 )
+
+test.each([
+  'user',
+  'escalationPolicy',
+  'schedule',
+  'rotation',
+  'notificationRule',
+  'userOverride',
+  'contactMethod',
+  'service',
+  'integrationKey',
+])(
+  '%s deleteAll is never retried after a network timeout or ambiguous commit',
+  async (root) => {
+    const query = gql(
+      `mutation { deleteAll(input: [{ type: ${root}, id: "10000000-0000-4000-8000-000000000001" }]) }`,
+    )
+    for (const message of [
+      'Synthetic network failure',
+      'Synthetic timeout',
+      'Synthetic response lost after commit',
+    ]) {
+      expect(await failures(query, 'mutation', new TypeError(message))).toBe(1)
+    }
+  },
+)
+test('a query field named deleteAll is not mistaken for a mutation', async () => {
+  expect(
+    await failures(
+      gql`
+        query {
+          deleteAll
+        }
+      `,
+      'query',
+    ),
+  ).toBe(2)
+})
 
 const favorite = `setFavorite(input: {
   target: { type: escalationPolicy, id: "10000000-0000-4000-8000-000000000001" }

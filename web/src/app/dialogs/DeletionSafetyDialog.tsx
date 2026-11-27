@@ -27,6 +27,8 @@ export interface DeletionSafetyDialogProps {
   profile?: DeletionRootProfile
   state: DeletionState
   externalSystemName?: string | null
+  selfDelete?: boolean
+  successNotice?: React.ReactNode
   acknowledged: boolean
   onAcknowledge: (checked: boolean) => void
   onConfirm: () => void
@@ -88,6 +90,16 @@ export default function DeletionSafetyDialog(
         title={<span id='deletion-safety-title'>{profile.title}</span>}
       />
       <DialogContent>
+        {profile.previewType === 'USER' && (
+          <Alert severity={props.selfDelete ? 'warning' : 'info'}>
+            The selected user is the only explicit deletion root. Owned contact
+            methods, notification rules and identity records may be deleted.
+            Schedules, rotations and policies shown as explanations are not
+            additional deletion roots. Review each affected resource below.
+            {props.selfDelete &&
+              ' You are deleting your own account. Your current login session may become invalid after the server commits. Logout, a missing user, or an authentication error does not confirm the deletion result.'}
+          </Alert>
+        )}
         {profile.previewType === 'INTEGRATION_KEY' && (
           <Alert severity='warning'>
             Only the selected integration key is deleted. Its service and
@@ -168,6 +180,7 @@ export default function DeletionSafetyDialog(
             </Typography>
           </div>
         )}
+        {state.phase === 'success' && props.successNotice}
         {busy && (
           <Typography role='status'>
             Deleting {profile.noun}… Keep this dialog open while the result is
@@ -253,6 +266,30 @@ export default function DeletionSafetyDialog(
                     <ul>
                       {edges.map(({ node }) => (
                         <li key={node.edgeID}>
+                          {profile.previewType === 'USER' && (
+                            <React.Fragment>
+                              <Typography>
+                                Affected resource:{' '}
+                                {identity(node.affectedResource!)}
+                              </Typography>
+                              {node.owner && (
+                                <Typography>
+                                  Owner: {identity(node.owner)}
+                                </Typography>
+                              )}
+                              <Typography>
+                                {node.isDerived
+                                  ? 'Derived explanation of the direct relationship; the affected ancestor is preserved. This is not an additional deletion root.'
+                                  : node.policy === 'BLOCK'
+                                    ? 'This dependency blocks deletion and cannot be overridden by acknowledgement.'
+                                    : node.change === 'PRESERVED'
+                                      ? 'The affected resource is preserved.'
+                                      : node.change === 'DELETED'
+                                        ? 'The affected resource would be deleted by the backend plan.'
+                                        : 'The affected relationship would be removed by the backend plan.'}
+                              </Typography>
+                            </React.Fragment>
+                          )}
                           {profile.previewType === 'SERVICE' && (
                             <Typography>
                               {node.isDerived
@@ -342,6 +379,7 @@ export default function DeletionSafetyDialog(
                           )}
                           {node.isPlannedCoDeletion &&
                             profile.previewType !== 'SERVICE' &&
+                            profile.previewType !== 'USER' &&
                             !(
                               (profile.previewType === 'USER_OVERRIDE' ||
                                 profile.previewType === 'CONTACT_METHOD') &&
@@ -351,6 +389,15 @@ export default function DeletionSafetyDialog(
                                 {profile.previewType === 'CONTACT_METHOD'
                                   ? 'The referencing resource is included in the backend deletion plan.'
                                   : 'Included in the backend deletion plan.'}
+                              </Typography>
+                            )}
+                          {profile.previewType === 'USER' &&
+                            node.isPlannedCoDeletion && (
+                              <Typography>
+                                The referencing resource is already included in
+                                the backend plan. This flag is separate from
+                                whether this row is a derived explanation; it
+                                adds no deletion root.
                               </Typography>
                             )}
                         </li>

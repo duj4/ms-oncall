@@ -5,7 +5,13 @@ import {
   verifyIntegrationKeyIdentity,
   verifyIntegrationKeyPreview,
 } from './integrationKeyDeletion'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { useClient } from 'urql'
 import { useLocation } from 'wouter'
 import type { DeletionPreview } from '../../schema'
@@ -23,40 +29,53 @@ import {
   isDeletionBlocked,
   loadDeletionPreview,
 } from './deletionSafety'
+import {
+  beginUserDeletion,
+  finishUserDeletion,
+  userDeletionUnresolved,
+} from './userDeletionAttempt'
 
 export function useDeletionSafety(
   profile: DeletionRootProfile,
   id: string,
   onClose: () => void,
-  onSuccess?: () => void,
+  // A receipt receiver may record an outcome while layout effects are hidden.
+  // Ordinary callbacks/navigation run only while this instance is connected.
+  onSuccess?: (() => void) | { receive: () => void },
   integrationKey?: IntegrationKeyDeletionRequest,
+  actorID?: string,
 ): DeletionSafetyDialogProps {
   const client = useClient()
   const [, navigate] = useLocation()
   const scope = useOrganizationManagement()
-  const scopeKey = JSON.stringify([scope?.identity, scope?.target.id])
+  const scopeKey = JSON.stringify([
+    scope?.identity,
+    scope?.target.id,
+    profile.previewType === 'USER' ? actorID : undefined,
+  ])
   const serviceID = integrationKey?.serviceID
   const keyType = integrationKey?.type
   const organizationID = scope?.target.id
-  const selection = { client, scopeKey, id, profile, serviceID, keyType }
+  const proposed = { client, scopeKey, id, profile, serviceID, keyType }
+  const selected = useRef(proposed)
+  // Object identity is a committed epoch, including A -> B -> A. Rendering a
+  // speculative identity cannot revoke requests belonging to the current UI.
+  const selection = Object.entries(proposed).every(
+    ([key, value]) => selected.current[key as keyof typeof proposed] === value,
+  )
+    ? selected.current
+    : proposed
   const identity = useRef<IntegrationKeyDeletionSelection>()
-  const selected = useRef(selection)
-  selected.current = selection
-  const reviewed = useRef<
-    typeof selection & { integrationKey?: IntegrationKeyDeletionSelection }
-  >()
+  const reviewed = useRef<{
+    owner: typeof selection
+    integrationKey?: IntegrationKeyDeletionSelection
+  }>()
   const sameSelection = (value: typeof selection | undefined): boolean =>
-    !!value &&
-    value.client === selected.current.client &&
-    value.scopeKey === selected.current.scopeKey &&
-    value.id === selected.current.id &&
-    value.profile === selected.current.profile &&
-    value.serviceID === selected.current.serviceID &&
-    value.keyType === selected.current.keyType
+    value === selected.current
   // The reviewed capability binds BOTH namespaces as well as the selection
   // context. Replacing or clearing the identity invalidates the old review.
   const sameReview = (): boolean =>
-    sameSelection(reviewed.current) &&
+    sameSelection(reviewed.current?.owner) &&
     reviewed.current?.integrationKey === identity.current
   const [state, setState] = useState<DeletionState>({
     phase: 'loading',
@@ -67,7 +86,26 @@ export function useDeletionSafety(
   const ack = useRef(false)
   const generation = useRef(0)
   const active = useRef(false)
-  const pending = useRef(false)
+  const mounted = useRef(false)
+  const connected = useRef(false)
+  const started = useRef<typeof selection>()
+  const pending = useRef<{
+    owner: typeof selection
+    generation: number
+  }>()
+  const successEffect = useRef<{ owner: typeof selection; run: () => void }>()
+  const finishSuccess = (): void => {
+    const effect = successEffect.current
+    if (
+      !effect ||
+      !mounted.current ||
+      !connected.current ||
+      !sameSelection(effect.owner)
+    )
+      return
+    successEffect.current = undefined
+    effect.run()
+  }
   const cancelPage = useRef<(() => void) | undefined>()
   const release = useRef<(() => void) | undefined>()
   const update = useCallback((next: DeletionState) => {
@@ -83,11 +121,31 @@ export function useDeletionSafety(
       if (
         pending.current ||
         !active.current ||
+        !mounted.current ||
+        !sameSelection(selection) ||
         ['unknown', 'success', 'cancelled'].includes(current.current.phase)
       )
         return
       const request = ++generation.current
       cancelPage.current?.()
+      if (profile.previewType === 'USER') {
+        try {
+          if (userDeletionUnresolved(id)) {
+            clearAck()
+            update({ phase: 'unknown', loaded: 0 })
+            return
+          }
+        } catch {
+          clearAck()
+          update({
+            phase: 'unsupported',
+            loaded: 0,
+            message:
+              'The deletion safety state could not be stored. No deletion request was sent.',
+          })
+          return
+        }
+      }
       // A changed parent may invalidate a nested resource selection. Keep the
       // controller mounted, but never preview/commit an absent selection.
       if (!id) {
@@ -97,8 +155,9 @@ export function useDeletionSafety(
       }
       const valid = (): boolean =>
         active.current &&
+        mounted.current &&
         generation.current === request &&
-        sameSelection({ client, scopeKey, id, profile, serviceID, keyType })
+        sameSelection(selection)
       clearAck()
       update({ phase: 'loading', loaded: 0, message })
       identity.current = undefined
@@ -107,16 +166,21 @@ export function useDeletionSafety(
         variables: object,
       ): Promise<T> =>
         new Promise<T>((resolve) => {
-          const subscription: { current?: { unsubscribe: () => void } } = {}
+          const subscription: {
+            current?: { unsubscribe: () => void }
+            cancel?: () => void
+          } = {}
           let finished = false
           const finish = (result: T): void => {
             if (finished) return
             finished = true
-            cancelPage.current = undefined
+            if (cancelPage.current === subscription.cancel)
+              cancelPage.current = undefined
             resolve(result)
             subscription.current?.unsubscribe()
           }
           const cancel = (): void => finish({} as T)
+          subscription.cancel = cancel
           cancelPage.current = cancel
           subscription.current = client
             .query(document, variables, {
@@ -153,6 +217,7 @@ export function useDeletionSafety(
             if (valid()) update({ phase: 'loading', loaded, message })
           },
           binding,
+          organizationID,
         )
         if (binding && !verifyIntegrationKeyPreview(binding, result))
           throw new PreviewFailure('unsupported')
@@ -163,12 +228,7 @@ export function useDeletionSafety(
         .then((result) => {
           if (!valid()) return
           reviewed.current = {
-            client,
-            scopeKey,
-            id,
-            profile,
-            serviceID,
-            keyType,
+            owner: selection,
             integrationKey: identity.current,
           }
           update({
@@ -194,29 +254,57 @@ export function useDeletionSafety(
       serviceID,
       keyType,
       organizationID,
+      selection,
       clearAck,
       update,
     ],
   )
-  useEffect(() => {
-    active.current = true
-    const acquire = scope?.lock
-    release.current = acquire?.()
-    if (pending.current) {
-      pending.current = false
-      clearAck()
-      update({ phase: 'unknown', loaded: 0 })
-    } else preview()
-    return () => {
-      active.current = false
+  useLayoutEffect(() => {
+    if (selected.current !== selection) {
+      selected.current = selection
       generation.current++
       cancelPage.current?.()
-      release.current?.()
-      release.current = undefined
+      // Only a committed change revokes the old request. Its continuation can
+      // still settle its transaction marker, but cannot release a new request.
+      pending.current = undefined
+      reviewed.current = undefined
+      identity.current = undefined
+      successEffect.current = undefined
+      active.current = true
+      clearAck()
+      update({ phase: 'loading', loaded: 0 })
     }
-  }, [preview])
+    connected.current = true
+    finishSuccess()
+    return () => {
+      // Suspense and StrictMode also disconnect layout effects. Keep ownership
+      // and asynchronous outcomes until a committed change or actual unmount.
+      connected.current = false
+    }
+  })
+  useEffect(() => {
+    mounted.current = true
+    const unlock = scope?.lock?.()
+    release.current = unlock
+    if (started.current !== selection) {
+      started.current = selection
+      active.current = true
+      preview()
+    }
+    return () => {
+      mounted.current = false
+      unlock?.()
+      if (release.current === unlock) release.current = undefined
+      // StrictMode reconnects synchronously; a real removed instance does not.
+      queueMicrotask(() => {
+        if (mounted.current) return
+        generation.current++
+        cancelPage.current?.()
+      })
+    }
+  }, [preview, selection])
   const close = (): void => {
-    if (pending.current) return
+    if (pending.current || !mounted.current || !sameSelection(selection)) return
     active.current = false
     generation.current++
     cancelPage.current?.()
@@ -231,7 +319,8 @@ export function useDeletionSafety(
     if (
       pending.current ||
       !active.current ||
-      !sameSelection({ client, scopeKey, id, profile, serviceID, keyType }) ||
+      !mounted.current ||
+      !sameSelection(selection) ||
       !['review', 'confirming'].includes(model.phase) ||
       !sameReview() ||
       !model.preview
@@ -250,8 +339,26 @@ export function useDeletionSafety(
       return
     }
     // Synchronous guard precedes every state update and asynchronous operation.
-    pending.current = true
-    const request = generation.current
+    if (profile.previewType === 'USER') {
+      try {
+        if (!beginUserDeletion(id)) {
+          clearAck()
+          update({ phase: 'unknown', loaded: 0 })
+          return
+        }
+      } catch {
+        clearAck()
+        update({
+          phase: 'unsupported',
+          loaded: 0,
+          message:
+            'The deletion safety state could not be stored. No deletion request was sent.',
+        })
+        return
+      }
+    }
+    const request = { owner: selection, generation: generation.current }
+    pending.current = request
     update({ ...model, phase: 'deleting' })
     let result
     try {
@@ -268,35 +375,48 @@ export function useDeletionSafety(
       // Abort/unmount/transport rejection does not prove rollback.
       result = undefined
     }
-    if (
-      !active.current ||
-      request !== generation.current ||
-      !sameSelection({ client, scopeKey, id, profile, serviceID, keyType })
-    )
-      return
-    pending.current = false
-    clearAck()
-    if (
-      result &&
+    const succeeded =
+      !!result &&
       !result.error &&
       !result.stale &&
       !result.hasNext &&
       result.data?.deleteAll === true
-    ) {
+    const failure =
+      result?.stale || result?.hasNext || result?.data?.deleteAll === true
+        ? 'unknown'
+        : deletionFailure(result?.error)
+    if (profile.previewType === 'USER')
+      finishUserDeletion(id, succeeded || failure !== 'unknown')
+    if (
+      !active.current ||
+      !mounted.current ||
+      pending.current !== request ||
+      request.generation !== generation.current ||
+      !sameSelection(request.owner)
+    )
+      return
+    pending.current = undefined
+    clearAck()
+    if (succeeded) {
       update({ phase: 'success', loaded: 0 })
       active.current = false
       generation.current++
       cancelPage.current?.()
       release.current?.()
       release.current = undefined
-      if (onSuccess) onSuccess()
-      else if (profile.listPath) navigate(profile.listPath)
+      if (onSuccess && typeof onSuccess !== 'function') onSuccess.receive()
+      else {
+        successEffect.current = {
+          owner: request.owner,
+          run: () => {
+            if (onSuccess) onSuccess()
+            else if (profile.listPath) navigate(profile.listPath)
+          },
+        }
+        finishSuccess()
+      }
       return
     }
-    const failure =
-      result?.stale || result?.hasNext || result?.data?.deleteAll === true
-        ? 'unknown'
-        : deletionFailure(result?.error)
     // Discard every old page/version/ack before recovery.
     update({ phase: failure === 'recheck' ? 'loading' : failure, loaded: 0 })
     if (failure === 'recheck')
@@ -308,11 +428,17 @@ export function useDeletionSafety(
     profile,
     externalSystemName: identity.current?.externalSystemName,
     state:
-      state.preview && !sameReview() ? { phase: 'loading', loaded: 0 } : state,
+      selection !== selected.current || (state.preview && !sameReview())
+        ? { phase: 'loading', loaded: 0 }
+        : state,
     acknowledged: sameReview() && acknowledged,
     onAcknowledge: (checked) => {
       if (
         pending.current ||
+        !mounted.current ||
+        !active.current ||
+        !sameSelection(selection) ||
+        !sameReview() ||
         !['review', 'confirming'].includes(current.current.phase)
       )
         return

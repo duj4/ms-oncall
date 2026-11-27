@@ -58,6 +58,13 @@ export const deletionPreviewQuery = gql`
             parent {
               ...DeletionIdentity
             }
+            owner {
+              ...DeletionIdentity
+            }
+            derivedFrom
+            affectedResource {
+              ...DeletionIdentity
+            }
             relation
             change
             policy
@@ -299,12 +306,16 @@ function resource(
     !(value.name === null || typeof value.name === 'string')
   )
     return false
-  return (
+  const valid =
     value.organization === null ||
     (isRecord(value.organization) &&
       onlyKeys(value.organization, ['id', 'name']) &&
       nonempty(value.organization.id) &&
       typeof value.organization.name === 'string')
+  return (
+    valid &&
+    (!profile.validateResource ||
+      profile.validateResource(value as unknown as DeletionResource))
   )
 }
 function validImpact(
@@ -318,6 +329,9 @@ function validImpact(
       'target',
       'referencingResource',
       'parent',
+      'owner',
+      'derivedFrom',
+      'affectedResource',
       'relation',
       'change',
       'policy',
@@ -334,6 +348,12 @@ function validImpact(
     resource(value.target, profile) &&
     resource(value.referencingResource, profile) &&
     (value.parent === null || resource(value.parent, profile)) &&
+    (profile.previewType !== 'USER' ||
+      ((value.owner === null || resource(value.owner, profile)) &&
+        resource(value.affectedResource, profile) &&
+        (value.isDerived
+          ? nonempty(value.derivedFrom)
+          : value.derivedFrom === null))) &&
     typeof value.relation === 'string' &&
     profile.relations.includes(value.relation) &&
     typeof value.change === 'string' &&
@@ -487,6 +507,7 @@ export async function loadDeletionPreview(
   active: () => boolean,
   progress: (loaded: number) => void,
   integrationKey?: IntegrationKeyDeletionSelection,
+  organizationID?: string,
 ): Promise<DeletionPreview> {
   if (
     profile.previewType === 'INTEGRATION_KEY' &&
@@ -548,6 +569,11 @@ export async function loadDeletionPreview(
     )
     combined.impacts.pageInfo = page.impacts.pageInfo
     if (!page.impacts.pageInfo.hasNextPage) {
+      if (
+        profile.validatePreview &&
+        !profile.validatePreview(combined, id, organizationID)
+      )
+        throw new PreviewFailure('unsupported')
       if (
         page.canProceed &&
         !page.requiresConfirmation &&
@@ -625,6 +651,7 @@ export function deleteVariables(
   )
     throw new PreviewFailure('unsupported')
   if (
+    (profile.validatePreview && !profile.validatePreview(preview, id)) ||
     preview.targets.length !== 1 ||
     preview.targets[0].id !== (dualIdentity ? integrationKey!.auditID : id) ||
     preview.targets[0].type !== profile.previewType ||
