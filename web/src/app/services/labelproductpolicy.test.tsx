@@ -1,11 +1,91 @@
-import React from 'react'
+/* eslint-disable @typescript-eslint/no-require-imports */
+// Preserve namespace types through the Babel-before-esbuild transform pass.
+import React = require('react')
 import { createTheme, ThemeProvider } from '@mui/material/styles'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { print } from 'graphql'
-import * as urqlCore from '@urql/core'
+
+// Static image URLs only; keep the real icon components and policy UI.
+jest.mock('../public/icons/slack.svg', () => 'slack.svg')
+jest.mock('../public/icons/slack_monochrome_black.svg', () => 'slack-black.svg')
+jest.mock('../public/icons/slack_monochrome_white.svg', () => 'slack-white.svg')
+// These render-only policy tests have no organization management provider.
+jest.mock('../main/OrganizationManagement', () => ({
+  useOrganizationManagement: () => null,
+  useTargetOrganizationID: () => undefined,
+  OrganizationControls: () => null,
+  useCreateTarget: () => ({
+    targetOrganizationID: undefined,
+    favorite: true,
+    canUseCurrentUser: true,
+    targetName: '',
+    uncertain: false,
+    cancel: () => {},
+    submit: () => {
+      throw new Error(
+        'Create submission is outside this render-only policy test',
+      )
+    },
+  }),
+}))
+
+// Markdown formatting is unrelated to the Label visibility contract.
+jest.mock('../util/Markdown', () => ({
+  __esModule: true,
+  default: ({ value }: { value: string }) => <div>{value}</div>,
+}))
+
+// Use the same public MUI implementation through its Jest-compatible entry.
+jest.mock('@mui/styles/makeStyles/makeStyles', () =>
+  jest.requireActual('@mui/styles/node/makeStyles/makeStyles'),
+)
+jest.mock('react-big-calendar/lib/css/react-big-calendar.css', () => ({}))
+
+// This unrelated route loads a browser-only GraphQL editor. Fail if rendered.
+jest.mock('../admin/AdminAPIKeys', () => ({
+  __esModule: true,
+  default: () => {
+    throw new Error('API key page is outside this Label policy test')
+  },
+}))
+
+jest.mock('./UniversalKey/UniversalKeyPage', () => ({
+  __esModule: true,
+  default: () => {
+    throw new Error('Universal Key page is outside this Label policy test')
+  },
+}))
+
+// Preserve Markdown source assets loaded by unrelated registered routes.
+jest.mock('../../../../docs/switchover.md', () =>
+  jest
+    .requireActual('fs')
+    .readFileSync(require.resolve('../../../../docs/switchover.md'), 'utf8'),
+)
+jest.mock('../admin/KeyRotation.md', () =>
+  jest
+    .requireActual('fs')
+    .readFileSync(require.resolve('../admin/KeyRotation.md'), 'utf8'),
+)
+jest.mock('../documentation/sections/IntegrationKeys.md', () =>
+  jest
+    .requireActual('fs')
+    .readFileSync(
+      require.resolve('../documentation/sections/IntegrationKeys.md'),
+      'utf8',
+    ),
+)
+jest.mock('../documentation/sections/Webhooks.md', () =>
+  jest
+    .requireActual('fs')
+    .readFileSync(
+      require.resolve('../documentation/sections/Webhooks.md'),
+      'utf8',
+    ),
+)
 
 jest.mock('urql', () => ({
-  ...urqlCore,
+  ...jest.requireActual<typeof import('@urql/core')>('@urql/core'),
   useQuery: jest.fn(),
   useMutation: jest.fn(),
   useClient: jest.fn(),
@@ -118,7 +198,6 @@ jest.mock('../dialogs/FormDialog', () => ({
   ),
 }))
 
-/* eslint-disable @typescript-eslint/no-require-imports */
 const { useQuery, useMutation } = require('urql') as typeof import('urql')
 const { ConfigProvider } =
   require('../util/RequireConfig') as typeof import('../util/RequireConfig')
