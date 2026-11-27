@@ -39,6 +39,7 @@ browserTests('User deletion actual React controller and URQL transport', () => {
         import {client,newClient} from './urql';
         import UserDetails from './users/UserDetails';
         import UserDeleteDialog from './users/UserDeleteDialog';
+        import ServiceDeleteDialog from './services/ServiceDeleteDialog';
         import {useDeletionSafety} from './util/useDeletionSafety';
         import * as profiles from './util/deletionSafetyProfiles';
         import DeletionSafetyDialog from './dialogs/DeletionSafetyDialog';
@@ -65,7 +66,7 @@ browserTests('User deletion actual React controller and URQL transport', () => {
           window.closeCount=0;window.navigationCount=0;
           for(const method of ['pushState','replaceState']){
             const original=history[method];history[method]=function(...args){
-              if(args[2]&&new URL(args[2],location.href).pathname==='/users')window.navigationCount++;
+              if(args[2]&&['/users','/services'].includes(new URL(args[2],location.href).pathname))window.navigationCount++;
               return original.apply(this,args);
             };
           }
@@ -100,7 +101,7 @@ browserTests('User deletion actual React controller and URQL transport', () => {
           return <Provider value={window.refreshClients[view.clientIndex]}><TestSessionContext.Provider value={{userID:view.actor,isAdmin:true}}><TestScopeContext.Provider value={scope}>
             <div data-testid="selection">{view.id}</div><div data-testid="path">{loc}</div>
             <button onClick={()=>setOpen(true)}>Delete</button>
-            {open&&<UserDeleteDialog key={view.instance} userID={view.id} onClose={()=>{record('close',view);window.closeCount++;setOpen(false)}}/>}
+            {open&&(probe==='service'?<ServiceDeleteDialog key={view.instance} serviceID={view.id} onClose={()=>{record('close',view);window.closeCount++;setOpen(false)}}/>:<UserDeleteDialog key={view.instance} userID={view.id} onClose={()=>{record('close',view);window.closeCount++;setOpen(false)}}/>)}
             <LifecycleGate view={view} open={open}/>
           </TestScopeContext.Provider></TestSessionContext.Provider></Provider>;
         }
@@ -198,6 +199,9 @@ browserTests('User deletion actual React controller and URQL transport', () => {
       | 'dependency'
       | 'pending'
       | 'unavailable'
+      | 'blocked'
+      | 'confirmation'
+      | 'limit'
     listError: boolean
     release?: () => void
     releasePreview?: () => void
@@ -367,6 +371,22 @@ browserTests('User deletion actual React controller and URQL transport', () => {
             ],
           })
         }
+        if (['blocked', 'confirmation', 'limit'].includes(state.deletion))
+          return json({
+            data: { deleteAll: null },
+            errors: [
+              {
+                message: 'Synthetic refusal',
+                extensions: {
+                  code: {
+                    blocked: 'DELETION_BLOCKED',
+                    confirmation: 'DELETION_CONFIRMATION_REQUIRED',
+                    limit: 'DELETION_PREVIEW_LIMIT_EXCEEDED',
+                  }[state.deletion as 'blocked' | 'confirmation' | 'limit'],
+                },
+              },
+            ],
+          })
         if (state.deletion === 'unavailable')
           return json({
             data: { deleteAll: null },
@@ -1585,4 +1605,878 @@ browserTests('User deletion actual React controller and URQL transport', () => {
       await page.close()
     }
   }, 20000)
+  async function reviewerObservation(
+    page: Page,
+    state: State,
+    stage: string,
+  ): Promise<void> {
+    const evidence = process.env.MS_ONCALL_BROWSER_CASE_EVIDENCE
+    if (evidence)
+      appendFileSync(
+        evidence,
+        JSON.stringify({
+          caseName: expect.getState().currentTestName,
+          stage,
+          lifecycle: await lifecycleEvents(page),
+          effects: await refreshEffects(page),
+          deletes: state.deletes.length,
+          lists: state.lists,
+          body: await page.locator('body').innerText(),
+          storage: await page.evaluate(() => Object.entries(sessionStorage)),
+        }) + '\n',
+      )
+  }
+  async function releaseMutation(page: Page, state: State): Promise<void> {
+    const received = page.waitForResponse(
+      (r) => r.request().postData()?.includes('deleteAll') === true,
+    )
+    state.deletion = 'success'
+    state.release!()
+    const response = await received
+    await response.finished()
+    const body = await response.json()
+    expect(response.status()).toBe(200)
+    expect(body).toEqual({ data: { deleteAll: true } })
+    const evidence = process.env.MS_ONCALL_BROWSER_CASE_EVIDENCE
+    if (evidence)
+      appendFileSync(
+        evidence,
+        JSON.stringify({
+          caseName: expect.getState().currentTestName,
+          stage: 'authoritative-mutation-response',
+          status: response.status(),
+          body,
+        }) + '\n',
+      )
+    await refreshEffects(page)
+  }
+  async function pendingMutationSetup(): Promise<{ page: Page; state: State }> {
+    const value = await lifecycleSetup()
+    value.state.deletion = 'pending'
+    await confirm(value.page).click()
+    await waitFor(() => !!value.state.release)
+    return value
+  }
+  test.each(abandonedIdentities)(
+    'REVIEW3 mutation success during uncommitted $name render still establishes current receipt',
+    async ({ changes }) => {
+      const { page, state } = await pendingMutationSetup()
+      try {
+        const before = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'setup',
+        )
+        await page.evaluate(
+          (value) =>
+            (window as unknown as LifecycleWindow).lifecycleTransition(value),
+          changes,
+        )
+        await waitFor(async () =>
+          (await lifecycleEvents(page)).some((e) => e.event === 'suspend'),
+        )
+        expect(
+          (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+        ).toEqual(before)
+        expect(await page.getByTestId('selection').textContent()).toBe(userID)
+        expect(await page.getByTestId('suspended').count()).toBe(0)
+        // Deliver the authoritative HTTP response while B has rendered but NOT committed.
+        await releaseMutation(page, state)
+        await reviewerObservation(
+          page,
+          state,
+          'response-delivered-before-abort',
+        )
+        expect(
+          (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+        ).toEqual(before)
+        await page.evaluate(() =>
+          (window as unknown as LifecycleWindow).lifecycleAbort(),
+        )
+        await refreshEffects(page)
+        const commits = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'setup',
+        )
+        expect(
+          commits.every(
+            (e) =>
+              e.id === userID &&
+              e.client === 0 &&
+              e.scope === null &&
+              e.actor === userID,
+          ),
+        ).toBe(true)
+        expect(commits.length).toBeGreaterThan(before.length)
+        await reviewerObservation(page, state, 'aborted-to-current-A')
+        expect(state.deletes).toHaveLength(1)
+        // The review probe also asserted the old stuck UI as diagnostic proof.
+        // The regression requires authoritative success, a receipt and recovery.
+        expect(state.listResponses).toHaveLength(1)
+        expect(await confirm(page).isDisabled()).toBe(true)
+        expect(
+          await page
+            .getByRole('button', { name: 'Cancel', exact: true })
+            .isDisabled(),
+        ).toBe(false)
+        expect(await page.getByRole('dialog').textContent()).toContain(
+          'The user was deleted.',
+        )
+        expect(await page.getByRole('dialog').textContent()).not.toContain(
+          'Deleting user',
+        )
+        expect(
+          await page
+            .getByRole('button', { name: 'Refresh user list', exact: true })
+            .count(),
+        ).toBe(0)
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+      } finally {
+        state.release?.()
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+    20000,
+  )
+  test('REVIEW3 mutation success after abort and A commit establishes current receipt', async () => {
+    const { page, state } = await pendingMutationSetup()
+    try {
+      await page.evaluate(
+        (id) =>
+          (window as unknown as LifecycleWindow).lifecycleTransition({ id }),
+        otherUser,
+      )
+      await waitFor(async () =>
+        (await lifecycleEvents(page)).some((e) => e.event === 'suspend'),
+      )
+      await page.evaluate(() =>
+        (window as unknown as LifecycleWindow).lifecycleAbort(),
+      )
+      await releaseMutation(page, state)
+      await waitFor(() => state.listResponses.length === 1)
+      await releaseList(page, state.listResponses[0])
+      expect(await refreshEffects(page)).toEqual({ closes: 1, navigations: 1 })
+      expect(state.deletes).toHaveLength(1)
+      expect(state.lists).toBe(1)
+      await reviewerObservation(page, state, 'complete')
+    } finally {
+      state.release?.()
+      state.listResponses.forEach((r) => r.release())
+      await page.close()
+    }
+  }, 20000)
+  test('REVIEW3 mutation success and list success while hidden are consumed only on reveal', async () => {
+    const { page, state } = await pendingMutationSetup()
+    try {
+      await lifecycleCommit(page, { suspend: true })
+      await page.getByTestId('suspended').waitFor()
+      await releaseMutation(page, state)
+      await waitFor(() => state.listResponses.length === 1)
+      await releaseList(page, state.listResponses[0])
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 0 })
+      await reviewerObservation(page, state, 'hidden-outcome')
+      await lifecycleCommit(page, { suspend: false })
+      expect(await refreshEffects(page)).toEqual({ closes: 1, navigations: 1 })
+      await lifecycleCommit(page, {})
+      await lifecycleCommit(page, {})
+      expect(await refreshEffects(page)).toEqual({ closes: 1, navigations: 1 })
+      expect(state.deletes).toHaveLength(1)
+      expect(state.lists).toBe(1)
+      await reviewerObservation(page, state, 'revealed-exactly-once')
+    } finally {
+      state.release?.()
+      state.listResponses.forEach((r) => r.release())
+      await page.close()
+    }
+  }, 20000)
+  test('REVIEW3 mutation success after B commits cannot bind the old A to B', async () => {
+    const { page, state } = await pendingMutationSetup()
+    try {
+      await lifecycleCommit(page, { id: otherUser })
+      await waitFor(async () => !(await confirm(page).isDisabled()))
+      await releaseMutation(page, state)
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 0 })
+      expect(await page.getByTestId('selection').textContent()).toBe(otherUser)
+      expect(state.lists).toBe(0)
+      expect(state.deletes).toHaveLength(1)
+      expect(await confirm(page).isDisabled()).toBe(false)
+      await reviewerObservation(page, state, 'B-committed')
+    } finally {
+      state.release?.()
+      state.listResponses.forEach((r) => r.release())
+      await page.close()
+    }
+  }, 20000)
+  test('REVIEW3 mutation success after actual unmount cannot control a remounted dialog', async () => {
+    const { page, state } = await pendingMutationSetup()
+    try {
+      await page.evaluate(() =>
+        (window as unknown as LifecycleWindow).lifecycleUnmount(),
+      )
+      await releaseMutation(page, state)
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 0 })
+      expect(state.lists).toBe(0)
+      await page.evaluate(() =>
+        (window as unknown as LifecycleWindow).lifecycleRemount(),
+      )
+      await waitFor(async () => !(await confirm(page).isDisabled()))
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 0 })
+      expect(state.deletes).toHaveLength(1)
+      await reviewerObservation(page, state, 'remounted')
+    } finally {
+      state.release?.()
+      state.listResponses.forEach((r) => r.release())
+      await page.close()
+    }
+  }, 20000)
+  test.each(['success', 'failure'] as const)(
+    'REVIEW3 list %s before speculative B commits remains owned by A',
+    async (outcome) => {
+      const { page, state } = await lifecycleSetup()
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        const before = (await lifecycleEvents(page)).filter(
+          (e) => e.event === 'setup',
+        )
+        await page.evaluate(
+          (id) =>
+            (window as unknown as LifecycleWindow).lifecycleTransition({ id }),
+          otherUser,
+        )
+        await waitFor(async () =>
+          (await lifecycleEvents(page)).some((e) => e.event === 'suspend'),
+        )
+        expect(
+          (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+        ).toEqual(before)
+        state.listResponses[0].error = outcome === 'failure'
+        await releaseList(page, state.listResponses[0])
+        if (outcome === 'failure') {
+          await page
+            .getByRole('button', { name: 'Refresh user list', exact: true })
+            .waitFor()
+          await page.evaluate(() =>
+            (window as unknown as LifecycleWindow).lifecycleAbort(),
+          )
+          await page
+            .getByRole('button', { name: 'Refresh user list', exact: true })
+            .click()
+          await waitFor(() => state.listResponses.length === 2)
+          await releaseList(page, state.listResponses[1])
+        }
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        expect(
+          (await lifecycleEvents(page))
+            .filter((e) => e.event === 'setup')
+            .every((e) => e.id === userID),
+        ).toBe(true)
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(outcome === 'failure' ? 2 : 1)
+        await reviewerObservation(page, state, 'complete')
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+    20000,
+  )
+  test.each(['success', 'failure'] as const)(
+    'REVIEW3 stored hidden list %s expires before a different selection reveal',
+    async (outcome) => {
+      const { page, state } = await lifecycleSetup()
+      try {
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        await lifecycleCommit(page, { suspend: true })
+        await page.getByTestId('suspended').waitFor()
+        state.listResponses[0].error = outcome === 'failure'
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        await lifecycleCommit(page, { id: otherUser, suspend: false })
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        expect(await page.getByTestId('selection').textContent()).toBe(
+          otherUser,
+        )
+        expect(
+          await page
+            .getByRole('button', { name: 'Refresh user list', exact: true })
+            .count(),
+        ).toBe(0)
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(1)
+        await reviewerObservation(page, state, 'revealed-B')
+      } finally {
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+    20000,
+  )
+  async function speculative(page: Page): Promise<LifecycleEvent[]> {
+    const before = (await lifecycleEvents(page)).filter(
+      (e) => e.event === 'setup',
+    )
+    await page.evaluate(
+      (id) =>
+        (window as unknown as LifecycleWindow).lifecycleTransition({ id }),
+      otherUser,
+    )
+    await waitFor(async () =>
+      (await lifecycleEvents(page)).some((e) => e.event === 'suspend'),
+    )
+    expect(
+      (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+    ).toEqual(before)
+    expect(await page.getByTestId('selection').textContent()).toBe(userID)
+    expect(await page.getByTestId('suspended').count()).toBe(0)
+    return before
+  }
+  async function abortSpeculative(
+    page: Page,
+    before: LifecycleEvent[],
+  ): Promise<void> {
+    expect(
+      (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+    ).toEqual(before)
+    await page.evaluate(() =>
+      (window as unknown as LifecycleWindow).lifecycleAbort(),
+    )
+    const commits = (await lifecycleEvents(page)).filter(
+      (e) => e.event === 'setup',
+    )
+    expect(commits.length).toBeGreaterThan(before.length)
+    expect(commits.every((e) => e.id === userID)).toBe(true)
+  }
+  async function markerIDs(page: Page): Promise<string[]> {
+    return page.evaluate(() =>
+      Object.entries(sessionStorage)
+        .filter(
+          ([k, v]) => k.startsWith('user-deletion-unresolved:') && v === 'sent',
+        )
+        .map(([k]) => k.slice('user-deletion-unresolved:'.length))
+        .sort(),
+    )
+  }
+  async function settleMutation(
+    page: Page,
+    state: State,
+    outcome: State['deletion'],
+    release = state.release,
+  ): Promise<void> {
+    state.deletion = outcome
+    release!()
+    await refreshEffects(page)
+  }
+  test.each(['first', 'successor'] as const)(
+    'SHARED %s preview response during speculative render remains owned by committed A',
+    async (part) => {
+      const { page, state } = await setup(
+        part === 'first' ? userPreview() : userOwnedPreview(),
+        undefined,
+        (s) => {
+          s.holdPreview = part === 'first'
+          s.paginate = part === 'successor'
+          s.holdSuccessor = part === 'successor'
+          s.deferLists = true
+        },
+        true,
+        true,
+      )
+      try {
+        await waitFor(() => !!state.releasePreview)
+        expect(await confirm(page).isDisabled()).toBe(true)
+        const before = await speculative(page)
+        const received = page.waitForResponse(
+          (r) => r.request().postData()?.includes('deletionPreview') === true,
+        )
+        state.holdPreview = false
+        state.holdSuccessor = false
+        state.releasePreview!()
+        expect((await received).status()).toBe(200)
+        await refreshEffects(page)
+        await abortSpeculative(page, before)
+        if (part === 'successor') await page.getByRole('checkbox').check()
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        await confirm(page).click()
+        await waitFor(() => state.listResponses.length === 1)
+        expect(state.deletes[0].input).toEqual([{ type: 'user', id: userID }])
+        expect(state.previews).toBe(
+          part === 'first' ? 1 : state.preview.impacts.edges.length,
+        )
+        await releaseList(page, state.listResponses[0])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 1,
+          navigations: 1,
+        })
+        await reviewerObservation(page, state, 'shared-preview-complete')
+      } finally {
+        state.releasePreview?.()
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+    20000,
+  )
+  test('SHARED preview failure during speculative render ends loading and permits a fresh preview', async () => {
+    const { page, state } = await setup(
+      userPreview(),
+      undefined,
+      (s) => {
+        s.holdPreview = true
+        s.nativeUnavailable = true
+      },
+      true,
+      true,
+    )
+    try {
+      await waitFor(() => !!state.releasePreview)
+      const before = await speculative(page)
+      const received = page.waitForResponse(
+        (r) => r.request().postData()?.includes('deletionPreview') === true,
+      )
+      state.holdPreview = false
+      state.releasePreview!()
+      await (await received).finished()
+      await refreshEffects(page)
+      await abortSpeculative(page, before)
+      await page
+        .getByText('Deletion is unavailable.', { exact: false })
+        .waitFor()
+      expect(await confirm(page).isDisabled()).toBe(true)
+      expect(state.deletes).toHaveLength(0)
+      state.nativeUnavailable = false
+      await page
+        .getByRole('button', { name: 'Check again', exact: true })
+        .click()
+      await waitFor(async () => !(await confirm(page).isDisabled()))
+      expect(state.previews).toBe(2)
+      await reviewerObservation(page, state, 'shared-preview-recovered')
+    } finally {
+      state.releasePreview?.()
+      await page.close()
+    }
+  }, 20000)
+  test('SHARED old successor page cannot overwrite B review or release B mutation pending', async () => {
+    const { page, state } = await setup(
+      userOwnedPreview(),
+      undefined,
+      (s) => {
+        s.paginate = true
+        s.holdSuccessor = true
+      },
+      true,
+      true,
+    )
+    let releaseA: (() => void) | undefined
+    try {
+      await waitFor(() => !!state.releasePreview)
+      releaseA = state.releasePreview
+      state.holdSuccessor = false
+      state.preview.impactVersion = 'committed-B-version'
+      await lifecycleCommit(page, { id: otherUser })
+      await page.getByRole('checkbox').check()
+      state.deletion = 'pending'
+      await confirm(page).click()
+      await waitFor(() => !!state.release)
+      releaseA!()
+      await refreshEffects(page)
+      expect(await page.getByTestId('selection').textContent()).toBe(otherUser)
+      expect(await confirm(page).isDisabled()).toBe(true)
+      expect(await page.getByRole('dialog').textContent()).toContain(
+        'Deleting user',
+      )
+      await confirm(page).evaluate((button: HTMLButtonElement) => {
+        button.click()
+        button.click()
+      })
+      expect(state.deletes).toHaveLength(1)
+      expect(state.deletes[0]).toMatchObject({
+        input: [{ type: 'user', id: otherUser }],
+        confirmation: {
+          expectedImpactVersion: 'committed-B-version',
+          acknowledgeImpacts: true,
+        },
+      })
+      await settleMutation(page, state, 'network')
+      await page
+        .getByText('The deletion result is unconfirmed.', { exact: false })
+        .waitFor()
+      expect(await markerIDs(page)).toEqual([otherUser])
+      await reviewerObservation(page, state, 'shared-old-pagination-rejected')
+    } finally {
+      releaseA?.()
+      state.release?.()
+      await page.close()
+    }
+  }, 20000)
+  test('SHARED StrictMode and Suspense preserve an in-flight preview through hide and reveal', async () => {
+    const { page, state } = await setup(
+      userPreview(),
+      undefined,
+      (s) => {
+        s.holdPreview = true
+      },
+      true,
+      true,
+    )
+    try {
+      await waitFor(() => !!state.releasePreview)
+      expect(
+        (await lifecycleEvents(page)).filter((e) => e.event === 'setup').length,
+      ).toBeGreaterThan(1)
+      expect(state.previews).toBe(1)
+      await lifecycleCommit(page, { suspend: true })
+      await page.getByTestId('suspended').waitFor()
+      const received = page.waitForResponse(
+        (r) => r.request().postData()?.includes('deletionPreview') === true,
+      )
+      state.holdPreview = false
+      state.releasePreview!()
+      await (await received).finished()
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 0 })
+      await lifecycleCommit(page, { suspend: false })
+      await waitFor(async () => !(await confirm(page).isDisabled()))
+      expect(state.previews).toBe(1)
+      expect(state.deletes).toHaveLength(0)
+      await reviewerObservation(page, state, 'shared-preview-revealed')
+    } finally {
+      state.releasePreview?.()
+      await page.close()
+    }
+  }, 20000)
+  test.each([
+    'blocked',
+    'confirmation',
+    'dependency',
+    'unavailable',
+    'limit',
+  ] as const)(
+    'SHARED authoritative %s during speculative render releases only its request and discards old confirmation',
+    async (outcome) => {
+      const { page, state } = await setup(
+        userOwnedPreview(),
+        undefined,
+        (s) => {
+          s.deferLists = true
+        },
+        true,
+        true,
+      )
+      try {
+        await page.getByRole('checkbox').check()
+        state.deletion = 'pending'
+        await confirm(page).click()
+        await waitFor(() => !!state.release)
+        expect(await markerIDs(page)).toEqual([userID])
+        const before = await speculative(page)
+        if (outcome === 'confirmation')
+          state.preview.impactVersion = 'synthetic-version-2'
+        const received = page.waitForResponse(
+          (r) => r.request().postData()?.includes('deleteAll') === true,
+        )
+        await settleMutation(page, state, outcome)
+        const response = await received
+        expect(response.status()).toBe(200)
+        expect((await response.json()).errors[0].extensions.code).toMatch(
+          /^DELETION_/,
+        )
+        await abortSpeculative(page, before)
+        expect(await markerIDs(page)).toEqual([])
+        expect(await page.getByRole('dialog').textContent()).not.toContain(
+          'Deleting user',
+        )
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(0)
+        if (outcome === 'dependency' || outcome === 'confirmation') {
+          await page
+            .getByText('Dependencies or confirmation requirements changed.', {
+              exact: false,
+            })
+            .waitFor()
+          expect(state.previews).toBe(2)
+          expect(await page.getByRole('checkbox').isChecked()).toBe(false)
+          expect(await confirm(page).isDisabled()).toBe(true)
+          state.deletion = 'success'
+          await page.getByRole('checkbox').check()
+          await confirm(page).click()
+          await waitFor(() => state.listResponses.length === 1)
+          expect(state.deletes[1]).toMatchObject({
+            confirmation: {
+              expectedImpactVersion: 'synthetic-version-2',
+              acknowledgeImpacts: true,
+            },
+          })
+          await releaseList(page, state.listResponses[0])
+          expect(await refreshEffects(page)).toEqual({
+            closes: 1,
+            navigations: 1,
+          })
+        } else {
+          await page
+            .getByText(
+              outcome === 'blocked'
+                ? 'Deletion is blocked.'
+                : 'Deletion is unavailable.',
+              { exact: false },
+            )
+            .waitFor()
+          expect(await confirm(page).isDisabled()).toBe(true)
+          expect(
+            await page
+              .getByRole('button', { name: 'Cancel', exact: true })
+              .isDisabled(),
+          ).toBe(false)
+        }
+        await reviewerObservation(page, state, 'shared-refusal-complete')
+      } finally {
+        state.release?.()
+        state.listResponses.forEach((r) => r.release())
+        await page.close()
+      }
+    },
+    20000,
+  )
+  test.each(['network', 'timeout', 'ambiguous', '401', '403'] as const)(
+    'SHARED speculative %s retains COMMIT_UNKNOWN across hide, reveal and committed reselection',
+    async (outcome) => {
+      const { page, state } = await pendingMutationSetup()
+      try {
+        const before = await speculative(page)
+        await settleMutation(page, state, outcome)
+        await abortSpeculative(page, before)
+        await page
+          .getByText('The deletion result is unconfirmed.', { exact: false })
+          .waitFor()
+        expect(await markerIDs(page)).toEqual([userID])
+        expect(await confirm(page).isDisabled()).toBe(true)
+        await lifecycleCommit(page, { suspend: true })
+        await page.getByTestId('suspended').waitFor()
+        await lifecycleCommit(page, { suspend: false })
+        await lifecycleCommit(page, { id: otherUser })
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        await lifecycleCommit(page, { id: userID })
+        await page
+          .getByText('The deletion result is unconfirmed.', { exact: false })
+          .waitFor()
+        await confirm(page).evaluate((button: HTMLButtonElement) => {
+          button.click()
+          button.click()
+        })
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(0)
+        expect(state.previews).toBe(2)
+        expect(await markerIDs(page)).toEqual([userID])
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        await reviewerObservation(page, state, 'shared-unknown-retained')
+      } finally {
+        state.release?.()
+        await page.close()
+      }
+    },
+    20000,
+  )
+  test.each(['success', 'network', 'dependency'] as const)(
+    'SHARED expired User A %s cannot release B pending or change B marker',
+    async (outcome) => {
+      const { page, state } = await pendingMutationSetup()
+      const releaseA = state.release!
+      let releaseB: (() => void) | undefined
+      try {
+        await lifecycleCommit(page, { id: otherUser })
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        state.release = undefined
+        state.deletion = 'pending'
+        await confirm(page).click()
+        await waitFor(() => !!state.release)
+        releaseB = state.release
+        expect(await markerIDs(page)).toEqual([userID, otherUser].sort())
+        await settleMutation(page, state, outcome, releaseA)
+        expect(await page.getByRole('dialog').textContent()).toContain(
+          'Deleting user',
+        )
+        expect(await confirm(page).isDisabled()).toBe(true)
+        expect(
+          await page
+            .getByRole('button', { name: 'Cancel', exact: true })
+            .isDisabled(),
+        ).toBe(true)
+        await confirm(page).evaluate((button: HTMLButtonElement) => {
+          button.click()
+          button.click()
+        })
+        expect(state.deletes).toHaveLength(2)
+        expect(state.lists).toBe(0)
+        expect(await markerIDs(page)).toEqual(
+          outcome === 'network' ? [userID, otherUser].sort() : [otherUser],
+        )
+        await settleMutation(page, state, 'network', releaseB)
+        await page
+          .getByText('The deletion result is unconfirmed.', { exact: false })
+          .waitFor()
+        expect(await markerIDs(page)).toContain(otherUser)
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        await reviewerObservation(
+          page,
+          state,
+          'shared-expired-mutation-rejected',
+        )
+      } finally {
+        releaseA()
+        releaseB?.()
+        await page.close()
+      }
+    },
+    20000,
+  )
+  async function serviceLifecycle(): Promise<{ page: Page; state: State }> {
+    const value = await setup(userPreview(), 'service', undefined, true, true)
+    await waitFor(async () => !(await confirm(value.page).isDisabled()))
+    return value
+  }
+  test('SHARED real Service adapter accepts success while B render is uncommitted', async () => {
+    const { page, state } = await serviceLifecycle()
+    try {
+      state.deletion = 'pending'
+      await confirm(page).click()
+      await waitFor(() => !!state.release)
+      const before = await speculative(page)
+      await releaseMutation(page, state)
+      expect(
+        (await lifecycleEvents(page)).filter((e) => e.event === 'setup'),
+      ).toEqual(before)
+      await page.evaluate(() =>
+        (window as unknown as LifecycleWindow).lifecycleAbort(),
+      )
+      expect(await refreshEffects(page)).toEqual({ closes: 0, navigations: 1 })
+      expect(await page.getByTestId('path').textContent()).toBe('/services')
+      expect(state.deletes).toHaveLength(1)
+      expect(state.lists).toBe(0)
+      expect(state.deletes[0].input).toEqual([{ type: 'service', id: userID }])
+      await reviewerObservation(page, state, 'service-aborted-render-complete')
+    } finally {
+      state.release?.()
+      await page.close()
+    }
+  }, 20000)
+  test.each(['success', 'network', 'dependency'] as const)(
+    'SHARED real Service A-B-A permanently expires first A %s without releasing second A pending',
+    async (outcome) => {
+      const { page, state } = await serviceLifecycle()
+      let releaseA: (() => void) | undefined,
+        releaseNew: (() => void) | undefined
+      try {
+        state.deletion = 'pending'
+        await confirm(page).click()
+        await waitFor(() => !!state.release)
+        releaseA = state.release
+        await lifecycleCommit(page, { id: otherUser })
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        await lifecycleCommit(page, { id: userID })
+        await waitFor(async () => !(await confirm(page).isDisabled()))
+        state.release = undefined
+        await confirm(page).click()
+        await waitFor(() => !!state.release)
+        releaseNew = state.release
+        await settleMutation(page, state, outcome, releaseA)
+        expect(await page.getByRole('dialog').textContent()).toContain(
+          'Deleting service',
+        )
+        expect(await confirm(page).isDisabled()).toBe(true)
+        await confirm(page).evaluate((button: HTMLButtonElement) => {
+          button.click()
+          button.click()
+        })
+        expect(state.deletes).toHaveLength(2)
+        expect(state.previews).toBe(3)
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        await settleMutation(page, state, 'success', releaseNew)
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 1,
+        })
+        expect(state.deletes).toHaveLength(2)
+        expect(state.lists).toBe(0)
+        await reviewerObservation(page, state, 'service-committed-epochs')
+      } finally {
+        releaseA?.()
+        releaseNew?.()
+        await page.close()
+      }
+    },
+    20000,
+  )
+  test.each(['hidden', 'unmounted'] as const)(
+    'SHARED real Service %s success cannot navigate a disconnected UI',
+    async (mode) => {
+      const { page, state } = await serviceLifecycle()
+      try {
+        state.deletion = 'pending'
+        await confirm(page).click()
+        await waitFor(() => !!state.release)
+        if (mode === 'hidden') {
+          await lifecycleCommit(page, { suspend: true })
+          await page.getByTestId('suspended').waitFor()
+        } else
+          await page.evaluate(() =>
+            (window as unknown as LifecycleWindow).lifecycleUnmount(),
+          )
+        await releaseMutation(page, state)
+        expect(await refreshEffects(page)).toEqual({
+          closes: 0,
+          navigations: 0,
+        })
+        if (mode === 'hidden') {
+          await lifecycleCommit(page, { suspend: false })
+          expect(await refreshEffects(page)).toEqual({
+            closes: 0,
+            navigations: 1,
+          })
+          await lifecycleCommit(page, {})
+          await lifecycleCommit(page, {})
+          expect(await refreshEffects(page)).toEqual({
+            closes: 0,
+            navigations: 1,
+          })
+        } else {
+          await page.evaluate(() =>
+            (window as unknown as LifecycleWindow).lifecycleRemount(),
+          )
+          await waitFor(async () => !(await confirm(page).isDisabled()))
+          expect(await refreshEffects(page)).toEqual({
+            closes: 0,
+            navigations: 0,
+          })
+        }
+        expect(state.deletes).toHaveLength(1)
+        expect(state.lists).toBe(0)
+        await reviewerObservation(page, state, 'service-disconnection-complete')
+      } finally {
+        state.release?.()
+        await page.close()
+      }
+    },
+    20000,
+  )
 })

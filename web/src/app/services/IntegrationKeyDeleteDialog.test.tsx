@@ -23,6 +23,7 @@ jest.mock('react', () => ({
   useRef: jest.fn(),
   useCallback: jest.fn(),
   useEffect: jest.fn(),
+  useLayoutEffect: jest.fn(),
 }))
 jest.mock('urql', () => ({
   ...jest.requireActual('@urql/core'),
@@ -81,6 +82,10 @@ beforeEach(() => {
     .mocked(React.useRef)
     .mockImplementation((value?: unknown) => ({ current: value }))
   jest.mocked(React.useCallback).mockImplementation((fn) => fn)
+  // This controller harness commits synchronously before starting passive work.
+  jest.mocked(React.useLayoutEffect).mockImplementation((effect) => {
+    effect()
+  })
   jest.mocked(React.useEffect).mockImplementation((effect) => {
     effects.push(effect as () => () => void)
   })

@@ -142,13 +142,15 @@ export default function UserDeleteDialog(props: {
     userDeletionProfile,
     props.userID,
     props.onClose,
-    () => {
-      if (selected.current !== selection) return
-      // Object identity is the unique authoritative-success receipt; it binds
-      // this deletion to its User, client, scope, actor and selection generation.
-      const success = { ...selection, refreshing: false }
-      receipt.current = success
-      refreshList(success)
+    {
+      receive: () => {
+        if (selected.current !== selection || receipt.current) return
+        // Object identity is the unique authoritative-success receipt; it binds
+        // this deletion to its User, client, scope, actor and selection generation.
+        const success = { ...selection, refreshing: false }
+        receipt.current = success
+        refreshList(success)
+      },
     },
     undefined,
     currentUserID,
