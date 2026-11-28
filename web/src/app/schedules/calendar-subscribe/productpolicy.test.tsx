@@ -1,10 +1,28 @@
-import React from 'react'
+/* eslint-disable @typescript-eslint/no-require-imports */
+// Preserve namespace types through the Babel-before-esbuild transform pass.
+import React = require('react')
 import { renderToStaticMarkup } from 'react-dom/server'
 import { print } from 'graphql'
-import * as urqlCore from '@urql/core'
+
+// Static image URLs only; keep the real icon components and policy UI.
+jest.mock('../../public/icons/slack.svg', () => 'slack.svg')
+jest.mock(
+  '../../public/icons/slack_monochrome_black.svg',
+  () => 'slack-black.svg',
+)
+jest.mock(
+  '../../public/icons/slack_monochrome_white.svg',
+  () => 'slack-white.svg',
+)
+// These render-only policy tests have no organization management provider.
+jest.mock('../../main/OrganizationManagement', () => ({
+  useOrganizationManagement: () => null,
+}))
+
+jest.mock('react-big-calendar/lib/css/react-big-calendar.css', () => ({}))
 
 jest.mock('urql', () => ({
-  ...urqlCore,
+  ...jest.requireActual<typeof import('@urql/core')>('@urql/core'),
   useQuery: jest.fn(),
   useClient: jest.fn(),
   useSubscription: jest.fn(),
@@ -34,7 +52,6 @@ jest.mock('../../env', () => ({
 
 // Load components after mocks to avoid initializing unrelated browser-only
 // modules in the repository's Bun runner during this server-render test.
-/* eslint-disable @typescript-eslint/no-require-imports */
 const { useQuery } = require('urql') as typeof import('urql')
 const { ConfigProvider } =
   require('../../util/RequireConfig') as typeof import('../../util/RequireConfig')

@@ -1,12 +1,19 @@
-import React from 'react'
+/* eslint-disable @typescript-eslint/no-require-imports */
+// Preserve namespace types through the Babel-before-esbuild transform pass.
+import React = require('react')
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material/styles'
-import * as urqlCore from '@urql/core'
+import urqlCore = require('@urql/core')
 import { print } from 'graphql'
-import type { PolicyStepFormProps } from './PolicyStepForm'
+type PolicyStepFormProps = import('./PolicyStepForm').PolicyStepFormProps
+
+// Static image URLs only; keep the real icon components and policy UI.
+jest.mock('../public/icons/slack.svg', () => 'slack.svg')
+jest.mock('../public/icons/slack_monochrome_black.svg', () => 'slack-black.svg')
+jest.mock('../public/icons/slack_monochrome_white.svg', () => 'slack-white.svg')
 
 jest.mock('urql', () => ({
-  ...urqlCore,
+  ...jest.requireActual<typeof import('@urql/core')>('@urql/core'),
   useQuery: jest.fn(),
   useMutation: jest.fn(),
   useClient: jest.fn(),
@@ -40,7 +47,6 @@ jest.mock('../util/DestinationInputChip', () => ({
   __esModule: true,
   default: () => null,
 }))
-/* eslint-disable @typescript-eslint/no-require-imports */
 const { useMutation, useQuery } = require('urql') as typeof import('urql')
 const { ConfigProvider } =
   require('../util/RequireConfig') as typeof import('../util/RequireConfig')
